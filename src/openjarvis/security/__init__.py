@@ -14,10 +14,11 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class SecurityContext:
-    """Result of setup_security() — wrapped engine, policy, audit."""
+    """Result of setup_security() — wrapped engine, policy, registry, audit."""
 
     engine: Any
     capability_policy: Any = None
+    capability_registry: Any = None
     audit_logger: Any = None
 
 
@@ -29,12 +30,19 @@ def setup_security(
     """Apply security guardrails to an engine based on config.
 
     Returns a SecurityContext. No-ops if config.security.enabled is False.
+    Capability security is fail-closed: when explicitly enabled, failure to
+    construct its registry or policy aborts setup rather than silently
+    returning an unprotected execution path.
     """
     if not config.security.enabled:
         return SecurityContext(engine=engine)
 
     from openjarvis.security._stubs import BaseScanner
     from openjarvis.security.audit import AuditLogger
+    from openjarvis.security.capability_registry import (
+        create_builtin_capability_registry,
+    )
+    from openjarvis.security.capabilities import CapabilityPolicy
     from openjarvis.security.guardrails import GuardrailsEngine
     from openjarvis.security.scanner import PIIScanner, SecretScanner
     from openjarvis.security.types import RedactionMode
@@ -60,17 +68,25 @@ def setup_security(
     except Exception as exc:
         logger.debug("Failed to set up security scanners: %s", exc)
 
-    # Capability policy
+    # Capability policy — explicitly enabled capability security must never
+    # degrade to an absent policy when initialization fails.
     cap_policy = None
+    cap_registry = None
     if config.security.capabilities.enabled:
         try:
-            from openjarvis.security.capabilities import CapabilityPolicy
-
+            cap_registry = create_builtin_capability_registry()
             cap_policy = CapabilityPolicy(
                 policy_path=config.security.capabilities.policy_path or None,
+                registry=cap_registry,
             )
         except Exception as exc:
-            logger.debug("Failed to set up capability policy: %s", exc)
+            logger.error(
+                "Capability security initialization failed; refusing to continue: %s",
+                exc,
+            )
+            raise RuntimeError(
+                "Capability security is enabled but could not be initialized"
+            ) from exc
 
     # Audit logger
     audit = None
@@ -85,6 +101,7 @@ def setup_security(
     return SecurityContext(
         engine=engine,
         capability_policy=cap_policy,
+        capability_registry=cap_registry,
         audit_logger=audit,
     )
 
