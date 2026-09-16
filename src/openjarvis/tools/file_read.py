@@ -45,6 +45,7 @@ class FileReadTool(BaseTool):
                 "required": ["path"],
             },
             category="filesystem",
+            required_capabilities=["file:read"],
         )
 
     def _is_path_allowed(self, path: Path) -> bool:
@@ -98,40 +99,58 @@ class FileReadTool(BaseTool):
         except OSError as exc:
             return ToolResult(
                 tool_name="file_read",
-                content=f"Cannot stat file: {exc}",
+                content=f"Could not stat file: {exc}",
                 success=False,
             )
         if size > _MAX_SIZE_BYTES:
             return ToolResult(
                 tool_name="file_read",
-                content=f"File too large: {size} bytes (max {_MAX_SIZE_BYTES}).",
+                content=(
+                    f"File too large: {file_path} ({size} bytes). "
+                    f"Maximum is {_MAX_SIZE_BYTES} bytes."
+                ),
                 success=False,
             )
-        try:
-            from openjarvis._rust_bridge import get_rust_module
 
-            _rust = get_rust_module()
-            text = _rust.FileReadTool().execute(str(path))
-        except ImportError:
-            try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception as exc:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
             return ToolResult(
                 tool_name="file_read",
-                content=f"Read error: {exc}",
+                content=f"File is not valid UTF-8 text: {file_path}",
                 success=False,
             )
+        except OSError as exc:
+            return ToolResult(
+                tool_name="file_read",
+                content=f"Could not read file: {exc}",
+                success=False,
+            )
+
         max_lines = params.get("max_lines")
-        if max_lines is not None and max_lines > 0:
-            lines = text.splitlines(keepends=True)
-            text = "".join(lines[:max_lines])
+        if max_lines is not None:
+            try:
+                max_lines = int(max_lines)
+            except (TypeError, ValueError):
+                return ToolResult(
+                    tool_name="file_read",
+                    content="max_lines must be an integer.",
+                    success=False,
+                )
+            if max_lines < 1:
+                return ToolResult(
+                    tool_name="file_read",
+                    content="max_lines must be at least 1.",
+                    success=False,
+                )
+            lines = content.splitlines()
+            content = "\n".join(lines[:max_lines])
+
         return ToolResult(
             tool_name="file_read",
-            content=text,
+            content=content,
             success=True,
-            metadata={"path": str(path.resolve()), "size_bytes": size},
+            metadata={"path": str(path), "size_bytes": size},
         )
 
 
