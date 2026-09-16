@@ -10,11 +10,16 @@ from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from openjarvis.security.capability_registry import (
+    CapabilityRegistry,
+    create_builtin_capability_registry,
+)
+
 logger = logging.getLogger(__name__)
 
 
 class Capability(str, Enum):
-    """Fine-grained capability labels."""
+    """Compatibility enum for the canonical built-in capability vocabulary."""
 
     FILE_READ = "file:read"
     FILE_WRITE = "file:write"
@@ -48,12 +53,9 @@ class AgentPolicy:
 class CapabilityPolicy:
     """RBAC capability policy for tool dispatch.
 
-    Checks whether an agent has the required capability to invoke a tool.
-    Policy can be loaded from a JSON file or configured programmatically.
-
-    Default policy: if no explicit policy exists for an agent, all
-    capabilities are granted (open by default). Set ``default_deny=True``
-    to flip to deny-by-default.
+    The capability registry is authoritative for the capability vocabulary.
+    Registration/discovery does not authorize anything; this class only
+    evaluates grants and denials for an agent.
     """
 
     def __init__(
@@ -61,9 +63,11 @@ class CapabilityPolicy:
         *,
         policy_path: Optional[str] = None,
         default_deny: bool = False,
+        registry: CapabilityRegistry | None = None,
     ) -> None:
         self._policies: Dict[str, AgentPolicy] = {}
         self._default_deny = default_deny
+        self._registry = registry or create_builtin_capability_registry()
 
         from openjarvis._rust_bridge import get_rust_module
 
@@ -73,8 +77,18 @@ class CapabilityPolicy:
         if policy_path:
             self._load_file(Path(policy_path))
 
+    @property
+    def registry(self) -> CapabilityRegistry:
+        """Return the authoritative capability registry used by this policy."""
+        return self._registry
+
+    def _validate_capability_pattern(self, capability: str) -> None:
+        """Reject policy entries that do not reference known capabilities."""
+        self._registry.require_pattern(capability)
+
     def grant(self, agent_id: str, capability: str, pattern: str = "*") -> None:
-        """Grant a capability to an agent."""
+        """Grant a known capability (or known capability glob) to an agent."""
+        self._validate_capability_pattern(capability)
         policy = self._policies.setdefault(
             agent_id,
             AgentPolicy(agent_id=agent_id),
@@ -83,7 +97,8 @@ class CapabilityPolicy:
         self._rust_impl.grant(agent_id, capability, pattern)
 
     def deny(self, agent_id: str, capability: str) -> None:
-        """Explicitly deny a capability to an agent."""
+        """Explicitly deny a known capability (or known capability glob)."""
+        self._validate_capability_pattern(capability)
         policy = self._policies.setdefault(
             agent_id,
             AgentPolicy(agent_id=agent_id),
@@ -94,23 +109,26 @@ class CapabilityPolicy:
     def check(self, agent_id: str, capability: str, resource: str = "") -> bool:
         """Check whether *agent_id* has *capability* for *resource*.
 
-        Returns True if allowed, False if denied.
+        Unknown capabilities fail closed rather than being evaluated by the
+        underlying policy implementation.
         """
+        if not self._registry.contains(capability):
+            return False
         return self._rust_impl.check(agent_id, capability, resource)
 
     def _check_python(self, agent_id: str, capability: str, resource: str = "") -> bool:
         """Legacy Python check — kept for reference only."""
+        if not self._registry.contains(capability):
+            return False
+
         policy = self._policies.get(agent_id)
         if policy is None:
-            # No explicit policy — use default
             return not self._default_deny
 
-        # Explicit denials take precedence
         for denied in policy.deny:
             if fnmatch.fnmatch(capability, denied):
                 return False
 
-        # Check grants
         for grant in policy.grants:
             if fnmatch.fnmatch(capability, grant.capability):
                 if resource and grant.pattern != "*":
@@ -119,7 +137,6 @@ class CapabilityPolicy:
                 else:
                     return True
 
-        # No matching grant found
         return not self._default_deny
 
     def list_grants(self, agent_id: str) -> List[CapabilityGrant]:
@@ -167,7 +184,9 @@ class CapabilityPolicy:
         path.write_text(json.dumps({"agents": agents}, indent=2))
 
 
-# Default capability requirements for built-in tools
+# Compatibility mapping retained temporarily for callers that have not yet
+# migrated to ToolSpec.required_capabilities. New code should declare the
+# capability on the ToolSpec and resolve it through the registry.
 DEFAULT_TOOL_CAPABILITIES: Dict[str, List[str]] = {
     "file_read": [Capability.FILE_READ],
     "web_search": [Capability.NETWORK_FETCH],
