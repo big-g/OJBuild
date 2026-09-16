@@ -113,6 +113,82 @@ class CapabilityRecord:
         )
 
 
+# Canonical built-in capability definitions. This is the authoritative
+# capability vocabulary; policy and tool metadata consume these definitions.
+BUILTIN_CAPABILITIES: tuple[tuple[str, str, str, str, RiskLevel], ...] = (
+    (
+        "file:read",
+        "Read files and other local file-backed resources.",
+        "file",
+        "read",
+        RiskLevel.MEDIUM,
+    ),
+    (
+        "file:write",
+        "Create or modify local files.",
+        "file",
+        "write",
+        RiskLevel.HIGH,
+    ),
+    (
+        "network:fetch",
+        "Retrieve data from network resources.",
+        "network",
+        "fetch",
+        RiskLevel.MEDIUM,
+    ),
+    (
+        "code:execute",
+        "Execute code or commands in a runtime environment.",
+        "code",
+        "execute",
+        RiskLevel.HIGH,
+    ),
+    (
+        "memory:read",
+        "Read persistent assistant memory.",
+        "memory",
+        "read",
+        RiskLevel.MEDIUM,
+    ),
+    (
+        "memory:write",
+        "Create or modify persistent assistant memory.",
+        "memory",
+        "write",
+        RiskLevel.HIGH,
+    ),
+    (
+        "channel:send",
+        "Send a message through an external communication channel.",
+        "channel",
+        "send",
+        RiskLevel.HIGH,
+    ),
+    (
+        "tool:invoke",
+        "Invoke another registered tool.",
+        "tool",
+        "invoke",
+        RiskLevel.HIGH,
+    ),
+    (
+        "schedule:create",
+        "Create a scheduled task or automation.",
+        "schedule",
+        "create",
+        RiskLevel.HIGH,
+    ),
+    (
+        "system:admin",
+        "Perform privileged system or agent administration.",
+        "system",
+        "admin",
+        RiskLevel.CRITICAL,
+    ),
+)
+
+
 class CapabilityRegistry:
     """Authoritative registry for known capabilities.
 
@@ -154,6 +230,19 @@ class CapabilityRegistry:
     def contains(self, name: str) -> bool:
         """Return whether a capability is registered."""
         return name in self._records
+
+    def matches(self, pattern: str) -> tuple[str, ...]:
+        """Return known capability names matched by a glob pattern."""
+        import fnmatch
+
+        return tuple(name for name in self._records if fnmatch.fnmatch(name, pattern))
+
+    def require_pattern(self, pattern: str) -> tuple[str, ...]:
+        """Validate that a capability grant/deny pattern is meaningful."""
+        matches = self.matches(pattern)
+        if not matches:
+            raise KeyError(f"Unknown capability pattern: {pattern}")
+        return matches
 
     def items(self) -> Iterable[tuple[str, CapabilityRecord]]:
         """Return registered capability records."""
@@ -264,3 +353,38 @@ class CapabilityRegistry:
 
         record.status = ResourceStatus.APPROVED
         return record
+
+
+def create_builtin_capability_registry() -> CapabilityRegistry:
+    """Create a registry populated with the canonical built-in vocabulary."""
+    registry = CapabilityRegistry()
+    for name, description, resource_type, operation, risk_level in BUILTIN_CAPABILITIES:
+        registry.register(
+            CapabilityRecord(
+                name=name,
+                description=description,
+                resource_type=resource_type,
+                operation=operation,
+                risk_level=risk_level,
+                provenance=Provenance(
+                    source_type="builtin",
+                    source_id="openjarvis.security.capability_registry",
+                ),
+            )
+        )
+    return registry
+
+
+__all__ = [
+    "ApprovalRecord",
+    "BUILTIN_CAPABILITIES",
+    "CapabilityRecord",
+    "CapabilityRegistry",
+    "Provenance",
+    "ResourceFingerprint",
+    "ResourceStatus",
+    "RiskLevel",
+    "ValidationCheck",
+    "ValidationRecord",
+    "create_builtin_capability_registry",
+]
