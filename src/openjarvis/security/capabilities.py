@@ -8,7 +8,7 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from openjarvis.security.capability_registry import (
     CapabilityRegistry,
@@ -50,6 +50,10 @@ class AgentPolicy:
     deny: List[str] = field(default_factory=list)  # explicit denials
 
 
+class CapabilityResolutionError(ValueError):
+    """Raised when a tool's effective capability requirements are unknown."""
+
+
 class CapabilityPolicy:
     """RBAC capability policy for tool dispatch.
 
@@ -86,6 +90,49 @@ class CapabilityPolicy:
         """Reject policy entries that do not reference known capabilities."""
         self._registry.require_pattern(capability)
 
+    def resolve_tool_capabilities(self, tool_spec: Any) -> tuple[str, ...]:
+        """Resolve a tool's effective capability requirements.
+
+        Explicit ``ToolSpec.required_capabilities`` declarations are
+        authoritative. The legacy name-based mapping is used only when the
+        declaration is empty, and an unresolved tool is rejected rather than
+        treated as requiring no capability.
+        """
+        name = getattr(tool_spec, "name", None)
+        explicit = getattr(tool_spec, "required_capabilities", None)
+
+        if explicit is not None and not isinstance(explicit, (list, tuple)):
+            raise CapabilityResolutionError(
+                f"Tool '{name or '<unknown>'}' has invalid required_capabilities"
+            )
+
+        if explicit:
+            capabilities = tuple(str(cap) for cap in explicit if str(cap).strip())
+            if len(capabilities) != len(explicit):
+                raise CapabilityResolutionError(
+                    f"Tool '{name or '<unknown>'}' has an empty capability declaration"
+                )
+            source = "ToolSpec.required_capabilities"
+        else:
+            capabilities = tuple(DEFAULT_TOOL_CAPABILITIES.get(name, ()))
+            source = "legacy capability mapping"
+
+        if not capabilities:
+            raise CapabilityResolutionError(
+                f"Tool '{name or '<unknown>'}' has no resolvable capability requirements"
+            )
+
+        for capability in capabilities:
+            try:
+                self._registry.require_pattern(capability)
+            except KeyError as exc:
+                raise CapabilityResolutionError(
+                    f"Tool '{name or '<unknown>'}' declares unknown capability "
+                    f"'{capability}' via {source}"
+                ) from exc
+
+        return capabilities
+
     def grant(self, agent_id: str, capability: str, pattern: str = "*") -> None:
         """Grant a known capability (or known capability glob) to an agent."""
         self._validate_capability_pattern(capability)
@@ -97,7 +144,7 @@ class CapabilityPolicy:
         self._rust_impl.grant(agent_id, capability, pattern)
 
     def deny(self, agent_id: str, capability: str) -> None:
-        """Explicitly deny a known capability (or known capability glob)."""
+        """Explicitly deny a known capability (or known capability glob) to an agent."""
         self._validate_capability_pattern(capability)
         policy = self._policies.setdefault(
             agent_id,
@@ -205,5 +252,6 @@ __all__ = [
     "Capability",
     "CapabilityGrant",
     "CapabilityPolicy",
+    "CapabilityResolutionError",
     "DEFAULT_TOOL_CAPABILITIES",
 ]
