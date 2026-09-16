@@ -191,6 +191,7 @@ class ReplTool(BaseTool):
                 "required": ["code"],
             },
             category="code",
+            required_capabilities=["code:execute"],
             metadata={"structured_allow_object_text": True},
         )
 
