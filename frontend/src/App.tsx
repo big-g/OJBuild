@@ -8,6 +8,7 @@ import { GetStartedPage } from './pages/GetStartedPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { DataSourcesPage } from './pages/DataSourcesPage';
 import { LogsPage } from './pages/LogsPage';
+import { LoginScreen } from './components/LoginScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
 import { Toaster } from './components/ui/sonner';
@@ -16,11 +17,17 @@ import { fetchModels, fetchServerInfo, fetchSavings, submitSavings, isTauri } fr
 import { OptInModal } from './components/OptInModal';
 import { UpdateChecker } from './components/Desktop/UpdateChecker';
 import { track, hashId } from './lib/analytics';
+import { getStoredUser, validateSession, type AuthUser } from './lib/auth';
 
 export default function App() {
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => getStoredUser());
+  const [authChecking, setAuthChecking] = useState(true);
+
   const [setupDone, setSetupDone] = useState(!isTauri());
+
   const handleSetupReady = useCallback(() => {
     setSetupDone(true);
+
     // Only fire once per install — guard against setup screen re-appearing
     // on reinstalls or dev reloads.
     if (!localStorage.getItem('oj-setup-completed')) {
@@ -28,8 +35,33 @@ export default function App() {
       track('setup_completed', { preset: 'default' });
     }
   }, []);
-  const prevModelRef = useRef<string>('');
-  const setModels = useAppStore((s) => s.setModels);
+
+useEffect(() => {
+  let cancelled = false;
+
+  validateSession()
+    .then((user) => {
+      if (!cancelled) {
+        setAuthUser(user);
+      }
+    })
+    .catch(() => {
+      if (!cancelled) {
+        setAuthUser(null);
+      }
+    })
+    .finally(() => {
+      if (!cancelled) {
+        setAuthChecking(false);
+      }
+    });
+
+  return () => {
+    cancelled = true;
+  };
+}, []);
+
+  const prevModelRef = useRef<string>('');const setModels = useAppStore((s) => s.setModels);
   const setModelsLoading = useAppStore((s) => s.setModelsLoading);
   const selectedModel = useAppStore((s) => s.selectedModel);
   const setServerInfo = useAppStore((s) => s.setServerInfo);
@@ -64,23 +96,31 @@ export default function App() {
     return () => clearInterval(interval);
   }, [importOverlay]);
 
-  // Fetch models on mount
-  useEffect(() => {
-    fetchModels()
-      .then((m) => {
-        setModels(m);
-      })
-      .catch(() => setModels([]))
-      .finally(() => setModelsLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+// Fetch models after authentication
+useEffect(() => {
+  if (!authUser) return;
 
-  // Fetch server info
-  useEffect(() => {
-    fetchServerInfo().then(setServerInfo).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  setModelsLoading(true);
+
+  fetchModels()
+    .then((m) => {
+      setModels(m);
+    })
+    .catch(() => setModels([]))
+    .finally(() => setModelsLoading(false));
+}, [authUser, setModels, setModelsLoading]);  
+
+// Fetch server info after authentication
+useEffect(() => {
+  if (!authUser) return;
+
+  fetchServerInfo().then(setServerInfo).catch(() => {});
+}, [authUser, setServerInfo]);
 
   // Poll savings and optionally share to Supabase
   useEffect(() => {
+    if (!authUser) return;
+
     const refresh = () =>
       fetchSavings()
         .then((data) => {
@@ -115,7 +155,7 @@ export default function App() {
     refresh();
     const interval = setInterval(refresh, 30000);
     return () => clearInterval(interval);
-  }, [optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authUser, optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show opt-in modal on first visit
   useEffect(() => {
@@ -178,8 +218,19 @@ export default function App() {
     return <SetupScreen onReady={handleSetupReady} />;
   }
 
-  return (
-    <>
+  if (authChecking) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-muted-foreground">Checking authentication...</div>
+      </div>
+    );
+  }
+
+  if (!authUser) {
+    return <LoginScreen onLogin={setAuthUser} />;
+  }
+
+  return (    <>
       <UpdateChecker />
       <Routes>
         <Route element={<Layout />}>

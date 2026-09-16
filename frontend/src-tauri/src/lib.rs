@@ -1837,6 +1837,8 @@ async fn fetch_models(api_url: String) -> Result<serde_json::Value, String> {
         .await
         .map_err(|e| format!("Connection failed: {}", e))?;
 
+println!("fetch_models: {} {}", resp.status(), base);
+
     resp.json()
         .await
         .map_err(|e| format!("Invalid response: {}", e))

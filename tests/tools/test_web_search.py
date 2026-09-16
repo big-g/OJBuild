@@ -148,6 +148,52 @@ class TestWebSearchTool:
         assert "https://example.com/1" in result.content
         assert result.metadata["engine"] == "duckduckgo"
 
+    def test_duckduckgo_results_include_structured_provenance(self, monkeypatch):
+        """DuckDuckGo fallback retains per-result source provenance."""
+        mock_tavily_module = MagicMock()
+        mock_tavily_module.TavilyClient.side_effect = ImportError(
+            "No module named 'tavily'"
+        )
+        monkeypatch.setitem(sys.modules, "tavily", mock_tavily_module)
+
+        mock_ddgs = MagicMock()
+        mock_ddgs.text.return_value = [
+            {
+                "title": "DDG Result 1",
+                "href": "https://example.com/1",
+                "body": "Content 1",
+            },
+            {
+                "title": "DDG Result 2",
+                "href": "https://example.com/2",
+                "body": "Content 2",
+            },
+        ]
+
+        mock_ddgs_module = MagicMock()
+        mock_ddgs_module.DDGS.return_value = mock_ddgs
+        monkeypatch.setitem(sys.modules, "ddgs", mock_ddgs_module)
+
+        tool = WebSearchTool(api_key="test-key")
+        result = tool.execute(query="test query")
+
+        assert result.success is True
+        assert result.metadata["engine"] == "duckduckgo"
+
+        sources = result.metadata["results"]
+        assert len(sources) == 2
+
+        assert sources[0] == {
+            "title": "DDG Result 1",
+            "url": "https://example.com/1",
+            "content": "Content 1",
+        }
+        assert sources[1] == {
+            "title": "DDG Result 2",
+            "url": "https://example.com/2",
+            "content": "Content 2",
+        }
+
     def test_max_results_parameter(self, monkeypatch):
         import builtins
 
@@ -274,6 +320,62 @@ class TestWebSearchTool:
         # search_depth='advanced' is what pulls richer content from Tavily.
         _, kwargs = mock_client.search.call_args
         assert kwargs.get("search_depth") == "advanced"
+
+    def test_tavily_results_include_structured_provenance(self, monkeypatch):
+        """Search results retain per-result source provenance."""
+        import builtins
+
+        mock_client = MagicMock()
+        mock_client.search.return_value = {
+            "results": [
+                {
+                    "title": "Result 1",
+                    "url": "https://example.com/1",
+                    "content": "Content about test.",
+                },
+                {
+                    "title": "Result 2",
+                    "url": "https://example.com/2",
+                    "content": "More test content.",
+                },
+            ]
+        }
+
+        mock_tavily_module = MagicMock()
+        mock_tavily_module.TavilyClient.return_value = mock_client
+        original_import = builtins.__import__
+
+        def _mock_import(name, *args, **kwargs):
+            if name == "tavily":
+                return mock_tavily_module
+            if name == "tavily.errors":
+                mock_errors = MagicMock()
+                mock_errors.UsageLimitExceededError = Exception
+                return mock_errors
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _mock_import)
+
+        tool = WebSearchTool(api_key="test-key")
+        result = tool.execute(query="test query")
+
+        assert result.success is True
+        assert result.metadata["engine"] == "tavily"
+        assert result.metadata["num_results"] == 2
+
+        sources = result.metadata["results"]
+        assert len(sources) == 2
+
+        assert sources[0] == {
+            "title": "Result 1",
+            "url": "https://example.com/1",
+            "content": "Content about test.",
+        }
+        assert sources[1] == {
+            "title": "Result 2",
+            "url": "https://example.com/2",
+            "content": "More test content.",
+        }
 
     def test_tavily_falls_back_to_snippet_when_no_content(self, monkeypatch):
         """When a Tavily result lacks 'content', the 'snippet' field is used

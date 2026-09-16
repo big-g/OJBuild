@@ -352,33 +352,30 @@ export const useAppStore = create<AppState>((set, get) => {
       }
     },
 
-    createServerConversation: async (model?: string) => {
-      const store = loadConversations();
+createServerConversation: async (model?: string) => {
+  const store = loadConversations();
 
-      let projects = await fetchProjects('default');
-      let project = projects[0];
+  let projects = await fetchProjects();
+  let project = projects[0];
 
-      if (!project) {
-        project = await createProject({
-          user_id: 'default',
-          name: 'Default',
-        });
-        projects = [project];
-      }
+  if (!project) {
+    project = await createProject({
+      name: 'Default',
+    });
+    projects = [project];
+  }
 
-      const session = await createSession({
-        user_id: 'default',
-        project_id: project.project_id,
-        title: 'New chat',
-        channel: 'web',
-      });
+  const session = await createSession({
+    project_id: project.project_id,
+    title: 'New chat',
+    channel: 'web',
+  });
 
-      const conv: Conversation = {
-        id: generateId(),
-        sessionId: session.session_id,
-        title: session.title || 'New chat',
-        createdAt: session.created_at * 1000,
-        updatedAt: session.last_activity * 1000,
+  const conv: Conversation = {
+    id: generateId(),
+    sessionId: session.session_id,
+    title: session.title || 'New chat',
+    createdAt: session.created_at * 1000,        updatedAt: session.last_activity * 1000,
         model: model || get().selectedModel || 'default',
         messages: [],
       };

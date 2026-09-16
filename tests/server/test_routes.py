@@ -10,6 +10,8 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
+from openjarvis.agents._stubs import AgentContext, AgentResult
+
 from openjarvis.core.events import EventBus, EventType  # noqa: E402
 from openjarvis.core.types import Role  # noqa: E402
 from openjarvis.server.app import create_app  # noqa: E402
@@ -1669,3 +1671,235 @@ class TestTraceRecording:
         assert trace.query == "stream please"
         # _make_engine streams "Hello", " ", "world".
         assert trace.result == "Hello world"
+
+def test_current_request_without_evidence_is_blocked(tmp_path):
+    """Current-data answers must not be accepted without external evidence."""
+    from openjarvis.agents.orchestrator import OrchestratorAgent
+    from openjarvis.server.auth_store import AuthStore
+
+    engine = _make_engine(
+        content="Tomorrow will be sunny with a high of 82°F."
+    )
+
+    agent = OrchestratorAgent(
+        engine,
+        "test-model",
+        tools=[],
+        bus=EventBus(),
+        max_turns=3,
+        temperature=0.7,
+        max_tokens=128,
+        system_prompt="Answer the user's question.",
+    )
+
+    app = create_app(
+        engine,
+        "test-model",
+        agent=agent,
+        bus=EventBus(),
+        config=_test_config(),
+        api_key="oj_sk_test123",
+    )
+
+    auth_store = AuthStore(tmp_path / "auth.db")
+    auth_store.create_user(
+        user_id="test-user",
+        username="test-user",
+        password="test-password",
+    )
+    session_token = auth_store.create_session("test-user")
+    app.state.auth_store = auth_store
+
+    client = TestClient(app)
+
+    headers = {
+        "Authorization": "Bearer oj_sk_test123",
+        "X-OpenJarvis-Session": session_token,
+    }
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": "test-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What's the weather forecast for tomorrow?",
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["choices"][0]["message"]["content"] == (
+        "I couldn't retrieve the required data."
+    )
+
+
+def test_current_request_is_allowed_with_web_evidence(tmp_path):
+    """Current-data answers are allowed when external evidence was obtained."""
+    from unittest.mock import MagicMock
+
+    from openjarvis.agents.orchestrator import OrchestratorAgent
+    from openjarvis.core.types import ToolResult
+    from openjarvis.server.auth_store import AuthStore
+
+    engine = _make_engine(
+        content="Tomorrow's forecast is a high of 82°F."
+    )
+
+    agent = OrchestratorAgent(
+        engine,
+        "test-model",
+        tools=[],
+        bus=EventBus(),
+        max_turns=3,
+        temperature=0.7,
+        max_tokens=128,
+        system_prompt="Answer the user's question.",
+    )
+
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow's forecast is a high of 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Weather forecast: Tomorrow, high 82°F, low 68°F.",
+                    success=True,
+                    metadata={
+                        "engine": "test",
+                        "url": "https://example.test/weather",
+                    },
+                )
+            ],
+        )
+    )
+
+    app = create_app(
+        engine,
+        "test-model",
+        agent=agent,
+        bus=EventBus(),
+        config=_test_config(),
+        api_key="oj_sk_test123",
+    )
+
+    auth_store = AuthStore(tmp_path / "auth.db")
+    auth_store.create_user(
+        user_id="test-user",
+        username="test-user",
+        password="test-password",
+    )
+    session_token = auth_store.create_session("test-user")
+    app.state.auth_store = auth_store
+
+    client = TestClient(app)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": "Bearer oj_sk_test123",
+            "X-OpenJarvis-Session": session_token,
+        },
+        json={
+            "model": "test-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What's the weather forecast for tomorrow?",
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["choices"][0]["message"]["content"] == (
+        "Tomorrow's forecast is a high of 82°F."
+    )
+
+
+def test_current_request_is_blocked_when_web_search_fails(tmp_path):
+    """A failed external retrieval must never permit a fabricated answer."""
+    from unittest.mock import MagicMock
+
+    from openjarvis.agents.orchestrator import OrchestratorAgent
+    from openjarvis.core.types import ToolResult
+    from openjarvis.server.auth_store import AuthStore
+
+    engine = _make_engine(
+        content="Tomorrow will be sunny with a high of 82°F."
+    )
+
+    agent = OrchestratorAgent(
+        engine,
+        "test-model",
+        tools=[],
+        bus=EventBus(),
+        max_turns=3,
+        temperature=0.7,
+        max_tokens=128,
+        system_prompt="Answer the user's question.",
+    )
+
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow will be sunny with a high of 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Search failed.",
+                    success=False,
+                )
+            ],
+        )
+    )
+
+    app = create_app(
+        engine,
+        "test-model",
+        agent=agent,
+        bus=EventBus(),
+        config=_test_config(),
+        api_key="oj_sk_test123",
+    )
+
+    auth_store = AuthStore(tmp_path / "auth.db")
+    auth_store.create_user(
+        user_id="test-user",
+        username="test-user",
+        password="test-password",
+    )
+    session_token = auth_store.create_session("test-user")
+    app.state.auth_store = auth_store
+
+    client = TestClient(app)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        headers={
+            "Authorization": "Bearer oj_sk_test123",
+            "X-OpenJarvis-Session": session_token,
+        },
+        json={
+            "model": "test-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What's the weather forecast for tomorrow?",
+                }
+            ],
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["choices"][0]["message"]["content"] == (
+        "I couldn't retrieve the required data."
+    )

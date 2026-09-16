@@ -98,7 +98,13 @@ class MemoryService:
 
     # -- submission ---------------------------------------------------------
 
-    def submit(self, user_text: str, assistant_text: str = "") -> bool:
+    def submit(
+        self,
+        user_text: str,
+        assistant_text: str = "",
+        *,
+        user_id: str = "",
+    ) -> bool:
         """Queue an exchange for extraction. Non-blocking; never raises.
 
         Returns True if the job was enqueued, False if the service is not
@@ -110,7 +116,7 @@ class MemoryService:
         if not user_text or not user_text.strip():
             return False
         try:
-            self._queue.put_nowait((user_text, assistant_text))
+            self._queue.put_nowait((user_text, assistant_text, user_id))
             return True
         except queue.Full:
             logger.debug("Memory service queue full; dropping exchange")
@@ -142,6 +148,7 @@ class MemoryService:
         self.submit(
             str(data.get("user_text", "") or ""),
             str(data.get("assistant_text", "") or ""),
+            user_id=str(data.get("user_id", "") or ""),
         )
 
     # -- worker -------------------------------------------------------------
@@ -210,7 +217,19 @@ class MemoryService:
         return name in _BLOCKING_THREAT_LEVELS
 
     def _process(self, job: Any) -> None:
-        user_text, assistant_text = job
+        if len(job) == 3:
+            user_text, assistant_text, user_id = job
+        elif len(job) == 2:
+            user_text, assistant_text = job
+            user_id = None
+        else:
+            raise ValueError("Memory extraction job must contain 2 or 3 items")
+    
+        logger.info(
+            "Memory extraction job received: user_id=%r user_text=%r",
+            user_id,
+            user_text,
+        )
         # Scan BEFORE extraction so an overt injection attempt never reaches the
         # extraction model or the store at all.
         if self._blocks_exchange(self._scan(f"{user_text}\n{assistant_text}")):
@@ -230,10 +249,18 @@ class MemoryService:
         for fact in facts:
             target = quarantined if self._flagged(self._scan(fact)) else clean
             target.append(fact)
-        stored = self._store.add_many_with_trust(clean, source="auto", trust=TRUST_AUTO)
+        stored = self._store.add_many_with_trust(
+            clean, 
+            source="auto",
+            trust=TRUST_AUTO,
+            user_id=user_id,
+        )
         if quarantined:
             stored += self._store.add_many_with_trust(
-                quarantined, source="auto", trust=TRUST_UNTRUSTED
+                quarantined, 
+                source="auto", 
+                trust=TRUST_UNTRUSTED,
+                user_id=user_id,
             )
             logger.info(
                 "Memory: quarantined %d extracted fact(s) as untrusted",
@@ -244,8 +271,8 @@ class MemoryService:
 
     # -- store passthroughs -------------------------------------------------
 
-    def list_facts(self) -> List[Fact]:
-        return self._store.list()
+    def list_facts(self, user_id: str = "") -> List[Fact]:
+        return self._store.list(user_id=user_id)
 
     def clear_facts(self) -> int:
         return self._store.clear()
@@ -313,6 +340,7 @@ def publish_completed_exchange(
     user_text: str,
     assistant_text: str = "",
     *,
+    user_id: str = "",
     source: str = "",
 ) -> bool:
     """Publish a completed chat exchange for lifecycle subscribers."""
@@ -323,6 +351,7 @@ def publish_completed_exchange(
         {
             "user_text": user_text,
             "assistant_text": assistant_text or "",
+            "user_id": user_id,
             "source": source,
         },
     )

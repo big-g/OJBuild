@@ -115,22 +115,37 @@ class WebSearchTool(BaseTool):
             text = text[:max_chars] + "\n\n[Content truncated]"
         return text
 
-    def _duckduckgo_search(self, query: str, max_results: int) -> str:
+    def _duckduckgo_search(
+        self, query: str, max_results: int
+    ) -> tuple[str, list[dict[str, str]]]:
         """Search using DuckDuckGo as fallback."""
         from ddgs import DDGS
 
         ddgs = DDGS()
         raw_results = list(ddgs.text(query, max_results=max_results))
-        results = []
+
+        formatted_results = []
+        provenance_results: list[dict[str, str]] = []
+
         for r in raw_results:
             title = r.get("title", "Untitled")
             url = r.get("href", "")
             snippet = r.get("body", "")
-            results.append(f"### {title}\nSource: {url}\nSummary: {snippet}")
 
-        formatted = "\n\n---\n\n".join(results)
-        return formatted
+            formatted_results.append(
+                f"### {title}\nSource: {url}\nSummary: {snippet}"
+            )
 
+            provenance_results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "content": snippet,
+                }
+            )
+
+        formatted = "\n\n---\n\n".join(formatted_results)
+        return formatted, provenance_results
     def execute(self, **params: Any) -> ToolResult:
         query = params.get("query", "")
         if not query:
@@ -170,15 +185,27 @@ class WebSearchTool(BaseTool):
                 search_depth="advanced",
                 include_usage=True,
             )
+
             results = response.get("results", [])
             formatted_parts = []
+            provenance_results = []
+
             for r in results:
                 title = r.get("title", "Untitled")
                 url = r.get("url", "")
                 content = r.get("content", "") or r.get("snippet", "")
+
                 formatted_parts.append(
                     f"### {title}\nSource: {url}\nSummary: {content}"
                 )
+
+                provenance_results.append(
+                {
+                    "title": title,
+                    "url": url,
+                    "content": content,
+                }
+            )
 
             formatted = "\n\n---\n\n".join(formatted_parts)
             return ToolResult(
@@ -189,6 +216,7 @@ class WebSearchTool(BaseTool):
                     "num_results": len(results),
                     "engine": "tavily",
                     "credits": (response.get("usage") or {}).get("credits"),
+                    "results": provenance_results,
                 },
             )
         except Exception as exc:
@@ -197,13 +225,20 @@ class WebSearchTool(BaseTool):
             )
 
         try:
-            formatted = self._duckduckgo_search(query, max_results)
+            formatted, provenance_results = self._duckduckgo_search(
+                query, max_results
+            )
             return ToolResult(
                 tool_name="web_search",
                 content=formatted or "No results found.",
                 success=True,
-                metadata={"engine": "duckduckgo"},
+                metadata={
+                    "engine": "duckduckgo",
+                    "num_results": len(provenance_results),
+                    "results": provenance_results,
+                },
             )
+
         except ImportError:
             return ToolResult(
                 tool_name="web_search",

@@ -129,6 +129,7 @@ class Fact:
     """A single durable memory entry."""
 
     text: str
+    user_id: str = ""
     source: str = ""
     created_at: float = 0.0
     # Provenance tier: one of the TRUST_* constants above ("" for legacy rows).
@@ -149,7 +150,13 @@ class FactStore(ABC):
     """Abstract persistent store for extracted memory facts."""
 
     @abstractmethod
-    def add(self, text: str, source: str = "") -> bool:
+    def add(
+        self, 
+        text: str, 
+        source: str = "",
+        trust: str = "",
+        user_id: str = "",
+    ) -> bool:
         """Store *text* as a fact. Returns True if a new fact was stored."""
 
     def set_trust(self, index: int, trust: str) -> bool:
@@ -183,10 +190,15 @@ class FactStore(ABC):
         texts: Iterable[str],
         source: str = "",
         trust: str = "",
+        user_id: str = "",
     ) -> int:
         """Store several provenance-aware facts."""
         return sum(
-            bool(self.add_with_trust(text, source=source, trust=trust))
+            bool(
+                self.add_with_trust(
+                    text, source=source, trust=trust
+                )
+            )
             for text in texts
         )
 
@@ -263,6 +275,7 @@ class LocalFactStore(FactStore):
             facts.append(
                 Fact(
                     text=fact_text,
+                    user_id=str(obj.get("user_id", "")),
                     source=str(obj.get("source", "")),
                     created_at=float(obj.get("created_at", 0.0) or 0.0),
                     trust=str(obj.get("trust", "")),
@@ -304,7 +317,13 @@ class LocalFactStore(FactStore):
 
     # -- FactStore API ------------------------------------------------------
 
-    def add(self, text: str, source: str = "", trust: str = "") -> bool:
+    def add(
+        self, 
+        text: str, 
+        source: str = "", 
+        trust: str = "",
+        user_id: str = "",
+    ) -> bool:
         text = (text or "").strip()
         if not text:
             return False
@@ -313,7 +332,11 @@ class LocalFactStore(FactStore):
             self._sync_from_disk_locked()
             lowered = text.lower()
             duplicate = next(
-                (fact for fact in self._facts if fact.text.lower() == lowered),
+                (
+                    fact 
+                    for fact in self._facts 
+                    if fact.user_id == user_id and fact.text.lower() == lowered
+                ),
                 None,
             )
             if duplicate is not None:
@@ -325,7 +348,13 @@ class LocalFactStore(FactStore):
                     self._flush()
                 return False  # dedupe
             self._facts.append(
-                Fact(text=text, source=source, created_at=time.time(), trust=trust)
+                Fact(
+                    text=text,
+                    user_id=user_id, 
+                    source=source, 
+                    created_at=time.time(), 
+                    trust=trust
+                )
             )
             # Enforce the cap by evicting the oldest entries. max_facts is
             # always positive (validated in __init__), so this slice can't
@@ -336,8 +365,14 @@ class LocalFactStore(FactStore):
             self._flush()
         return True
 
-    def add_with_trust(self, text: str, source: str = "", trust: str = "") -> bool:
-        return self.add(text, source=source, trust=trust)
+    def add_with_trust(
+        self, 
+        text: str, 
+        source: str = "", 
+        trust: str = "",
+        user_id: str = "",
+    ) -> bool:
+        return self.add(text, source=source, trust=trust, user_id=user_id)
 
     def set_trust(self, index: int, trust: str) -> bool:
         trust = (trust or "").strip().lower()
@@ -364,10 +399,12 @@ class LocalFactStore(FactStore):
             self._flush()
         return True
 
-    def list(self) -> List[Fact]:
+    def list(self, user_id: str = "") -> List[Fact]:
         with self._lock:
             self._sync_from_disk_locked()
-            return list(self._facts)
+            if not user_id:
+                return list(self._facts)
+        return [fact for fact in self._facts if fact.user_id == user_id]
 
     def clear(self) -> int:
         with self._lock, _cross_process_lock(self._lock_path()):

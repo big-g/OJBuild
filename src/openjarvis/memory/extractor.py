@@ -87,7 +87,7 @@ class FactExtractor:
             content = result.get("content", "") or ""
         else:
             content = str(result)
-
+        logger.info("Memory extractor result: %r", content)
         return self._parse(content)
 
     # -- parsing ------------------------------------------------------------

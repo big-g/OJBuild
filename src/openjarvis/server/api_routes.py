@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from openjarvis.server.auth import get_authenticated_user_id
+
 logger = logging.getLogger(__name__)
 
 # ---- Request/Response models ----
@@ -59,18 +61,17 @@ class OptimizeRunRequest(BaseModel):
     max_samples: int = 50
 
 class CreateProjectRequest(BaseModel):
-    user_id: str = "default"
     name: str
     description: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class CreateSessionRequest(BaseModel):
-    user_id: str = "default"
     project_id: str
     title: str = ""
     channel: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
 # ---- Agent routes ----
 
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -558,13 +559,13 @@ async def create_project(
     """Create a persistent project for a user."""
     try:
         store = _session_store(request)
-
+        user_id = get_authenticated_user_id(request)
         store.ensure_user(
-            req.user_id,
+            user_id,
         )
 
         project = store.create_project(
-            user_id=req.user_id,
+            user_id=user_id,
             name=req.name,
             description=req.description,
             metadata=req.metadata,
@@ -588,11 +589,11 @@ async def create_project(
 @projects_router.get("")
 async def list_projects(
     request: Request,
-    user_id: str = "default",
 ):
     """List persistent projects for a user."""
     try:
         store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
         projects = store.list_projects(user_id)
 
         return {
@@ -639,9 +640,10 @@ async def create_session(
     """Create a persistent conversation session."""
     try:
         store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
 
         session = store.create_session(
-            user_id=req.user_id,
+            user_id=user_id,
             project_id=req.project_id,
             title=req.title,
             channel=req.channel,
@@ -671,13 +673,13 @@ async def create_session(
 @sessions_router.get("")
 async def list_sessions(
     request: Request,
-    user_id: str = "default",
     project_id: Optional[str] = None,
     limit: int = 20,
 ):
     """List persistent sessions for a user or project."""
     try:
         store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
 
         if project_id:
             sessions = store.list_sessions(
@@ -710,6 +712,8 @@ async def list_sessions(
             ]
         }
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Failed to list sessions")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -720,9 +724,16 @@ async def get_session(session_id: str, request: Request):
     """Get a persistent session and its conversation history."""
     try:
         store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
         session = store.get_session(session_id)
 
-        if session is None:
+        if session is None or session.identity is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Session not found",
+            )
+
+        if session.identity.user_id != user_id:
             raise HTTPException(
                 status_code=404,
                 detail="Session not found",
@@ -886,12 +897,21 @@ async def websocket_chat_stream(websocket: WebSocket):
     from openjarvis.server.auth_middleware import authenticate_websocket
 
     expected_key = getattr(websocket.app.state, "api_key", "")
-    authorized, subprotocol = authenticate_websocket(websocket, expected_key)
+    authorized, subprotocol, user_id = authenticate_websocket(
+        websocket,
+        expected_key,
+    )
     if not authorized:
-        # Closing before accept rejects the HTTP upgrade request.
         await websocket.close(code=1008)
         return
+
     await websocket.accept(subprotocol=subprotocol)
+
+    # Human-authenticated WebSocket connections carry the authenticated
+    # application user identity. Master API-key connections intentionally
+    # have no user_id.
+    if user_id is not None:
+        websocket.state.auth_user_id = user_id    
     try:
         while True:
             raw = await websocket.receive_text()

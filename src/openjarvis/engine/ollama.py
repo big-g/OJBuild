@@ -191,7 +191,7 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                 payload["format"] = "json"
         try:
             resp = self._client.post("/api/chat", json=payload)
-            if resp.status_code == 400 and tools:
+            if resp.status_code == 400 and tools and not kwargs.get("require_tools", False):
                 # Model may not support function calling -- retry without tools
                 payload.pop("tools", None)
                 resp = self._client.post("/api/chat", json=payload)
@@ -399,7 +399,9 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
             payload["tools"] = tools
 
         async for chunk in self._run_stream(
-            payload, messages, retry_without_tools=bool(tools)
+            payload, 
+            messages, 
+            retry_without_tools=bool(tools) and not kwargs.get("require_tools", False),
         ):
             yield chunk
 

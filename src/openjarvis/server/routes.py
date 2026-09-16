@@ -15,6 +15,7 @@ from fastapi.responses import StreamingResponse
 
 from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message, Role, ToolCall
+from openjarvis.server.auth import get_authenticated_user_id
 from openjarvis.server.model_capabilities import is_embed_only_model
 from openjarvis.server.models import (
     ChatCompletionChunk,
@@ -169,8 +170,16 @@ def _ensure_identity_prompt(messages: list[Message], app_config) -> list[Message
 @router.post("/v1/chat/completions")
 async def chat_completions(request_body: ChatCompletionRequest, request: Request):
     """Handle chat completion requests (streaming and non-streaming)."""
+    user_id = get_authenticated_user_id(request)
+
     engine = request.app.state.engine
     agent = getattr(request.app.state, "agent", None)
+
+    logging.getLogger("openjarvis.server").info(
+        "Agent runtime: agent=%r tools=%r",
+        agent is not None,
+        bool(getattr(agent, "_tools", None)),
+    )
     model = request_body.model
 
     # Load server-side conversation history when a persistent session is supplied.
@@ -187,6 +196,12 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                     status_code=404,
                     detail=f"Session not found: {request_body.session_id}",
                 )
+
+            if session.identity.user_id != user_id:
+                raise HTTPException(
+                status_code=403,
+                detail="Session does not belong to authenticated user",
+                ) 
 
             # The server is authoritative for persistent sessions.
             # Keep the current request's new user message, but replace the
@@ -344,6 +359,15 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 exc_info=True,
             )
 
+    logging.getLogger("openjarvis.server").info(
+        "STREAM ROUTE: stream=%r tools=%r agent=%r agent_tools=%r use_server_agent=%r",
+        request_body.stream,
+        bool(request_body.tools),
+        agent is not None,
+        bool(getattr(agent, "_tools", None)),
+        use_server_agent,
+    )
+
     if request_body.stream:
         # When the client passes `tools`, stream the model's raw
         # OpenAI-compat function-calling decision directly from the engine
@@ -380,6 +404,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 memory_service=getattr(request.app.state, "memory_service", None),
                 session_store=session_store,
                 session_id=request_body.session_id,
+                user_id=user_id,
             )
 
         return await _handle_stream(
@@ -451,6 +476,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         getattr(request.app.state, "memory_service", None),
         query_text_for_complexity,
         response,
+        user_id=user_id,
         bus=getattr(request.app.state, "bus", None),
         source="server.chat",
     )    
@@ -495,12 +521,20 @@ def _record_completed_exchange(
     user_text: str,
     assistant_text: str,
     *,
+    user_id: str = "",
     bus=None,
     source: str = "server.chat",
 ) -> None:
+
     """Publish or submit a completed exchange without blocking a reply."""
     if not user_text:
         return
+    logging.getLogger("openjarvis.server").info(
+        "Memory record: bus=%r memory_service=%r user_id=%r",
+        bus is not None,
+        memory_service is not None,
+        user_id,
+    )
     try:
         if bus is not None:
             from openjarvis.memory import publish_completed_exchange
@@ -509,10 +543,15 @@ def _record_completed_exchange(
                 bus,
                 user_text,
                 assistant_text,
+                user_id=user_id,
                 source=source,
             )
         elif memory_service is not None:
-            memory_service.submit(user_text, assistant_text)
+            memory_service.submit(
+                user_text, 
+                assistant_text,
+                user_id=user_id,
+            )
     except Exception:  # noqa: BLE001 — memory is best-effort, never fail a reply
         logging.getLogger("openjarvis.server").debug(
             "Memory submit failed",
@@ -525,6 +564,7 @@ def _remember_exchange(
     user_text: str,
     response,
     *,
+    user_id: str = "",
     bus=None,
     source: str = "server.chat",
 ) -> None:
@@ -533,6 +573,7 @@ def _remember_exchange(
         memory_service,
         user_text,
         _response_content(response),
+        user_id= user_id,
         bus=bus,
         source=source,
     )
@@ -791,6 +832,7 @@ async def _handle_agent_stream(
     memory_service=None,
     session_store=None,
     session_id=None,
+    user_id=None,
 ):
 
     """Run the configured agent and return its result as an SSE response.
@@ -804,6 +846,13 @@ async def _handle_agent_stream(
     Requests that explicitly supply OpenAI ``tools`` continue to use
     ``_handle_stream_tools`` so their raw tool-call deltas are preserved.
     """
+    logging.getLogger("openjarvis.server").info(
+        "ENTERED _handle_agent_stream: user_id=%r memory_service=%r bus=%r",
+        user_id,
+        memory_service is not None,
+        bus is not None,
+    )
+
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     query_text = ""
     for message in reversed(req.messages):
@@ -873,7 +922,10 @@ async def _handle_agent_stream(
         finish_data["usage"] = response.usage.model_dump()
         if complexity_info is not None:
             finish_data["complexity"] = complexity_info.model_dump()
-        yield f"data: {_json.dumps(finish_data)}\n\n"
+
+        # Persist and record the completed exchange BEFORE yielding the
+        # terminal chunk, because the client may close the stream after
+        # receiving finish_reason="stop".
 
         _persist_session_message(
             session_store,
@@ -886,9 +938,12 @@ async def _handle_agent_stream(
             memory_service,
             query_text,
             content,
+            user_id=user_id,
             bus=bus,
             source="server.chat.stream",
         )
+
+        yield f"data: {_json.dumps(finish_data)}\n\n"
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
@@ -1026,6 +1081,7 @@ async def _handle_stream_tools(
                 memory_service,
                 query_text,
                 full_content,
+                user_id=user_id,
                 bus=bus,
                 source="server.chat.stream",
             )
@@ -1204,6 +1260,7 @@ async def _handle_stream(
                 memory_service,
                 query_text,
                 full_content,
+                user_id=user_id,
                 bus=bus,
                 source="server.chat.stream",
             )

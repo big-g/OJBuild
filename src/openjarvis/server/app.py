@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from openjarvis.server.analytics_routes import router as analytics_router
+from openjarvis.server.auth_routes import router as auth_router
 from openjarvis.server.api_routes import include_all_routes
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
@@ -238,6 +239,12 @@ def create_app(
     # AuthMiddleware never sees WS upgrade requests). Empty = auth disabled.
     app.state.api_key = api_key
 
+    # Human authentication store. Separate from the master API key and
+    # separate from conversation/session storage.
+    from openjarvis.server.auth_store import AuthStore
+
+    app.state.auth_store = AuthStore()
+
     @app.on_event("shutdown")
     async def _shutdown_managed_runtime() -> None:
         # Quiesce every producer before touching the shared MCP pool. Route
@@ -425,6 +432,7 @@ def create_app(
     app.include_router(upload_router)
     app.include_router(research_router)
     app.include_router(analytics_router)
+    app.include_router(auth_router)
     include_all_routes(app)
 
     # Restore SendBlue channel bindings from database on startup

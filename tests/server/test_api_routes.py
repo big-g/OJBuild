@@ -238,10 +238,10 @@ class TestSkillRoutes:
 
 
 class TestSessionRoutes:
-    def test_list_sessions(self):
+    def test_list_sessions_requires_authentication(self):
         client = TestClient(_make_app())
         resp = client.get("/v1/sessions")
-        assert resp.status_code == 200
+        assert resp.status_code == 401
 
 
 class TestTraceRoutes:

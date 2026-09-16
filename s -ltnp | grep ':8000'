@@ -1,0 +1,3 @@
+MainPID=84107
+ExecStart={ path=/home/big-g/.local/bin/uv ; argv[]=/home/big-g/.local/bin/uv run jarvis serve --host 0.0.0.0 --port 8000 ; ignore_errors=no ; start_time=[Fri 2026-09-11 12:58:17 UTC] ; stop_time=[n/a] ; pid=84107 ; code=(null) ; status=0/0 }
+WorkingDirectory=/home/big-g/.openjarvis

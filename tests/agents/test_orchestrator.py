@@ -6,7 +6,7 @@ import threading
 import time
 from unittest.mock import MagicMock
 
-from openjarvis.agents._stubs import AgentContext
+from openjarvis.agents._stubs import AgentContext, AgentResult
 from openjarvis.agents.orchestrator import OrchestratorAgent
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import Conversation, Message, Role, ToolResult
@@ -915,3 +915,120 @@ class TestOrchestratorGovernanceHook:
         assert calls == []
         assert result.tool_results[0].success is False
         assert "not an object" in result.tool_results[0].content
+
+def test_current_request_is_blocked_without_web_evidence():
+    engine = _make_engine_no_tools(
+        content="Tomorrow will be sunny with a high of 82°F."
+    )
+    agent = OrchestratorAgent(engine, "test-model", tools=[])
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "I couldn't retrieve the required data."
+    assert result.metadata["evidence_required"] is True
+    assert result.metadata["evidence_status"] == "required_not_obtained"
+
+def test_current_request_requires_tools_at_engine():
+    engine = _make_engine_no_tools(
+        content="Tomorrow will be sunny with a high of 82°F."
+    )
+    agent = OrchestratorAgent(engine, "test-model", tools=[])
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    call_kwargs = engine.generate.call_args[1]
+
+    assert call_kwargs["require_tools"] is True
+    assert result.content == "I couldn't retrieve the required data."
+
+def test_current_request_is_blocked_when_web_search_fails():
+    engine = _make_engine_no_tools()
+    agent = OrchestratorAgent(engine, "test-model", tools=[])
+
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow will be sunny with a high of 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Search failed.",
+                    success=False,
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "I couldn't retrieve the required data."
+    assert result.metadata["evidence_required"] is True
+    assert result.metadata["evidence_status"] == "required_not_obtained"
+
+
+def test_current_request_is_allowed_with_web_evidence():
+    engine = _make_engine_no_tools()
+    agent = OrchestratorAgent(engine, "test-model", tools=[])
+
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow's forecast is a high of 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Weather forecast: Tomorrow, high 82°F, low 68°F.",
+                    success=True,
+                    metadata={
+                        "engine": "test",
+                        "url": "https://example.test/weather",
+                    },
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "Tomorrow's forecast is a high of 82°F."
+    assert result.metadata["evidence_required"] is True
+    assert result.metadata["evidence_status"] == "obtained"
+    assert result.metadata["evidence_records"] == 1
+
+def test_current_request_splits_web_provenance_into_separate_records():
+    engine = _make_engine_no_tools()
+    agent = OrchestratorAgent(engine, "test-model", tools=[])
+
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="The forecast is partly cloudy.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Combined search output.",
+                    success=True,
+                    metadata={
+                        "engine": "duckduckgo",
+                        "num_results": 2,
+                        "results": [
+                            {
+                                "title": "Weather Source A",
+                                "url": "https://example.test/a",
+                                "content": "Source A says partly cloudy.",
+                            },
+                            {
+                                "title": "Weather Source B",
+                                "url": "https://example.test/b",
+                                "content": "Source B says partly cloudy.",
+                            },
+                        ],
+                    },
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "The forecast is partly cloudy."
+    assert result.metadata["evidence_required"] is True
+    assert result.metadata["evidence_status"] == "obtained"
+    assert result.metadata["evidence_records"] == 2

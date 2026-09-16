@@ -76,11 +76,17 @@ export const getBase = (): string => {
   return '';
 };
 
-// Resolve the local server API key (OPENJARVIS_API_KEY). When `jarvis serve`
-// is started with a key, AuthMiddleware 401s every /v1 and /api request that
-// lacks a Bearer token — so the frontend must send it (#266). Sourced from the
-// same settings blob as the API URL, with an optional build-time env override.
-// Returns '' when unset, so a keyless local server keeps working unchanged.
+export const getSessionToken = (): string => {
+  try {
+    const raw = localStorage.getItem('openjarvis-auth');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.sessionToken) return String(parsed.sessionToken);
+    }
+  } catch {}
+  return '';
+};
+
 export const getApiKey = (): string => {
   try {
     const raw = localStorage.getItem('openjarvis-settings');
@@ -89,21 +95,42 @@ export const getApiKey = (): string => {
       if (parsed.apiKey) return String(parsed.apiKey);
     }
   } catch {}
+
   if (import.meta.env.VITE_OPENJARVIS_API_KEY) {
     return import.meta.env.VITE_OPENJARVIS_API_KEY as string;
   }
+
   return '';
 };
 
-// Build request headers with the Bearer Authorization token when a local key
-// is configured, merging any caller-supplied headers. Adds no Authorization
-// header when no key is set, so keyless local dev is byte-for-byte unchanged.
 export const authHeaders = (
   extra: Record<string, string> = {},
 ): Record<string, string> => {
+  const session = getSessionToken();
+
+  if (session) {
+    return {
+      ...extra,
+      'X-OpenJarvis-Session': session,
+    };
+  }
+
   const key = getApiKey();
-  return key ? { ...extra, Authorization: `Bearer ${key}` } : { ...extra };
+
+  return key
+    ? { ...extra, Authorization: `Bearer ${key}` }
+    : { ...extra };
 };
+
+export interface AuthUser {
+  user_id: string;
+  username: string;
+  display_name: string;
+}
+
+export interface LoginResponse extends AuthUser {
+  session_token: string;
+}
 
 // Centralized fetch for the local server: prepends getBase() and injects the
 // Bearer auth header (when a key is set) on every call. Using this everywhere
@@ -164,12 +191,8 @@ export interface JarvisSession {
 // ---------------------------------------------------------------------------
 // Project/Session API functions
 // ---------------------------------------------------------------------------
-export async function fetchProjects(
-  userId = 'default',
-): Promise<JarvisProject[]> {
-  const res = await apiFetch(
-    `/v1/projects?user_id=${encodeURIComponent(userId)}`,
-  );
+export async function fetchProjects(): Promise<JarvisProject[]> {
+  const res = await apiFetch('/v1/projects');
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 
   const data = await res.json();
@@ -177,7 +200,6 @@ export async function fetchProjects(
 }
 
 export async function createProject(body: {
-  user_id?: string;
   name: string;
   description?: string;
   metadata?: Record<string, unknown>;
@@ -186,7 +208,6 @@ export async function createProject(body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      user_id: 'default',
       description: '',
       metadata: {},
       ...body,
@@ -198,37 +219,26 @@ export async function createProject(body: {
 }
 
 export async function fetchSessions(
-  userId = 'default',
   projectId?: string,
 ): Promise<JarvisSession[]> {
-  const params = new URLSearchParams({
-    user_id: userId,
-  });
+  const params = new URLSearchParams();
 
   if (projectId) {
     params.set('project_id', projectId);
   }
 
-  const res = await apiFetch(`/v1/sessions?${params.toString()}`);
+  const query = params.toString();
+  const res = await apiFetch(
+    query ? `/v1/sessions?${query}` : '/v1/sessions',
+  );
+
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 
   const data = await res.json();
   return data.sessions || [];
 }
 
-export async function fetchSession(
-  sessionId: string,
-): Promise<JarvisSession> {
-  const res = await apiFetch(
-    `/v1/sessions/${encodeURIComponent(sessionId)}`,
-  );
-
-  if (!res.ok) throw new Error(`Failed: ${res.status}`);
-  return res.json();
-}
-
 export async function createSession(body: {
-  user_id?: string;
   project_id: string;
   title?: string;
   channel?: string;
@@ -238,13 +248,23 @@ export async function createSession(body: {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      user_id: 'default',
       title: '',
       channel: '',
       metadata: {},
       ...body,
     }),
   });
+
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSession(
+  sessionId: string,
+): Promise<JarvisSession> {
+  const res = await apiFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}`,
+  );
 
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
@@ -395,16 +415,19 @@ export async function checkHealth(): Promise<boolean> {
   // worker, etc.) fall back to an arbitrary API endpoint we know the rest
   // of the app polls successfully. If THAT also fails we genuinely can't
   // reach the backend.
-  const probe = async (url: string): Promise<boolean> => {
+  const probe = async (url: string, authenticated = false): Promise<boolean> => {
     try {
-      const res = await fetch(url, { cache: 'no-store' });
+      const res = await fetch(url, {
+        cache: 'no-store',
+        headers: authenticated ? authHeaders() : undefined,
+      });
       return res.ok;
     } catch {
       return false;
     }
   };
   if (await probe('/health')) return true;
-  return probe('/v1/connectors');
+  return probe('/v1/connectors',true);
 }
 
 export async function fetchEnergy(): Promise<unknown> {

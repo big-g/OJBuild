@@ -68,7 +68,7 @@ def create_ws_router(event_bus: EventBus) -> Any:
         from openjarvis.server.auth_middleware import authenticate_websocket
 
         expected_key = getattr(websocket.app.state, "api_key", "")
-        authorized, subprotocol = authenticate_websocket(websocket, expected_key)
+        authorized, subprotocol, _user_id = authenticate_websocket(websocket, expected_key)
         if not authorized:
             # Closing before accept rejects the HTTP upgrade request.
             await websocket.close(code=1008)

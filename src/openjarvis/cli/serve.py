@@ -526,8 +526,9 @@ def serve(
         if memory_service is not None:
             memory_service.start()
             console.print("  Memory svc: [cyan]active[/cyan]")
+
     except Exception as exc:
-        logger.debug("Memory service init failed: %s", exc)
+        logger.warning("Memory service init failed: %s", exc, exc_info=True)
         memory_service = None
 
     # Set up agent manager

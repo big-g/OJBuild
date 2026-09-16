@@ -20,13 +20,19 @@ from typing import Any, Callable, List, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, ToolUsingAgent
 from openjarvis.core.events import EventBus
+from openjarvis.core.evidence import (
+    EvidenceRecord,
+    assess_evidence,
+    blocked_response,
+    detect_evidence_requirement,
+    evidence_records_from_tool_result,
+)
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
 from openjarvis.engine._stubs import InferenceEngine
 from openjarvis.tools._stubs import BaseTool
 
 logger = logging.getLogger(__name__)
-
 
 @AgentRegistry.register("orchestrator")
 class OrchestratorAgent(ToolUsingAgent):
@@ -90,9 +96,70 @@ class OrchestratorAgent(ToolUsingAgent):
         context: Optional[AgentContext] = None,
         **kwargs: Any,
     ) -> AgentResult:
+        requirement = detect_evidence_requirement(input)
+
+        if requirement.required:
+            kwargs["require_tools"] = True
+
         if self._mode == "structured":
-            return self._run_structured(input, context, **kwargs)
-        return self._run_function_calling(input, context, **kwargs)
+            result = self._run_structured(input, context, **kwargs)
+        else:
+            result = self._run_function_calling(input, context, **kwargs)
+
+        if not requirement.required:
+            return result
+
+        evidence_records: list[EvidenceRecord] = []
+
+        for tool_result in result.tool_results:
+            if not tool_result.success:
+                continue
+
+            # Only external retrieval currently counts as evidence.
+            if tool_result.tool_name != "web_search":
+                continue
+
+            content = tool_result.content.strip()
+            if not content or content == "No results found.":
+                continue
+
+            evidence_records.extend(
+                evidence_records_from_tool_result(
+                    tool_name=tool_result.tool_name,
+                    metadata=tool_result.metadata or {},
+                    fallback_content=content,
+                )
+            )
+
+        assessment = assess_evidence(
+            requirement,
+            evidence_records,
+        )
+
+        if assessment.blocked:
+            return AgentResult(
+                content=blocked_response(assessment),
+                tool_results=result.tool_results,
+                turns=result.turns,
+                metadata={
+                    **result.metadata,
+                    "evidence_required": True,
+                    "evidence_status": assessment.status.value,
+                    "evidence_reason": assessment.reason,
+                },
+            )
+
+        return AgentResult(
+            content=result.content,
+            tool_results=result.tool_results,
+            turns=result.turns,
+            metadata={
+                **result.metadata,
+                "evidence_required": True,
+                "evidence_status": assessment.status.value,
+                "evidence_records": len(evidence_records),
+            },
+        )
 
     # ------------------------------------------------------------------
     # Governance hook
@@ -168,7 +235,7 @@ class OrchestratorAgent(ToolUsingAgent):
             if self._loop_guard:
                 messages = self._loop_guard.compress_context(messages)
 
-            result = self._generate(messages)
+            result = self._generate(messages, **kwargs)
             content = result.get("content", "")
 
             parsed = self._parse_structured_response(content)
@@ -370,6 +437,7 @@ class OrchestratorAgent(ToolUsingAgent):
             if openai_tools:
                 gen_kwargs["tools"] = openai_tools
 
+            gen_kwargs.update(kwargs)
             result = self._generate(messages, **gen_kwargs)
 
             # Accumulate token usage

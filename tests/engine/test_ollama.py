@@ -506,3 +506,44 @@ class TestOllamaStreamHttpErrorMapping:
         # First request had tools (400), second retried without them (200).
         assert calls == [True, False]
         assert any(c.content == "recovered" for c in chunks)
+
+    @pytest.mark.asyncio
+    async def test_400_tools_does_not_retry_when_tools_required(self) -> None:
+        calls: list[bool] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            payload = json.loads(request.content)
+            calls.append("tools" in payload)
+
+            if "tools" in payload:
+                return httpx.Response(400, text="model does not support tools")
+
+            return httpx.Response(
+                200,
+                text=json.dumps(
+                    {"message": {"content": "UNSAFE FALLBACK"}, "done": True}
+                )
+                + "\n",
+            )
+
+        engine = OllamaEngine(host="http://localhost:11434")
+        engine._async_transport = httpx.MockTransport(handler)
+
+        with pytest.raises(EngineConnectionError):
+            [
+                c
+                async for c in engine.stream_full(
+                    [Message(role=Role.USER, content="What's the weather?")],
+                    model="qwen3:8b",
+                    tools=[
+                        {
+                            "type": "function",
+                            "function": {"name": "web_search"},
+                        }
+                    ],
+                    require_tools=True,
+                )
+            ]
+
+        # The request with tools failed, and MUST NOT retry without tools.
+        assert calls == [True]

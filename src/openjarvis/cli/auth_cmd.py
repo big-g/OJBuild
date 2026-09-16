@@ -8,6 +8,11 @@ import stat
 
 import click
 
+import uuid
+
+from openjarvis.server.auth_store import AuthStore
+from openjarvis.sessions.session import SessionStore
+
 from openjarvis.core.config import (
     DEFAULT_CONFIG_DIR,
     DEFAULT_CONFIG_PATH,
@@ -69,3 +74,97 @@ def revoke_key() -> None:
     content = re.sub(r'api_key\s*=\s*"[^"]*"', 'api_key = ""', content)
     config_path.write_text(content)
     click.echo("API key revoked.")
+
+@auth.command("create-user")
+@click.option("--username", prompt=True, help="Login username.")
+@click.option("--display-name", prompt=True, help="User's display name.")
+def create_user(username: str, display_name: str) -> None:
+    """Create a local OpenJarvis user account."""
+    username = username.strip()
+    display_name = display_name.strip()
+
+    if not username:
+        raise click.ClickException("Username cannot be empty.")
+
+    if not display_name:
+        raise click.ClickException("Display name cannot be empty.")
+
+    password = click.prompt(
+        "Password",
+        hide_input=True,
+        confirmation_prompt=True,
+    )
+
+    # Generate the application user ID independently of the login username.
+    user_id = f"user_{uuid.uuid4().hex}"
+
+    auth_store = AuthStore()
+
+    if auth_store.get_user_by_username(username) is not None:
+        raise click.ClickException(
+            f"Username '{username}' already exists."
+        )
+
+    try:
+        auth_store.create_user(
+            user_id=user_id,
+            username=username,
+            display_name=display_name,
+            password=password,
+        )
+    except Exception as exc:
+        raise click.ClickException(
+            f"Failed to create authentication account: {exc}"
+        ) from exc
+
+    # Bridge the authentication identity into the existing
+    # OpenJarvis session/user system.
+    session_store = SessionStore()
+    session_store.ensure_user(
+        user_id=user_id,
+        display_name=display_name,
+    )
+
+    click.echo()
+    click.echo("OpenJarvis user created successfully.")
+    click.echo(f"User ID:      {user_id}")
+    click.echo(f"Username:     {username}")
+    click.echo(f"Display name: {display_name}")
+
+@auth.command("reset-password")
+@click.option("--username", prompt=True, help="Login username.")
+def reset_password(username: str) -> None:
+    """Reset the password for an existing OpenJarvis user."""
+    username = username.strip()
+
+    if not username:
+        raise click.ClickException("Username cannot be empty.")
+
+    auth_store = AuthStore()
+    user = auth_store.get_user_by_username(username)
+
+    if user is None:
+        raise click.ClickException(
+            f"Username '{username}' does not exist."
+        )
+
+    password = click.prompt(
+        "New password",
+        hide_input=True,
+        confirmation_prompt=True,
+    )
+
+    try:
+        auth_store.set_password(
+            user_id=str(user["user_id"]),
+            password=password,
+        )
+    except Exception as exc:
+        raise click.ClickException(
+            f"Failed to reset password: {exc}"
+        ) from exc
+
+    click.echo()
+    click.echo("Password reset successfully.")
+    click.echo(f"Username: {username}")
+    click.echo("Existing authentication sessions were revoked.")
