@@ -55,6 +55,7 @@ class DockerCodeInterpreterTool(BaseTool):
             },
             category="code",
             timeout_seconds=60.0,
+            required_capabilities=["code:execute"],
             metadata={"structured_allow_object_text": True},
         )
 
