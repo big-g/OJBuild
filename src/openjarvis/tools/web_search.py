@@ -45,6 +45,7 @@ class WebSearchTool(BaseTool):
                 "required": ["query"],
             },
             category="search",
+            required_capabilities=["network:fetch"],
             metadata={"requires_api_key": "TAVILY_API_KEY", "fallback": "duckduckgo"},
         )
 
