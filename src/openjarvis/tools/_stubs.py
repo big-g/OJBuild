@@ -19,6 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import ToolCall, ToolResult
+from openjarvis.security.capabilities import CapabilityResolutionError
 
 _MAX_TOOL_WORKERS = 8
 _MAX_PENDING_TOOL_CALLS = 8
@@ -125,6 +126,7 @@ class ToolSpec:
     latency_estimate: float = 0.0
     requires_confirmation: bool = False
     timeout_seconds: float = 30.0
+    # [] = not declared/not migrated; ["none"] = explicitly capability-free.
     required_capabilities: List[str] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
 
@@ -260,8 +262,19 @@ class ToolExecutor:
                 )
 
         # RBAC capability check
-        if self._capability_policy and tool.spec.required_capabilities:
-            for cap in tool.spec.required_capabilities:
+        if self._capability_policy:
+            try:
+                required_capabilities = (
+                    self._capability_policy.resolve_tool_capabilities(tool.spec)
+                )
+            except CapabilityResolutionError as exc:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=f"Capability resolution failed: {exc}",
+                    success=False,
+                )
+
+            for cap in required_capabilities:
                 if not self._capability_policy.check(
                     self._agent_id,
                     cap,

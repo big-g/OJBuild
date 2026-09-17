@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import pytest
+
+from openjarvis.core.types import ToolCall, ToolResult
 from openjarvis.security.capabilities import (
     DEFAULT_TOOL_CAPABILITIES,
     Capability,
     CapabilityPolicy,
+    CapabilityResolutionError,
 )
+from openjarvis.tools._stubs import BaseTool, ToolExecutor, ToolSpec
 from openjarvis.tools.code_interpreter import CodeInterpreterTool
 from openjarvis.tools.code_interpreter_docker import DockerCodeInterpreterTool
 from openjarvis.tools.file_read import FileReadTool
 from openjarvis.tools.repl import ReplTool
-
 
 class TestCapability:
     def test_capability_values(self):
@@ -117,6 +121,33 @@ class TestCapabilityPolicy:
         assert "network:fetch" in DEFAULT_TOOL_CAPABILITIES.get("web_search", [])
         assert "code:execute" in DEFAULT_TOOL_CAPABILITIES.get("code_interpreter", [])
 
+    def test_explicit_none_capability(self):
+        class ToolSpecStub:
+            name = "calculator"
+            required_capabilities = ["none"]
+
+        policy = CapabilityPolicy()
+        assert policy.resolve_tool_capabilities(ToolSpecStub()) == ()
+
+
+    def test_none_cannot_be_combined_with_capabilities(self):
+        class ToolSpecStub:
+            name = "invalid"
+            required_capabilities = ["none", "file:read"]
+
+        policy = CapabilityPolicy()
+
+        with pytest.raises(CapabilityResolutionError):
+            policy.resolve_tool_capabilities(ToolSpecStub())
+
+
+    def test_empty_capability_declaration_uses_legacy_mapping(self):
+        class ToolSpecStub:
+            name = "memory_store"
+            required_capabilities = []
+
+        policy = CapabilityPolicy()
+        assert policy.resolve_tool_capabilities(ToolSpecStub()) == ("memory:write",)
 
 class TestExplicitToolCapabilities:
     """First-batch tools must carry their capability on ToolSpec."""
@@ -132,3 +163,71 @@ class TestExplicitToolCapabilities:
 
     def test_file_read(self):
         assert FileReadTool().spec.required_capabilities == ["file:read"]
+
+class _CapabilityTestTool(BaseTool):
+    tool_id = "capability_test"
+
+    def __init__(self, required_capabilities: list[str]) -> None:
+        self._spec = ToolSpec(
+            name="capability_test",
+            description="Test tool for capability enforcement.",
+            required_capabilities=required_capabilities,
+        )
+        self.executed = False
+
+    @property
+    def spec(self) -> ToolSpec:
+        return self._spec
+
+    def execute(self, **params: object) -> ToolResult:
+        self.executed = True
+        return ToolResult(
+            tool_name=self.tool_id,
+            content="executed",
+            success=True,
+        )
+
+
+class TestToolExecutorCapabilities:
+    def test_explicit_none_allows_capability_free_tool(self) -> None:
+        tool = _CapabilityTestTool(["none"])
+        policy = CapabilityPolicy(default_deny=True)
+        executor = ToolExecutor(
+            [tool],
+            capability_policy=policy,
+            agent_id="test-agent",
+        )
+
+        result = executor.execute(
+            ToolCall(
+                id="test-none",
+                name="capability_test",
+                arguments="{}",
+            )
+        )
+
+        assert result.success
+        assert result.content == "executed"
+        assert tool.executed
+
+    def test_unknown_capability_blocks_execution(self) -> None:
+        tool = _CapabilityTestTool(["not:a:real:capability"])
+        policy = CapabilityPolicy()
+        executor = ToolExecutor(
+            [tool],
+            capability_policy=policy,
+            agent_id="test-agent",
+        )
+
+        result = executor.execute(
+            ToolCall(
+                id="test-invalid",
+                name="capability_test",
+                arguments="{}",
+            )
+        )
+
+        assert not result.success
+        assert "Capability resolution failed" in result.content
+        assert not tool.executed
+

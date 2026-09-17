@@ -93,10 +93,15 @@ class CapabilityPolicy:
     def resolve_tool_capabilities(self, tool_spec: Any) -> tuple[str, ...]:
         """Resolve a tool's effective capability requirements.
 
-        Explicit ``ToolSpec.required_capabilities`` declarations are
-        authoritative. The legacy name-based mapping is used only when the
-        declaration is empty, and an unresolved tool is rejected rather than
-        treated as requiring no capability.
+        ``ToolSpec.required_capabilities`` has three states:
+
+        - ``[]``: declaration missing/not migrated; resolve through the
+          temporary legacy mapping.
+        - ``["none"]``: explicitly capability-free.
+        - one or more capability names: explicit requirements.
+
+        The legacy name-based mapping remains temporary and is only consulted
+        when the ToolSpec declaration is empty.
         """
         name = getattr(tool_spec, "name", None)
         explicit = getattr(tool_spec, "required_capabilities", None)
@@ -107,11 +112,22 @@ class CapabilityPolicy:
             )
 
         if explicit:
-            capabilities = tuple(str(cap) for cap in explicit if str(cap).strip())
-            if len(capabilities) != len(explicit):
+            values = tuple(str(cap).strip() for cap in explicit)
+
+            if any(not cap for cap in values):
                 raise CapabilityResolutionError(
                     f"Tool '{name or '<unknown>'}' has an empty capability declaration"
                 )
+
+            if "none" in values:
+                if len(values) != 1:
+                    raise CapabilityResolutionError(
+                        f"Tool '{name or '<unknown>'}' cannot combine 'none' "
+                        "with other capabilities"
+                    )
+                return ()
+
+            capabilities = values
             source = "ToolSpec.required_capabilities"
         else:
             capabilities = tuple(DEFAULT_TOOL_CAPABILITIES.get(name, ()))
