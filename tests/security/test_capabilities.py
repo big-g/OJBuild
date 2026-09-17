@@ -7,6 +7,10 @@ from openjarvis.security.capabilities import (
     Capability,
     CapabilityPolicy,
 )
+from openjarvis.tools.code_interpreter import CodeInterpreterTool
+from openjarvis.tools.code_interpreter_docker import DockerCodeInterpreterTool
+from openjarvis.tools.file_read import FileReadTool
+from openjarvis.tools.repl import ReplTool
 
 
 class TestCapability:
@@ -112,3 +116,19 @@ class TestCapabilityPolicy:
         assert "file:read" in DEFAULT_TOOL_CAPABILITIES.get("file_read", [])
         assert "network:fetch" in DEFAULT_TOOL_CAPABILITIES.get("web_search", [])
         assert "code:execute" in DEFAULT_TOOL_CAPABILITIES.get("code_interpreter", [])
+
+
+class TestExplicitToolCapabilities:
+    """First-batch tools must carry their capability on ToolSpec."""
+
+    def test_code_interpreter(self):
+        assert CodeInterpreterTool().spec.required_capabilities == ["code:execute"]
+
+    def test_code_interpreter_docker(self):
+        assert DockerCodeInterpreterTool().spec.required_capabilities == ["code:execute"]
+
+    def test_repl(self):
+        assert ReplTool().spec.required_capabilities == ["code:execute"]
+
+    def test_file_read(self):
+        assert FileReadTool().spec.required_capabilities == ["file:read"]
