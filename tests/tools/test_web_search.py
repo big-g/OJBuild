@@ -19,6 +19,10 @@ class TestWebSearchTool:
         tool = WebSearchTool(api_key="test-key")
         assert tool.spec.metadata["requires_api_key"] == "TAVILY_API_KEY"
 
+    def test_spec_declares_current_and_external_evidence(self):
+        tool = WebSearchTool(api_key="test-key")
+        assert set(tool.spec.evidence_kinds) == {"current", "external"}
+
     def test_spec_parameters_require_query(self):
         tool = WebSearchTool(api_key="test-key")
         assert "query" in tool.spec.parameters["properties"]
@@ -86,6 +90,8 @@ class TestWebSearchTool:
         assert "Result 1" in result.content
         assert "Result 2" in result.content
         assert result.metadata["num_results"] == 2
+        assert result.metadata["evidence"]["provider"] == "tavily"
+        assert len(result.metadata["evidence"]["records"]) == 2
 
     def test_execute_tavily_error(self, monkeypatch):
         """When Tavily errors (any error), falls back to DuckDuckGo."""
