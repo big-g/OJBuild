@@ -127,6 +127,7 @@ class EvidenceAssessment:
     status: EvidenceStatus
     records: tuple[EvidenceRecord, ...] = ()
     reason: str = ""
+    conflict_status: str = ""
     conflict_claims: tuple[str, ...] = ()
     conflict_method: str = ""
 
@@ -303,6 +304,7 @@ def assess_tool_results(
         requirement,
         records,
         conflicting=conflicting,
+        conflict_method=("explicit_metadata" if conflicting else ""),
     )
 
 
@@ -311,6 +313,8 @@ def assess_evidence(
     records: Iterable[EvidenceRecord] = (),
     *,
     conflicting: bool = False,
+    conflict_method: str = "",
+    conflict_claims: Iterable[str] = (),
 ) -> EvidenceAssessment:
     """Assess whether retrieved evidence satisfies a requirement.
 
@@ -334,6 +338,13 @@ def assess_evidence(
             status=EvidenceStatus.CONFLICTING,
             records=usable,
             reason="Available sources conflict.",
+            conflict_status=ConflictStatus.CONFLICTING.value,
+            conflict_claims=tuple(
+                str(claim).strip()
+                for claim in conflict_claims
+                if str(claim).strip()
+            ),
+            conflict_method=conflict_method,
         )
 
     if not usable:
