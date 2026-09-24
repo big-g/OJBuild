@@ -492,6 +492,126 @@ def test_grounding_prompt_treats_evidence_as_untrusted_data():
 
 
 
+def test_grounding_unsupported_date_blocks_without_llm_call():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="When was the migration approved?",
+        answer="The migration was approved on September 24, 2026.",
+        assessment=_grounding_assessment(
+            "The migration was approved on September 23, 2026."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "date_anchor"
+    assert engine.calls == []
+
+
+def test_grounding_unsupported_url_blocks_without_llm_call():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="Where is the source?",
+        answer="The source is https://example.test/fabricated.",
+        assessment=_grounding_assessment(
+            "See https://example.test/real for the source."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "url_anchor"
+    assert engine.calls == []
+
+
+def test_grounding_unsupported_quote_blocks_without_llm_call():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="What did Sarah say?",
+        answer='Sarah said "Ship it Friday."',
+        assessment=_grounding_assessment(
+            'Sarah said "Ship it Monday."'
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "quote_anchor"
+    assert engine.calls == []
+
+
+def test_grounding_unsupported_name_blocks_without_llm_call():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="Who approved the project?",
+        answer="Sarah Connor approved the project.",
+        assessment=_grounding_assessment(
+            "Michael Smith approved the project."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "name_anchor"
+    assert engine.calls == []
+
+
+def test_grounding_allows_name_repeated_from_user_query():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], '
+        '"reason": "The evidence supports the answer."}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="What did Sarah Connor approve?",
+        answer="Sarah Connor approved the migration.",
+        assessment=_grounding_assessment(
+            "The migration was approved."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.SUPPORTED
+    assert len(engine.calls) == 1
+
+
+def test_grounding_allows_date_repeated_from_user_query():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], '
+        '"reason": "The evidence supports the answer."}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="What happened on September 24, 2026?",
+        answer="On September 24, 2026, the migration was approved.",
+        assessment=_grounding_assessment(
+            "The migration was approved."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.SUPPORTED
+    assert len(engine.calls) == 1
+
+
 def test_grounding_allows_numeric_context_repeated_from_user_query():
     engine = _GroundingEngine(
         '{"supported": true, "unsupported_claims": [], '
