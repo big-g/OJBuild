@@ -45,6 +45,8 @@ class _FakeSystem:
     tools: List[Any] = field(default_factory=list)
     memory_backend: Optional[Any] = None
     capability_policy: Optional[Any] = None
+    capability_registry: Optional[Any] = None
+    tool_management_registry: Optional[Any] = None
     session_store: Optional[Any] = None
     trace_store: Optional[Any] = None
     trace_collector: Optional[Any] = None
@@ -143,3 +145,80 @@ class TestDetectAgentIntent:
         system = _FakeSystem()
         orchestrator = QueryOrchestrator(system)
         assert orchestrator._detect_agent_intent("what's the weather") is None
+
+
+
+class TestAgentConstructionIntegrity:
+    def test_security_configuration_is_not_silently_dropped(self):
+        from openjarvis.core.registry import AgentRegistry
+        from openjarvis.core.types import ToolResult
+
+        class _UnsafeToolAgent:
+            accepts_tools = True
+
+            def __init__(
+                self,
+                engine,
+                model,
+                *,
+                tools=None,
+                bus=None,
+                max_turns=None,
+                temperature=None,
+                max_tokens=None,
+            ):
+                raise AssertionError(
+                    "constructor must not run without capability_policy support"
+                )
+
+            def run(self, query, context=None):
+                raise AssertionError("agent must not run")
+
+        AgentRegistry.register_value("unsafe_security_agent", _UnsafeToolAgent)
+
+        system = _FakeSystem(
+            engine=_FakeEngine({"content": ""}),
+            agent_name="unsafe_security_agent",
+            capability_policy=object(),
+        )
+        orchestrator = QueryOrchestrator(system)
+
+        result = orchestrator.ask("use a tool", context=False)
+
+        assert result["error"] is True
+        assert "does not accept required security configuration" in result["content"]
+
+
+    def test_constructor_type_error_does_not_trigger_fallback_retry(self):
+        from openjarvis.core.registry import AgentRegistry
+
+        calls = []
+
+        class _BrokenAgent:
+            accepts_tools = False
+
+            def __init__(
+                self,
+                engine,
+                model,
+                *,
+                bus=None,
+                temperature=None,
+                max_tokens=None,
+            ):
+                calls.append((engine, model))
+                raise TypeError("constructor bug")
+
+        AgentRegistry.register_value("broken_constructor_agent", _BrokenAgent)
+
+        system = _FakeSystem(
+            engine=_FakeEngine({"content": ""}),
+            agent_name="broken_constructor_agent",
+        )
+        orchestrator = QueryOrchestrator(system)
+
+        result = orchestrator.ask("hello", context=False)
+
+        assert result["error"] is True
+        assert "constructor bug" in result["content"]
+        assert len(calls) == 1
