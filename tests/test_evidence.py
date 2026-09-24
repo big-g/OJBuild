@@ -6,6 +6,7 @@ from openjarvis.core.evidence import (
     assess_evidence,
     assessment_from_tool_result,
     blocked_response,
+    tool_supports_evidence,
 )
 
 from openjarvis.core.evidence import evidence_records_from_tool_result
@@ -137,19 +138,22 @@ def test_evidence_records_from_tool_result_preserves_each_provenance_source():
     records = evidence_records_from_tool_result(
         tool_name="web_search",
         metadata={
-            "engine": "duckduckgo",
-            "results": [
-                {
-                    "title": "Source A",
-                    "url": "https://example.test/a",
-                    "content": "Content A",
-                },
-                {
-                    "title": "Source B",
-                    "url": "https://example.test/b",
-                    "content": "Content B",
-                },
-            ],
+            "evidence": {
+                "provider": "duckduckgo",
+                "retrieved_at": "2026-09-24T10:00:00+00:00",
+                "records": [
+                    {
+                        "title": "Source A",
+                        "url": "https://example.test/a",
+                        "content": "Content A",
+                    },
+                    {
+                        "title": "Source B",
+                        "url": "https://example.test/b",
+                        "content": "Content B",
+                    },
+                ],
+            }
         },
     )
 
@@ -168,21 +172,56 @@ def test_evidence_records_from_tool_result_ignores_empty_provenance():
     records = evidence_records_from_tool_result(
         tool_name="web_search",
         metadata={
-            "engine": "duckduckgo",
-            "results": [
-                {
-                    "title": "Empty",
-                    "url": "https://example.test/empty",
-                    "content": "",
-                },
-                {
-                    "title": "Valid",
-                    "url": "https://example.test/valid",
-                    "content": "Valid content.",
-                },
-            ],
+            "evidence": {
+                "provider": "duckduckgo",
+                "records": [
+                    {
+                        "title": "Empty",
+                        "url": "https://example.test/empty",
+                        "content": "",
+                    },
+                    {
+                        "title": "Valid",
+                        "url": "https://example.test/valid",
+                        "content": "Valid content.",
+                    },
+                ],
+            }
         },
     )
 
     assert len(records) == 1
     assert records[0].title == "Valid"
+
+
+
+def test_unmarked_tool_metadata_is_not_evidence():
+    records = evidence_records_from_tool_result(
+        tool_name="web_search",
+        metadata={
+            "results": [
+                {
+                    "title": "Legacy-looking result",
+                    "url": "https://example.test/result",
+                    "content": "Content that must not bypass the evidence contract.",
+                }
+            ]
+        },
+        fallback_content="Also must not count.",
+    )
+
+    assert records == []
+
+
+def test_tool_spec_must_declare_matching_evidence_kind():
+    class _Spec:
+        evidence_kinds = ["external"]
+
+    assert not tool_supports_evidence(_Spec(), required_current())
+
+    requirement = EvidenceRequirement(
+        required=True,
+        kind=EvidenceKind.EXTERNAL,
+        reason="External retrieval required.",
+    )
+    assert tool_supports_evidence(_Spec(), requirement)
