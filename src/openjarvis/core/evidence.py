@@ -184,6 +184,63 @@ def evidence_conflict_from_tool_result(metadata: Mapping[str, Any]) -> bool:
     return isinstance(evidence, Mapping) and evidence.get("conflicting") is True
 
 
+def assess_tool_results(
+    requirement: EvidenceRequirement,
+    tools: Iterable[Any],
+    tool_results: Iterable[Any],
+) -> EvidenceAssessment:
+    """Assess standardized evidence from tool results against one requirement."""
+    if not requirement.required:
+        return assess_evidence(requirement)
+
+    tool_specs: dict[str, Any] = {}
+    for tool in tools:
+        try:
+            spec = tool.spec
+            name = str(spec.name)
+        except Exception:
+            continue
+        if name:
+            tool_specs[name] = spec
+
+    records: list[EvidenceRecord] = []
+    conflicting = False
+
+    for tool_result in tool_results:
+        if not bool(getattr(tool_result, "success", False)):
+            continue
+
+        tool_name = str(getattr(tool_result, "tool_name", ""))
+        tool_spec = tool_specs.get(tool_name)
+        if tool_spec is None or not tool_supports_evidence(
+            tool_spec,
+            requirement,
+        ):
+            continue
+
+        metadata = getattr(tool_result, "metadata", {}) or {}
+        if not isinstance(metadata, Mapping):
+            continue
+
+        records.extend(
+            evidence_records_from_tool_result(
+                tool_name=tool_name,
+                metadata=metadata,
+                fallback_content=str(getattr(tool_result, "content", "")),
+            )
+        )
+        conflicting = (
+            conflicting
+            or evidence_conflict_from_tool_result(metadata)
+        )
+
+    return assess_evidence(
+        requirement,
+        records,
+        conflicting=conflicting,
+    )
+
+
 def assess_evidence(
     requirement: EvidenceRequirement,
     records: Iterable[EvidenceRecord] = (),
