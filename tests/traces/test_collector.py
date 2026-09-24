@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from pathlib import Path
 from typing import Any, Optional
+from unittest.mock import MagicMock
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
 from openjarvis.core.evidence import (
@@ -61,6 +62,9 @@ class _EvidenceAgent(BaseAgent):
     """Agent that already carries a completed evidence verdict."""
 
     agent_id = "evidence"
+
+    def __init__(self) -> None:
+        super().__init__(MagicMock(), "test-model")
 
     def run(
         self,
