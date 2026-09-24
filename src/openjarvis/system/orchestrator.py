@@ -185,10 +185,13 @@ class QueryOrchestrator:
                 agent_kwargs["skill_few_shot_examples"] = examples
         if system_prompt is not None:
             agent_kwargs["system_prompt"] = system_prompt
-        if s.capability_policy is not None:
-            agent_kwargs["capability_policy"] = s.capability_policy
-        if bool(getattr(s.config.security, "enforce_tool_management", False)):
-            agent_kwargs["tool_management_registry"] = s.tool_management_registry
+        if getattr(agent_cls, "accepts_tools", False):
+            if s.capability_policy is not None:
+                agent_kwargs["capability_policy"] = s.capability_policy
+            if bool(getattr(s.config.security, "enforce_tool_management", False)):
+                agent_kwargs["tool_management_registry"] = (
+                    s.tool_management_registry
+                )
         if operator_id is not None:
             agent_kwargs["operator_id"] = operator_id
             agent_kwargs["session_store"] = s.session_store
