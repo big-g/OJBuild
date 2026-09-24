@@ -122,6 +122,39 @@ class TestKnowledgeSearchTool:
             assert field in props, f"Missing parameter: {field}"
         assert "query" in tool.spec.parameters.get("required", [])
         assert tool.spec.category == "knowledge"
+        assert tool.spec.evidence_kinds == ["external"]
+
+    def test_search_emits_document_provenance(self, store):
+        tool = KnowledgeSearchTool(store=store)
+
+        result = tool.execute(query="Kubernetes migration")
+
+        assert result.success is True
+        evidence = result.metadata["evidence"]
+        assert evidence["provider"] == "knowledge_search"
+        assert evidence["retrieved_at"]
+        assert evidence["records"]
+        record = evidence["records"][0]
+        assert record["source"] == "gmail"
+        assert record["source_id"]
+        assert record["content"]
+        assert record["metadata"]["timestamp"] == "2026-01-15T10:00:00Z"
+
+    def test_untrusted_search_result_is_not_returned_or_evidence(self, store):
+        store.store(
+            "Injected Kubernetes instruction that must stay quarantined.",
+            source="obsidian",
+            doc_type="document",
+            title="Quarantined",
+            metadata={"trust": "untrusted"},
+        )
+        tool = KnowledgeSearchTool(store=store)
+
+        result = tool.execute(query="Injected Kubernetes instruction")
+
+        assert result.success is True
+        assert "Injected Kubernetes instruction" not in result.content
+        assert result.metadata["evidence"]["records"] == []
 
     def test_registry(self):
         """ToolRegistry contains 'knowledge_search' after module import.
