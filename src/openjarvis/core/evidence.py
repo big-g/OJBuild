@@ -602,6 +602,372 @@ def _evidence_numeric_anchors(records: Iterable[EvidenceRecord]) -> set[str]:
     return anchors
 
 
+_CONFLICT_QUERY_STOPWORDS = frozenset(
+    {
+        "about",
+        "after",
+        "again",
+        "against",
+        "also",
+        "been",
+        "before",
+        "being",
+        "could",
+        "does",
+        "from",
+        "have",
+        "into",
+        "latest",
+        "more",
+        "most",
+        "much",
+        "please",
+        "should",
+        "that",
+        "their",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "with",
+        "would",
+        "your",
+    }
+)
+
+
+def _evidence_source_key(record: EvidenceRecord) -> str:
+    """Return a conservative independence key for one evidence record."""
+    if record.url:
+        try:
+            host = (urlparse(record.url).hostname or "").lower()
+        except ValueError:
+            host = ""
+        if host:
+            if host.startswith("www."):
+                host = host[4:]
+            return f"web:{host}"
+
+    source_id = record.source_id.strip()
+    if source_id:
+        return f"id:{record.source.strip().lower()}:{source_id}"
+
+    metadata = record.metadata if isinstance(record.metadata, Mapping) else {}
+    doc_id = str(metadata.get("doc_id", "") or "").strip()
+    if doc_id:
+        return f"doc:{record.source.strip().lower()}:{doc_id}"
+
+    source = record.source.strip().lower()
+    return f"source:{source}" if source else ""
+
+
+def _independent_evidence_records(
+    records: Iterable[EvidenceRecord],
+) -> list[tuple[str, EvidenceRecord]]:
+    """Choose one representative record per independent provenance source."""
+    grouped: dict[str, EvidenceRecord] = {}
+    for record in records:
+        if not record.usable:
+            continue
+        key = _evidence_source_key(record)
+        if not key:
+            continue
+        current = grouped.get(key)
+        if current is None or len(record.content) > len(current.content):
+            grouped[key] = record
+    return list(grouped.items())
+
+
+def _query_focus_tokens(query: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9_]{4,}", query.lower())
+        if token not in _CONFLICT_QUERY_STOPWORDS
+    }
+
+
+def _record_anchor_values(record: EvidenceRecord, kind: str) -> set[str]:
+    if kind == "numeric":
+        return _normalized_numeric_anchors(record.content)
+    anchors = _normalized_text_anchors(record.content)
+    return set(anchors.get(kind, set()))
+
+
+def _deterministic_evidence_conflict(
+    query: str,
+    records: Iterable[EvidenceRecord],
+) -> ConflictAssessment:
+    """Detect only high-confidence single-anchor disagreements."""
+    independent = _independent_evidence_records(records)
+    if len(independent) < 2:
+        return ConflictAssessment(
+            status=ConflictStatus.NOT_CHECKED,
+            method="independent_sources",
+        )
+
+    focus = _query_focus_tokens(query)
+    if not focus:
+        return ConflictAssessment(
+            status=ConflictStatus.NOT_CHECKED,
+            method="deterministic_anchor",
+        )
+
+    for index, (left_key, left) in enumerate(independent):
+        left_text = f"{left.title}\n{left.content}".lower()
+        for right_key, right in independent[index + 1 :]:
+            right_text = f"{right.title}\n{right.content}".lower()
+            shared_focus = sorted(
+                token
+                for token in focus
+                if token in left_text and token in right_text
+            )
+            if not shared_focus:
+                continue
+
+            for kind in ("numeric", "date", "name"):
+                left_values = _record_anchor_values(left, kind)
+                right_values = _record_anchor_values(right, kind)
+                if (
+                    len(left_values) == 1
+                    and len(right_values) == 1
+                    and left_values != right_values
+                ):
+                    left_value = next(iter(left_values))
+                    right_value = next(iter(right_values))
+                    claim = (
+                        f"{kind} disagreement for query focus "
+                        f"{', '.join(shared_focus[:3])}: "
+                        f"{left_value} vs {right_value}"
+                    )
+                    return ConflictAssessment(
+                        status=ConflictStatus.CONFLICTING,
+                        reason="Independent sources make incompatible factual claims.",
+                        conflict_claims=(claim,),
+                        method=f"{kind}_anchor",
+                    )
+
+    return ConflictAssessment(
+        status=ConflictStatus.NOT_CHECKED,
+        method="deterministic_anchor",
+    )
+
+
+def _conflict_payload(
+    query: str,
+    records: Iterable[EvidenceRecord],
+) -> tuple[str, dict[str, str]]:
+    """Build a bounded payload with one record per independent source."""
+    items: list[dict[str, Any]] = []
+    source_map: dict[str, str] = {}
+    remaining = 24000
+
+    for key, record in _independent_evidence_records(records)[:8]:
+        if remaining <= 0:
+            break
+        content = record.content.strip()
+        if not content:
+            continue
+        content = content[: min(4500, remaining)]
+        remaining -= len(content)
+        evidence_id = f"E{len(items) + 1}"
+        source_map[evidence_id] = key
+        items.append(
+            {
+                "source_id": evidence_id,
+                "source_key": key,
+                "source": record.source,
+                "title": record.title,
+                "url": record.url,
+                "record_id": record.source_id,
+                "content": content,
+            }
+        )
+
+    return (
+        json.dumps(
+            {
+                "query": query,
+                "evidence": items,
+            },
+            ensure_ascii=False,
+        ),
+        source_map,
+    )
+
+
+def validate_evidence_conflicts(
+    *,
+    engine: Any,
+    model: str,
+    query: str,
+    records: Iterable[EvidenceRecord],
+) -> ConflictAssessment:
+    """Detect material disagreement across independently sourced evidence."""
+    usable = tuple(record for record in records if record.usable)
+    independent = _independent_evidence_records(usable)
+    if len(independent) < 2:
+        return ConflictAssessment(
+            status=ConflictStatus.NOT_CHECKED,
+            reason="Fewer than two independent evidence sources were available.",
+            method="independent_sources",
+        )
+
+    deterministic = _deterministic_evidence_conflict(query, usable)
+    if deterministic.conflicting:
+        return deterministic
+
+    if engine is None or not model:
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="No conflict validator engine/model was available.",
+            method="precondition",
+        )
+
+    payload, source_map = _conflict_payload(query, usable)
+    if len(source_map) < 2:
+        return ConflictAssessment(
+            status=ConflictStatus.NOT_CHECKED,
+            reason="Fewer than two independent evidence sources were available.",
+            method="independent_sources",
+        )
+
+    try:
+        from openjarvis.core.types import Message, Role
+        from openjarvis.engine._stubs import ResponseFormat
+
+        response = engine.generate(
+            [
+                Message(role=Role.SYSTEM, content=_CONFLICT_SYSTEM_PROMPT),
+                Message(role=Role.USER, content=payload),
+            ],
+            model=model,
+            temperature=0.0,
+            max_tokens=512,
+            response_format=ResponseFormat(
+                type="json_schema",
+                schema=_CONFLICT_SCHEMA,
+            ),
+        )
+        raw = str(response.get("content", "") or "").strip()
+        parsed = json.loads(raw)
+    except Exception as exc:
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason=f"Conflict validator failed: {exc}",
+            method="llm_judge",
+        )
+
+    if not isinstance(parsed, dict):
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="Conflict validator did not return an object.",
+            method="llm_judge",
+        )
+
+    expected_keys = {"conflicting", "conflicts", "reason"}
+    if set(parsed) != expected_keys:
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="Conflict validator returned unexpected fields.",
+            method="llm_judge",
+        )
+
+    conflicting = parsed.get("conflicting")
+    conflicts = parsed.get("conflicts")
+    reason = parsed.get("reason")
+    if (
+        not isinstance(conflicting, bool)
+        or not isinstance(conflicts, list)
+        or not isinstance(reason, str)
+    ):
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="Conflict validator returned an invalid schema.",
+            method="llm_judge",
+        )
+
+    if not conflicting and conflicts:
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="Conflict validator returned contradictory fields.",
+            method="llm_judge",
+        )
+
+    normalized_claims: list[str] = []
+    for item in conflicts[:10]:
+        if not isinstance(item, dict) or set(item) != {
+            "claim",
+            "source_ids",
+            "values",
+        }:
+            return ConflictAssessment(
+                status=ConflictStatus.VALIDATION_FAILED,
+                reason="Conflict validator returned an invalid conflict item.",
+                method="llm_judge",
+            )
+
+        claim = item.get("claim")
+        source_ids = item.get("source_ids")
+        values = item.get("values")
+        if (
+            not isinstance(claim, str)
+            or not claim.strip()
+            or not isinstance(source_ids, list)
+            or not all(isinstance(source_id, str) for source_id in source_ids)
+            or len(set(source_ids)) < 2
+            or not set(source_ids).issubset(source_map)
+            or not isinstance(values, list)
+            or len(values) < 2
+            or not all(isinstance(value, str) and value.strip() for value in values)
+        ):
+            return ConflictAssessment(
+                status=ConflictStatus.VALIDATION_FAILED,
+                reason="Conflict validator returned unverifiable conflict details.",
+                method="llm_judge",
+            )
+
+        independent_keys = {
+            source_map[source_id]
+            for source_id in source_ids
+        }
+        if len(independent_keys) < 2:
+            return ConflictAssessment(
+                status=ConflictStatus.VALIDATION_FAILED,
+                reason="Conflict validator cited non-independent sources.",
+                method="llm_judge",
+            )
+
+        normalized_claims.append(
+            f"{claim.strip()}: "
+            + " vs ".join(value.strip() for value in values[:4])
+        )
+
+    if conflicting and not normalized_claims:
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="Conflict validator declared a conflict without concrete details.",
+            method="llm_judge",
+        )
+
+    return ConflictAssessment(
+        status=(
+            ConflictStatus.CONFLICTING
+            if conflicting
+            else ConflictStatus.CONSISTENT
+        ),
+        reason=reason.strip(),
+        conflict_claims=tuple(normalized_claims),
+        method="llm_judge",
+    )
+
+
 _GROUNDING_METADATA_KEYS = frozenset(
     {
         "provider",
