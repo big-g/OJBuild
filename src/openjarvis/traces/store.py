@@ -243,6 +243,19 @@ class TraceStore:
         if isinstance(trace, Trace):
             self.save(trace)
 
+    def update_metadata(
+        self,
+        trace_id: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        """Replace trace-level metadata for an existing trace."""
+        cursor = self._conn.execute(
+            "UPDATE traces SET metadata = ? WHERE trace_id = ?",
+            (json.dumps(metadata), trace_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
     def update_feedback(self, trace_id: str, score: float) -> bool:
         """Update the feedback score for a trace.
 
