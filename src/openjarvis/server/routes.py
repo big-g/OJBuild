@@ -873,13 +873,14 @@ def _handle_agent(
                 assessment,
             )
         )
+        if assessment.blocked:
+            result.content = blocked_response(assessment)
         if collector is not None:
             collector.annotate_evidence(
                 requirement,
                 assessment,
+                final_content=result.content,
             )
-        if assessment.blocked:
-            result.content = blocked_response(assessment)
 
     usage = UsageInfo(
         prompt_tokens=result.metadata.get("prompt_tokens", 0),
