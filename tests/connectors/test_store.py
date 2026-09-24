@@ -161,6 +161,31 @@ def test_retrieve_filter_by_timestamp_since(ks: KnowledgeStore) -> None:
     assert len(results) >= 1
 
 
+def test_retrieve_filters_untrusted_before_top_k(
+    ks: KnowledgeStore,
+) -> None:
+    """Quarantined rows must not consume BM25 slots ahead of trusted rows."""
+    for index in range(5):
+        _store(
+            ks,
+            content=f"UniqueQuarantineTerm exact match {index}",
+            source="notes",
+            metadata={"trust": "untrusted"},
+        )
+    _store(
+        ks,
+        content="UniqueQuarantineTerm trusted match",
+        source="notes",
+        metadata={"trust": "trusted"},
+    )
+
+    results = ks.retrieve("UniqueQuarantineTerm", top_k=1)
+
+    assert len(results) == 1
+    assert results[0].content == "UniqueQuarantineTerm trusted match"
+    assert results[0].metadata.get("trust") == "trusted"
+
+
 def test_delete_by_doc_id(ks: KnowledgeStore) -> None:
     """delete() removes all chunks with matching doc_id."""
     doc_id = "test:doc:001"
