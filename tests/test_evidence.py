@@ -284,3 +284,27 @@ def test_dynamic_queries_require_current_evidence(query):
 
     assert requirement.required
     assert requirement.kind == EvidenceKind.CURRENT
+
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Search my notes for the Kubernetes decision.",
+        "Check my email for the invoice.",
+        "Find the launch plan in my documents.",
+    ],
+)
+def test_personal_knowledge_requests_require_external_evidence(query):
+    from openjarvis.core.evidence import detect_evidence_requirement
+
+    requirement = detect_evidence_requirement(query)
+
+    assert requirement.required
+    assert requirement.kind == EvidenceKind.EXTERNAL
+
+
+def test_generic_search_concept_does_not_require_external_evidence():
+    from openjarvis.core.evidence import detect_evidence_requirement
+
+    assert not detect_evidence_requirement("Explain binary search.").required
