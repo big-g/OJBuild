@@ -317,6 +317,20 @@ def assessment_from_tool_result(
     return assess_evidence(requirement, [record])
 
 
+def evidence_result_metadata(
+    requirement: EvidenceRequirement,
+    assessment: EvidenceAssessment,
+) -> dict[str, Any]:
+    """Return the canonical flat AgentResult evidence metadata."""
+    return {
+        "evidence_required": bool(requirement.required),
+        "evidence_kind": requirement.kind.value,
+        "evidence_status": assessment.status.value,
+        "evidence_reason": assessment.reason or requirement.reason,
+        "evidence_records": len(assessment.records),
+    }
+
+
 def evidence_audit_metadata(
     requirement: EvidenceRequirement,
     assessment: EvidenceAssessment,
