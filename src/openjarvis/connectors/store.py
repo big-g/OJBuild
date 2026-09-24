@@ -19,6 +19,7 @@ from typing import Any, Dict, Iterable, List, Optional, Union
 
 from openjarvis.core.events import EventType, get_event_bus
 from openjarvis.core.registry import MemoryRegistry
+from openjarvis.memory.store import RECALLABLE_TRUST_TIERS
 from openjarvis.tools.storage._stubs import MemoryBackend, RetrievalResult
 
 # ---------------------------------------------------------------------------
@@ -386,8 +387,20 @@ class KnowledgeStore(MemoryBackend):
             filters.append("kc.timestamp <= ?")
             params.append(until_str)
 
-        # Always exclude tombstoned rows.
+        # Always exclude tombstoned and non-recallable provenance rows
+        # before BM25 ranking/top-k selection. The Python trust filter in the
+        # tool/context layer remains as defense in depth, but filtering here
+        # prevents quarantined high-ranking chunks from crowding out trusted
+        # matches before LIMIT is applied.
         filters.append("kc.deleted_at IS NULL")
+        filters.append("json_valid(kc.metadata)")
+        trust_tiers = sorted(RECALLABLE_TRUST_TIERS)
+        placeholders = ", ".join("?" for _ in trust_tiers)
+        filters.append(
+            "COALESCE(json_extract(kc.metadata, '$.trust'), '') "
+            f"IN ({placeholders})"
+        )
+        params.extend(trust_tiers)
 
         where_clause = "AND " + " AND ".join(filters)
 
