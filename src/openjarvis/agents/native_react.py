@@ -75,6 +75,8 @@ class NativeReActAgent(ToolUsingAgent):
         interactive: bool = False,
         confirm_callback=None,
         skill_few_shot_examples: Optional[List[str]] = None,
+        capability_policy: Optional[Any] = None,
+        tool_management_registry: Optional[Any] = None,
     ) -> None:
         super().__init__(
             engine,
@@ -87,6 +89,8 @@ class NativeReActAgent(ToolUsingAgent):
             interactive=interactive,
             confirm_callback=confirm_callback,
             skill_few_shot_examples=skill_few_shot_examples,
+            capability_policy=capability_policy,
+            tool_management_registry=tool_management_registry,
         )
 
     def _parse_response(self, text: str) -> dict:
