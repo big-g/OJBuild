@@ -129,6 +129,63 @@ def _make_agent(content: str = "Here is your answer.") -> MagicMock:
     return agent
 
 
+class _ChannelEvidenceTool:
+    tool_id = "channel_evidence"
+
+    @property
+    def spec(self):
+        from openjarvis.tools._stubs import ToolSpec
+
+        return ToolSpec(
+            name="channel_evidence",
+            description="Channel evidence test tool.",
+            evidence_kinds=["current"],
+        )
+
+
+class _ChannelGroundingEngine:
+    def generate(self, messages, *, model, temperature, max_tokens, **kwargs):
+        return {
+            "content": (
+                '{"supported": false, '
+                '"unsupported_claims": ["Sunny conditions are not in evidence."], '
+                '"reason": "The condition is unsupported."}'
+            )
+        }
+
+
+class _ChannelEvidenceAgent:
+    def __init__(self):
+        self._tools = [_ChannelEvidenceTool()]
+        self._engine = _ChannelGroundingEngine()
+        self._model = "test-model"
+
+    def run(self, text):
+        from openjarvis.core.types import ToolResult
+
+        return AgentResult(
+            content="Tomorrow's high will be 82°F and it will be sunny.",
+            tool_results=[
+                ToolResult(
+                    tool_name="channel_evidence",
+                    content="Forecast: tomorrow high 82°F.",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test",
+                            "records": [
+                                {
+                                    "source": "weather",
+                                    "content": "Forecast: tomorrow high 82°F.",
+                                }
+                            ],
+                        }
+                    },
+                )
+            ],
+        )
+
+
 def _make_msg(
     content: str = "When is my next meeting?",
     channel: str = "fake",
@@ -185,6 +242,20 @@ class TestChannelAgent:
         sent_content = channel._sent[0]["content"]
         assert "openjarvis://research/" in sent_content
         assert "Full report ready" in sent_content
+
+    def test_evidence_required_response_is_grounded_before_send(self):
+        channel = FakeChannel()
+        ca = ChannelAgent(channel, _ChannelEvidenceAgent())
+
+        msg = _make_msg("What's the weather forecast for tomorrow?")
+        channel.simulate_message(msg)
+        ca.shutdown()
+
+        assert len(channel._sent) == 1
+        assert channel._sent[0]["content"] == (
+            "I couldn't verify the response against the retrieved evidence."
+        )
+        assert "sunny" not in channel._sent[0]["content"]
 
     def test_agent_error_sends_friendly_message(self):
         """If agent.run() raises, a friendly error message is sent."""
