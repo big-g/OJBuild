@@ -85,6 +85,12 @@ def compute_tool_fingerprint(
                 getattr(spec, "required_capabilities", []) or []
             )
         ),
+        "evidence_kinds": sorted(
+            str(kind)
+            for kind in (
+                getattr(spec, "evidence_kinds", []) or []
+            )
+        ),
         "metadata": getattr(spec, "metadata", {}) or {},
     }
 
