@@ -722,38 +722,6 @@ export function SettingsPage() {
                 />
               </button>
             </SettingRow>
-	<SettingRow
-	  label="Conversation Mode"
-	  description="Automatically speak Jarvis responses and listen for your next question"
-	>
-	  <button
-	    type="button"
-	    onClick={() => {
-	      updateSettings({
-	        conversationMode: !settings.conversationMode,
-	      });
-	      showSaved();
-	    }}
-	    className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors"
-	    style={{
-	      background: settings.conversationMode
-	        ? 'var(--color-accent)'
-	        : 'var(--color-bg-tertiary)',
-	      border: '1px solid var(--color-border)',
-	    }}
-	    aria-pressed={settings.conversationMode}
-	  >
-	    <span
-	      className="inline-block h-5 w-5 rounded-full transition-transform"
-	      style={{
-	        background: 'white',
-	        transform: settings.conversationMode
-	          ? 'translateX(20px)'
-	          : 'translateX(0)',
-	      }}
-	    />
-	  </button>
-	</SettingRow>
             <SettingRow label="Backend status" description="Requires Whisper, Deepgram, or another speech backend">
               <div className="flex items-center gap-2">
                 <span
