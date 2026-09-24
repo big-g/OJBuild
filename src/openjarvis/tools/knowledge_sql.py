@@ -93,9 +93,6 @@ class KnowledgeSQLTool(BaseTool):
         if not query:
             return False, "", "No query provided."
 
-        if _COMMENT_RE.search(query):
-            return False, "", "SQL comments are not allowed."
-
         if query.endswith(";"):
             query = query[:-1].rstrip()
         if ";" in query:
@@ -106,6 +103,9 @@ class KnowledgeSQLTool(BaseTool):
             return False, "", "Only SELECT queries are allowed (read-only)."
 
         scanned = _STRING_LITERAL_RE.sub("''", query)
+
+        if _COMMENT_RE.search(scanned):
+            return False, "", "SQL comments are not allowed."
 
         forbidden = _FORBIDDEN_RE.search(scanned)
         if forbidden:
