@@ -410,6 +410,77 @@ def _normalized_numeric_anchors(text: str) -> set[str]:
     return anchors
 
 
+_DATE_ANCHOR_RE = re.compile(
+    r"\b(?:"
+    r"\d{4}-\d{1,2}-\d{1,2}"
+    r"|(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|"
+    r"Dec(?:ember)?)\s+\d{1,2}(?:,\s*\d{4})?"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_URL_ANCHOR_RE = re.compile(r"https?://[^\s)\]>]+", re.IGNORECASE)
+
+_QUOTED_ANCHOR_RE = re.compile(
+    r"""(?:"([^"\n]{2,120})"|'([^'\n]{2,120})')"""
+)
+
+# Conservative proper-name heuristic. Require at least two capitalized words so
+# ordinary sentence-initial words do not become anchors.
+_NAME_ANCHOR_RE = re.compile(
+    r"\b(?:[A-Z][\w.-]*\s+){1,3}[A-Z][\w.-]*\b"
+)
+
+
+def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
+    """Extract conservative non-numeric anchors from response/evidence text."""
+    dates = {
+        " ".join(match.group(0).lower().split())
+        for match in _DATE_ANCHOR_RE.finditer(text)
+    }
+    urls = {
+        match.group(0).rstrip(".,;:")
+        for match in _URL_ANCHOR_RE.finditer(text)
+    }
+    quotes: set[str] = set()
+    for match in _QUOTED_ANCHOR_RE.finditer(text):
+        value = (match.group(1) or match.group(2) or "").strip()
+        if value:
+            quotes.add(" ".join(value.lower().split()))
+    names = {
+        " ".join(match.group(0).lower().split())
+        for match in _NAME_ANCHOR_RE.finditer(text)
+    }
+    return {
+        "date": dates,
+        "url": urls,
+        "quote": quotes,
+        "name": names,
+    }
+
+
+def _evidence_text_anchors(records: Iterable[EvidenceRecord]) -> dict[str, set[str]]:
+    combined = {
+        "date": set(),
+        "url": set(),
+        "quote": set(),
+        "name": set(),
+    }
+    for record in records:
+        for value in (
+            record.content,
+            record.title,
+            record.url,
+            record.source_id,
+            record.source,
+        ):
+            anchors = _normalized_text_anchors(str(value or ""))
+            for kind, items in anchors.items():
+                combined[kind].update(items)
+    return combined
+
+
 def _evidence_numeric_anchors(records: Iterable[EvidenceRecord]) -> set[str]:
     anchors: set[str] = set()
     for record in records:
@@ -532,6 +603,28 @@ def validate_response_grounding(
             ),
             method="numeric_anchor",
         )
+
+    answer_text_anchors = _normalized_text_anchors(answer)
+    evidence_text_anchors = _evidence_text_anchors(assessment.records)
+    query_text_anchors = _normalized_text_anchors(query)
+    for kind in ("date", "url", "quote", "name"):
+        missing = sorted(
+            answer_text_anchors[kind]
+            - evidence_text_anchors[kind]
+            - query_text_anchors[kind]
+        )
+        if missing:
+            return GroundingAssessment(
+                status=GroundingStatus.UNSUPPORTED,
+                reason=(
+                    f"The answer contains {kind} details not present in the evidence."
+                ),
+                unsupported_claims=tuple(
+                    f"Unsupported {kind} detail: {anchor}"
+                    for anchor in missing
+                ),
+                method=f"{kind}_anchor",
+            )
 
     if engine is None or not model:
         return GroundingAssessment(
