@@ -349,8 +349,8 @@ _CURRENT_PATTERNS = (
     r"\b(?:what(?:'s| is)|how is)\s+(?:the\s+)?weather\b",
     r"\bweather\s+(?:forecast|in|for|near)\b",
     r"\bforecast\s+(?:for|in|near)\b",
-    r"\b(?:what(?:'s| is)|how hot is|how cold is)\s+"
-    r"(?:the\s+)?temperature\b",
+    r"\b(?:what's\s+(?:the\s+)?|what is\s+the\s+|"
+    r"how is\s+the\s+)temperature\b",
     r"\btemperature\s+(?:in|at|for|near)\b",
     r"\b(?:current|stock)\s+price\b",
     r"\bprice\s+(?:of|for)\b",
