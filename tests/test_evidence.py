@@ -380,6 +380,27 @@ def test_numeric_cross_source_conflict_blocks_without_llm_call():
     assert engine.calls == []
 
 
+def test_unrelated_numbers_do_not_trigger_deterministic_conflict():
+    engine = _GroundingEngine(
+        '{"conflicting": false, "conflicts": [], '
+        '"reason": "The different numbers describe different facts."}'
+    )
+
+    conflict = validate_evidence_conflicts(
+        engine=engine,
+        model="test-model",
+        query="What is the Acme launch status?",
+        records=_conflict_records(
+            "Acme launch planning began in 2025.",
+            "Acme employs 500 engineers and the launch remains approved.",
+        ),
+    )
+
+    assert conflict.status == ConflictStatus.CONSISTENT
+    assert conflict.method == "llm_judge"
+    assert len(engine.calls) == 1
+
+
 def test_semantic_cross_source_conflict_blocks():
     engine = _GroundingEngine(
         '{"conflicting": true, "conflicts": ['
@@ -548,6 +569,66 @@ def test_finalizer_blocks_cross_source_conflict_before_grounding():
     ]
     assert "grounding_status" not in result.metadata
     assert len(engine.calls) == 1
+
+
+def test_finalizer_fails_closed_when_conflict_validator_fails():
+    from openjarvis.core.types import ToolResult
+    from openjarvis.tools._stubs import ToolSpec
+
+    class _Tool:
+        @property
+        def spec(self):
+            return ToolSpec(
+                name="test_conflict_failure_tool",
+                description="test",
+                evidence_kinds=["current"],
+            )
+
+    class _Result:
+        content = "The launch is approved."
+
+        def __init__(self):
+            self.metadata = {}
+            self.tool_results = [
+                ToolResult(
+                    tool_name="test_conflict_failure_tool",
+                    content="multi-source status",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test",
+                            "records": [
+                                {
+                                    "url": "https://source-a.test/status",
+                                    "content": "The launch status is approved.",
+                                },
+                                {
+                                    "url": "https://source-b.test/status",
+                                    "content": "The launch remains approved.",
+                                },
+                            ],
+                        }
+                    },
+                )
+            ]
+
+    result = _Result()
+    assessment = apply_tool_evidence_to_result(
+        required_current(),
+        [_Tool()],
+        result,
+        query="What is the launch status?",
+        engine=_GroundingEngine("not json"),
+        model="test-model",
+        validate_conflicts=True,
+        validate_grounding=True,
+    )
+
+    assert assessment.status == EvidenceStatus.INSUFFICIENT
+    assert assessment.conflict_status == "validation_failed"
+    assert result.content == "I couldn't verify whether the retrieved sources agree."
+    assert result.metadata["evidence_conflict_status"] == "validation_failed"
+    assert "grounding_status" not in result.metadata
 
 
 def test_conflict_prompt_treats_sources_as_untrusted_data():
