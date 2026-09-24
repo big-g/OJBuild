@@ -18,6 +18,7 @@ from openjarvis.core.evidence import (
     assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
+    evidence_result_metadata,
 )
 from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message, Role, ToolCall
@@ -826,12 +827,10 @@ def _handle_agent(
             getattr(result, "tool_results", []) or [],
         )
         result.metadata.update(
-            {
-                "evidence_required": True,
-                "evidence_status": assessment.status.value,
-                "evidence_reason": assessment.reason,
-                "evidence_records": len(assessment.records),
-            }
+            evidence_result_metadata(
+                requirement,
+                assessment,
+            )
         )
         if assessment.blocked:
             result.content = blocked_response(assessment)
