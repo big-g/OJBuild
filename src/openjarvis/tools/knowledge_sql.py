@@ -33,7 +33,7 @@ _STRING_LITERAL_RE = re.compile(r"'(?:''|[^'])*'")
 _COMMENT_RE = re.compile(r"--|/\*|\*/")
 _RELATION_RE = re.compile(r"\b(?:FROM|JOIN)\s+([^\s,;]+)", re.IGNORECASE)
 _SCHEMA_BYPASS_RE = re.compile(
-    r"(?:^|\W)[\[\"']?\s*(?:main|temp)\s*[\]\"']?\s*\.",
+    r"(?:^|\W)[\[\x60\"']?\s*(?:main|temp)\s*[\]\x60\"']?\s*\.",
     re.IGNORECASE,
 )
 _DANGEROUS_FUNCTIONS = frozenset({"load_extension", "readfile", "writefile"})
