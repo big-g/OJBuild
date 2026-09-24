@@ -159,3 +159,25 @@ transform = "upper"
         templates = discover_templates(tmp_path)
         assert len(templates) == 1
         assert templates[0].spec.name == "custom"
+
+
+
+def test_template_capabilities_follow_action_type():
+    transform = ToolTemplate(
+        {
+            "name": "transform_cap",
+            "description": "Transform",
+            "action": {"type": "transform", "transform": "upper"},
+        }
+    )
+    shell = ToolTemplate(
+        {
+            "name": "shell_cap",
+            "description": "Shell",
+            "action": {"type": "shell", "command": "echo hello"},
+        }
+    )
+
+    assert transform.spec.required_capabilities == ["none"]
+    assert shell.spec.required_capabilities == ["code:execute"]
+    assert transform.management_identity == "template:transform_cap"

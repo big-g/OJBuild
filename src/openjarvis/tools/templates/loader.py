@@ -178,14 +178,20 @@ class ToolTemplate(BaseTool):
         self._description = template_data.get("description", "")
         self._parameters = template_data.get("parameters", {})
         self._action = template_data.get("action", {})
+        self.management_identity = f"template:{self._name}"
 
     @property
     def spec(self) -> ToolSpec:
+        action_type = self._action.get("type", "python")
+        required_capabilities = (
+            ["code:execute"] if action_type == "shell" else ["none"]
+        )
         return ToolSpec(
             name=self._name,
             description=self._description,
             parameters=self._parameters,
             category="template",
+            required_capabilities=required_capabilities,
             metadata={"template": True},
         )
 

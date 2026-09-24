@@ -75,6 +75,17 @@ class BaseConnector(ABC):
     display_name: str
     auth_type: str  # "oauth" | "local" | "bridge" | "filesystem"
     indexed_sources: tuple[str, ...] = ()
+    required_capabilities: tuple[str, ...] = ()
+
+    @classmethod
+    def capability_requirements(cls) -> tuple[str, ...]:
+        """Return capabilities required to read through this connector."""
+        if cls.required_capabilities:
+            return tuple(cls.required_capabilities)
+        connector_id = str(getattr(cls, "connector_id", "") or "").strip()
+        if not connector_id:
+            raise ValueError("Connector has no stable connector_id")
+        return (f"connector:{connector_id}:read",)
 
     def knowledge_sources(self) -> tuple[str, ...]:
         """Return KnowledgeStore source values owned by this connector."""

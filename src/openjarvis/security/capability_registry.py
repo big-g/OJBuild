@@ -210,6 +210,55 @@ BUILTIN_CAPABILITIES: tuple[tuple[str, str, str, str, RiskLevel], ...] = (
 )
 
 
+# Every built-in connector receives its own concrete read capability. Tools may
+# declare the wildcard envelope "connector:*:read" while runtime resolution
+# narrows authorization to the exact connector IDs selected for a call.
+BUILTIN_CONNECTOR_IDS: tuple[str, ...] = (
+    "apple_calendar",
+    "apple_contacts",
+    "apple_health",
+    "apple_music",
+    "apple_notes",
+    "dropbox",
+    "gcalendar",
+    "gcontacts",
+    "gdrive",
+    "github_notifications",
+    "gmail",
+    "gmail_imap",
+    "google_tasks",
+    "granola",
+    "hackernews",
+    "imap",
+    "imessage",
+    "news_rss",
+    "notion",
+    "obsidian",
+    "oura",
+    "outlook",
+    "slack",
+    "spotify",
+    "strava",
+    "weather",
+    "whatsapp",
+)
+
+BUILTIN_CONNECTOR_CAPABILITIES: tuple[
+    tuple[str, str, str, str, RiskLevel], ...
+] = tuple(
+    (
+        f"connector:{connector_id}:read",
+        f"Read data through the {connector_id} connector.",
+        f"connector:{connector_id}",
+        "read",
+        RiskLevel.MEDIUM,
+    )
+    for connector_id in BUILTIN_CONNECTOR_IDS
+)
+
+BUILTIN_CAPABILITIES = BUILTIN_CAPABILITIES + BUILTIN_CONNECTOR_CAPABILITIES
+
+
 class CapabilityRegistry:
     """Authoritative registry for known capabilities.
 
@@ -399,6 +448,8 @@ def create_builtin_capability_registry() -> CapabilityRegistry:
 __all__ = [
     "ApprovalRecord",
     "BUILTIN_CAPABILITIES",
+    "BUILTIN_CONNECTOR_CAPABILITIES",
+    "BUILTIN_CONNECTOR_IDS",
     "CapabilityRecord",
     "CapabilityRegistry",
     "Provenance",

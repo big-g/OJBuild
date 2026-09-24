@@ -1,5 +1,8 @@
 """Data source connectors for Deep Research."""
 
+import importlib
+import sys
+
 from openjarvis.connectors._stubs import (
     Attachment,
     BaseConnector,
@@ -8,7 +11,14 @@ from openjarvis.connectors._stubs import (
 )
 from openjarvis.connectors.store import KnowledgeStore
 
-__all__ = ["Attachment", "BaseConnector", "Document", "KnowledgeStore", "SyncStatus"]
+__all__ = [
+    "Attachment",
+    "BaseConnector",
+    "Document",
+    "KnowledgeStore",
+    "SyncStatus",
+    "ensure_connectors_populated",
+]
 
 # Auto-register built-in connectors
 import openjarvis.connectors.obsidian  # noqa: F401
@@ -142,3 +152,27 @@ try:
     import openjarvis.connectors.news_rss  # noqa: F401
 except ImportError:
     pass
+
+
+
+def ensure_connectors_populated() -> None:
+    """Restore built-in connector registrations after registry clearing."""
+    from openjarvis.core.registry import ConnectorRegistry
+
+    if ConnectorRegistry.keys():
+        return
+
+    for module_name in list(sys.modules):
+        if (
+            module_name.startswith("openjarvis.connectors.")
+            and module_name not in {
+                "openjarvis.connectors._stubs",
+                "openjarvis.connectors.store",
+            }
+        ):
+            module = sys.modules.get(module_name)
+            if module is not None:
+                try:
+                    importlib.reload(module)
+                except Exception:
+                    pass

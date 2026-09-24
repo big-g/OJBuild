@@ -424,7 +424,7 @@ class DigestCollectTool(BaseTool):
     """Collect recent data from multiple connectors for digest synthesis."""
 
     tool_id = "digest_collect"
-    is_local = True
+    is_local = False
 
     @property
     def spec(self) -> ToolSpec:
@@ -468,11 +468,43 @@ class DigestCollectTool(BaseTool):
             },
             category="data",
             timeout_seconds=60.0,
+            required_capabilities=["connector:*:read"],
         )
+
+    def resolve_required_capabilities(
+        self,
+        params: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Resolve exact connector read requirements for this invocation."""
+        from openjarvis.connectors import ensure_connectors_populated
+
+        ensure_connectors_populated()
+        sources = params.get("sources", [])
+        if isinstance(sources, str) or not isinstance(sources, (list, tuple)):
+            raise ValueError("sources must be a list of connector IDs")
+
+        capabilities: list[str] = []
+        for raw_source in sources:
+            if not isinstance(raw_source, str) or not raw_source.strip():
+                raise ValueError("sources contains an invalid connector ID")
+            source = raw_source.strip()
+            if not ConnectorRegistry.contains(source):
+                raise ValueError(f"Unknown connector: {source}")
+            connector_cls = ConnectorRegistry.get(source)
+            resolver = getattr(connector_cls, "capability_requirements", None)
+            if not callable(resolver):
+                raise ValueError(
+                    f"Connector '{source}' has no capability declaration"
+                )
+            capabilities.extend(str(cap) for cap in resolver())
+
+        return tuple(dict.fromkeys(capabilities))
 
     def execute(self, **params: Any) -> ToolResult:
         # Ensure connectors are registered
-        import openjarvis.connectors  # noqa: F401
+        from openjarvis.connectors import ensure_connectors_populated
+
+        ensure_connectors_populated()
 
         sources: List[str] = params.get("sources", [])
         hours_back: float = params.get("hours_back", 24)

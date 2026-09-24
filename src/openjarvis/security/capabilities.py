@@ -190,7 +190,14 @@ class CapabilityPolicy:
                 f"Tool '{tool.spec.name}' returned an invalid runtime capability"
             )
 
-        undeclared = sorted(set(effective) - declared_set)
+        undeclared = sorted(
+            capability
+            for capability in set(effective)
+            if not any(
+                fnmatch.fnmatch(capability, pattern)
+                for pattern in declared_set
+            )
+        )
         if undeclared:
             raise CapabilityResolutionError(
                 f"Tool '{tool.spec.name}' attempted to expand beyond its "

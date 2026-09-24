@@ -5,9 +5,7 @@ from openjarvis.security.tool_management_bootstrap import (
 )
 
 
-EXPECTED_UNRESOLVED = {
-    "builtin:digest_collect",
-}
+EXPECTED_UNRESOLVED: set[str] = set()
 
 
 def test_all_static_registry_tools_are_managed():
@@ -66,7 +64,7 @@ def test_other_builtins_validate_but_are_not_approved():
         if record.status == ResourceStatus.VALIDATED
     }
 
-    assert len(validated) == 47
+    assert len(validated) == 48
     assert validated.isdisjoint(EXPECTED_UNRESOLVED)
 
     for identity in validated:

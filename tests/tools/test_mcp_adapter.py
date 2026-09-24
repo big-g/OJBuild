@@ -156,3 +156,12 @@ class TestMCPAdapterRoundTrip:
         provider = MCPToolProvider(client)
         tools = provider.discover()
         assert tools == []
+
+
+
+def test_mcp_adapter_declares_external_invoke_capability(client):
+    spec = ToolSpec(name="calculator", description="Calc", parameters={})
+    adapter = MCPToolAdapter(client, spec, source_id="test-server")
+    assert adapter.spec.required_capabilities == ["tool:invoke"]
+    assert adapter.is_local is False
+    assert adapter.management_identity == "mcp:test-server:calculator"

@@ -211,6 +211,7 @@ class ToolExecutor:
         capability_policy: Optional[Any] = None,
         agent_id: str = "",
         boundary_guard: Optional[Any] = None,
+        tool_management_registry: Optional[Any] = None,
     ) -> None:
         self._tools: Dict[str, BaseTool] = {t.spec.name: t for t in tools}
         self._bus = bus
@@ -220,6 +221,7 @@ class ToolExecutor:
         self._capability_policy = capability_policy
         self._agent_id = agent_id
         self._boundary_guard = boundary_guard
+        self._tool_management_registry = tool_management_registry
 
     def execute(self, tool_call: ToolCall) -> ToolResult:
         """Parse arguments, dispatch to tool, measure latency, emit events."""
@@ -230,6 +232,52 @@ class ToolExecutor:
                 content=f"Unknown tool: {tool_call.name}",
                 success=False,
             )
+
+        # Managed lifecycle gate. This is opt-in until a runtime supplies its
+        # persisted approval registry; when supplied it fails closed.
+        if self._tool_management_registry is not None:
+            identity = str(
+                getattr(tool, "management_identity", "")
+                or f"builtin:{tool.spec.name}"
+            )
+            record = self._tool_management_registry.get(identity)
+            if record is None:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=(
+                        "Tool management block: "
+                        f"tool is not registered: {identity}"
+                    ),
+                    success=False,
+                )
+            try:
+                from openjarvis.security.tool_management_registry import (
+                    compute_tool_fingerprint,
+                )
+
+                live_fingerprint = compute_tool_fingerprint(
+                    identity=identity,
+                    spec=tool.spec,
+                    provenance=record.provenance,
+                    implementation_id=record.implementation_id,
+                    is_local=bool(getattr(tool, "is_local", True)),
+                )
+                allowed, reason = self._tool_management_registry.check_execution(
+                    identity,
+                    fingerprint=live_fingerprint,
+                )
+            except Exception as exc:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=f"Tool management block: {exc}",
+                    success=False,
+                )
+            if not allowed:
+                return ToolResult(
+                    tool_name=tool_call.name,
+                    content=f"Tool management block: {reason}",
+                    success=False,
+                )
 
         # Parse arguments
         try:

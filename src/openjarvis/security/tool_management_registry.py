@@ -324,6 +324,27 @@ class ToolManagementRegistry:
         return record
 
 
+    def check_execution(
+        self,
+        identity: str,
+        *,
+        fingerprint: ResourceFingerprint | None = None,
+    ) -> tuple[bool, str]:
+        """Check whether a managed tool may execute in its current state."""
+        record = self.get(identity)
+        if record is None:
+            return False, f"Tool is not registered for management: {identity}"
+        if fingerprint is not None and fingerprint != record.fingerprint:
+            return False, f"Tool definition changed since management registration: {identity}"
+        if not record.is_approved():
+            return (
+                False,
+                f"Tool is not approved for execution: {identity} "
+                f"(status={record.status.value})",
+            )
+        return True, ""
+
+
 __all__ = [
     "ManagedToolRecord",
     "ToolManagementRegistry",

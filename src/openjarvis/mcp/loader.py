@@ -123,7 +123,7 @@ def load_mcp_tools_from_config(
                 raise
             clients.append(client)
 
-            provider = MCPToolProvider(client)
+            provider = MCPToolProvider(client, source_id=name)
             discovered = provider.discover()
 
             include_tools = set(cfg.get("include_tools", []))
