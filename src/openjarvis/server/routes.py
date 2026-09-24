@@ -18,6 +18,7 @@ from openjarvis.core.evidence import (
     assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
+    evidence_audit_metadata,
     evidence_result_metadata,
 )
 from openjarvis.core.paths import get_config_dir
@@ -395,6 +396,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 complexity_info,
                 app_config=None,
                 bus=None,
+                trace_store=getattr(request.app.state, "trace_store", None),
                 memory_service=None,
                 session_store=None,
                 session_id=None,
@@ -467,6 +469,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             bus=bus,
             complexity_info=complexity_info,
             app_config=config,
+            trace_store=getattr(request.app.state, "trace_store", None),
         )
 
     # Hand the completed exchange to the background memory service.
@@ -621,8 +624,12 @@ def _handle_direct(
     bus=None,
     complexity_info=None,
     app_config=None,
+    trace_store=None,
 ) -> ChatCompletionResponse:
     """Direct engine call without agent."""
+    import time
+
+    started_at = time.time()
     query_text = ""
     for message in reversed(req.messages):
         if message.role == "user" and message.content:
@@ -632,13 +639,32 @@ def _handle_direct(
     requirement = detect_evidence_requirement(query_text)
     if requirement.required:
         assessment = assess_evidence(requirement)
+        blocked = blocked_response(assessment)
+        if trace_store is not None:
+            from openjarvis.traces.collector import record_response_trace
+
+            record_response_trace(
+                trace_store,
+                query=query_text,
+                result=blocked,
+                model=model,
+                agent="server_direct",
+                started_at=started_at,
+                ended_at=time.time(),
+                metadata={
+                    "evidence": evidence_audit_metadata(
+                        requirement,
+                        assessment,
+                    )
+                },
+            )
         return ChatCompletionResponse(
             model=model,
             choices=[
                 Choice(
                     message=ChoiceMessage(
                         role="assistant",
-                        content=blocked_response(assessment),
+                        content=blocked,
                     ),
                     finish_reason="stop",
                 )
@@ -723,6 +749,19 @@ def _handle_direct(
             }
             for tc in tool_calls
         ]
+
+    if trace_store is not None and content:
+        from openjarvis.traces.collector import record_response_trace
+
+        record_response_trace(
+            trace_store,
+            query=query_text,
+            result=content,
+            model=model,
+            agent="server_direct",
+            started_at=started_at,
+            ended_at=time.time(),
+        )
 
     return ChatCompletionResponse(
         model=model,
@@ -1014,6 +1053,7 @@ async def _handle_stream_tools(
     *,
     app_config=None,
     bus=None,
+    trace_store=None,
     memory_service=None,
     session_store=None,
     session_id=None,
@@ -1046,6 +1086,9 @@ async def _handle_stream_tools(
             break
 
     async def generate():
+        import time
+
+        started_at = time.time()
         full_content = ""
         # Send the role chunk first (OpenAI convention).
         first_chunk = ChatCompletionChunk(
@@ -1059,6 +1102,25 @@ async def _handle_stream_tools(
         if requirement.required:
             assessment = assess_evidence(requirement)
             blocked = blocked_response(assessment)
+            if trace_store is not None:
+                from openjarvis.traces.collector import record_response_trace
+
+                record_response_trace(
+                    trace_store,
+                    query=query_text,
+                    result=blocked,
+                    model=model,
+                    engine=telemetry_engine,
+                    agent="server_tool_stream",
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    metadata={
+                        "evidence": evidence_audit_metadata(
+                            requirement,
+                            assessment,
+                        )
+                    },
+                )
             content_chunk = ChatCompletionChunk(
                 id=chunk_id,
                 model=model,
@@ -1238,6 +1300,25 @@ async def _handle_stream(
         if requirement.required:
             assessment = assess_evidence(requirement)
             blocked = blocked_response(assessment)
+            if trace_store is not None:
+                from openjarvis.traces.collector import record_response_trace
+
+                record_response_trace(
+                    trace_store,
+                    query=query_text,
+                    result=blocked,
+                    model=model,
+                    engine=actual_telemetry_engine,
+                    agent="server_stream",
+                    started_at=started_at,
+                    ended_at=time.time(),
+                    metadata={
+                        "evidence": evidence_audit_metadata(
+                            requirement,
+                            assessment,
+                        )
+                    },
+                )
             content_chunk = ChatCompletionChunk(
                 id=chunk_id,
                 model=model,
