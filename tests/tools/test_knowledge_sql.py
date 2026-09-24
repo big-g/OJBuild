@@ -184,6 +184,24 @@ def test_rejects_schema_qualified_trust_bypass(store: KnowledgeStore) -> None:
     assert "schema-qualified" in result.content.lower()
 
 
+def test_rejects_backtick_schema_bypass_in_comma_join(
+    store: KnowledgeStore,
+) -> None:
+    from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
+
+    tool = KnowledgeSQLTool(store=store)
+    result = tool.execute(
+        query=(
+            "SELECT trusted.author, bypass.author "
+            "FROM knowledge_chunks AS trusted, "
+            "`main`.knowledge_chunks AS bypass"
+        )
+    )
+
+    assert not result.success
+    assert "schema-qualified" in result.content.lower()
+
+
 def test_rejects_other_tables_even_for_select(store: KnowledgeStore) -> None:
     from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
 
