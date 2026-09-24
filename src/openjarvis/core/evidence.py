@@ -433,6 +433,16 @@ _EXTERNAL_TERMS = (
 )
 
 
+_EXTERNAL_PATTERNS = (
+    r"\bsearch\s+(?:my|the)\s+(?:email|messages?|files?|documents?|notes?|"
+    r"drive|knowledge\s+base|memory)\b",
+    r"\bcheck\s+(?:my|the)\s+(?:email|calendar|messages?|files?|documents?|"
+    r"notes?|drive)\b",
+    r"\bfind\s+.+?\s+in\s+(?:my|the)\s+(?:email|messages?|files?|"
+    r"documents?|notes?|drive|knowledge\s+base)\b",
+)
+
+
 def detect_evidence_requirement(text: str) -> EvidenceRequirement:
     """Conservatively identify requests requiring externally retrieved data.
 
@@ -455,7 +465,10 @@ def detect_evidence_requirement(text: str) -> EvidenceRequirement:
         re.search(pattern, normalized) is not None
         for pattern in _CURRENT_PATTERNS
     )
-    external_match = contains_term(_EXTERNAL_TERMS)
+    external_match = contains_term(_EXTERNAL_TERMS) or any(
+        re.search(pattern, normalized) is not None
+        for pattern in _EXTERNAL_PATTERNS
+    )
 
     if current_match:
         return EvidenceRequirement(
