@@ -30,6 +30,75 @@ def test_handle_chat_uses_deep_research_agent() -> None:
     mock_agent.run.assert_called_once()
 
 
+def test_handle_chat_grounds_deep_research_before_publish() -> None:
+    from openjarvis.agents._stubs import AgentResult
+    from openjarvis.core.types import ToolResult
+    from openjarvis.server.channel_bridge import ChannelBridge
+    from openjarvis.server.session_store import SessionStore
+    from openjarvis.tools._stubs import ToolSpec
+
+    class _Tool:
+        @property
+        def spec(self):
+            return ToolSpec(
+                name="bridge_evidence",
+                description="Bridge evidence test tool.",
+                evidence_kinds=["current"],
+            )
+
+    class _Engine:
+        def generate(self, messages, *, model, temperature, max_tokens, **kwargs):
+            return {
+                "content": (
+                    '{"supported": false, '
+                    '"unsupported_claims": ["Sunny conditions are not in evidence."], '
+                    '"reason": "The condition is unsupported."}'
+                )
+            }
+
+    mock_agent = MagicMock()
+    mock_agent._tools = [_Tool()]
+    mock_agent._engine = _Engine()
+    mock_agent._model = "test-model"
+    mock_agent.run.return_value = AgentResult(
+        content="Tomorrow's high will be 82°F and it will be sunny.",
+        tool_results=[
+            ToolResult(
+                tool_name="bridge_evidence",
+                content="Forecast: tomorrow high 82°F.",
+                success=True,
+                metadata={
+                    "evidence": {
+                        "provider": "test",
+                        "records": [
+                            {
+                                "source": "weather",
+                                "content": "Forecast: tomorrow high 82°F.",
+                            }
+                        ],
+                    }
+                },
+            )
+        ],
+    )
+
+    bridge = ChannelBridge(
+        channels={},
+        session_store=SessionStore(db_path=":memory:"),
+        bus=MagicMock(),
+        deep_research_agent=mock_agent,
+    )
+
+    result = bridge.handle_incoming(
+        sender_id="+15551234567",
+        content="What's the weather forecast for tomorrow?",
+        channel_type="twilio",
+    )
+
+    assert result == "I couldn't verify the response against the retrieved evidence."
+    assert "sunny" not in result
+
+
 def test_handle_chat_falls_back_to_system() -> None:
     """When no DeepResearch agent, fall back to system.ask()."""
     from openjarvis.server.channel_bridge import ChannelBridge
