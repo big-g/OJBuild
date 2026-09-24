@@ -916,32 +916,6 @@ async def _handle_agent_stream(
         )
         yield f"data: {first_chunk.model_dump_json()}\n\n"
 
-        requirement = detect_evidence_requirement(query_text)
-        if requirement.required:
-            assessment = assess_evidence(requirement)
-            blocked = blocked_response(assessment)
-            content_chunk = ChatCompletionChunk(
-                id=chunk_id,
-                model=model,
-                choices=[
-                    StreamChoice(delta=DeltaMessage(content=blocked))
-                ],
-            )
-            yield f"data: {content_chunk.model_dump_json()}\n\n"
-            finish_chunk = ChatCompletionChunk(
-                id=chunk_id,
-                model=model,
-                choices=[
-                    StreamChoice(
-                        delta=DeltaMessage(),
-                        finish_reason="stop",
-                    )
-                ],
-            )
-            yield f"data: {finish_chunk.model_dump_json()}\n\n"
-            yield "data: [DONE]\n\n"
-            return
-
         try:
             response = await asyncio.to_thread(
                 _handle_agent,
@@ -1253,6 +1227,32 @@ async def _handle_stream(
             ],
         )
         yield f"data: {first_chunk.model_dump_json()}\n\n"
+
+        requirement = detect_evidence_requirement(query_text)
+        if requirement.required:
+            assessment = assess_evidence(requirement)
+            blocked = blocked_response(assessment)
+            content_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[
+                    StreamChoice(delta=DeltaMessage(content=blocked))
+                ],
+            )
+            yield f"data: {content_chunk.model_dump_json()}\n\n"
+            finish_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[
+                    StreamChoice(
+                        delta=DeltaMessage(),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+            yield f"data: {finish_chunk.model_dump_json()}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         try:
             # Cloud models → direct cloud API (reads keys from disk).
