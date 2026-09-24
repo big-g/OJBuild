@@ -1,3 +1,5 @@
+import pytest
+
 from openjarvis.core.evidence import (
     EvidenceKind,
     EvidenceRecord,
@@ -246,3 +248,37 @@ def test_online_as_technical_adjective_does_not_force_external_retrieval():
     )
 
     assert not requirement.required
+
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What is electrical current?",
+        "Explain price elasticity.",
+        "What does high availability mean?",
+        "What is temperature?",
+    ],
+)
+def test_static_concepts_do_not_require_current_evidence(query):
+    from openjarvis.core.evidence import detect_evidence_requirement
+
+    assert not detect_evidence_requirement(query).required
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "Who is the current president?",
+        "What's the price of Bitcoin?",
+        "What's the weather in Charlotte?",
+        "What is the exchange rate from USD to GBP?",
+    ],
+)
+def test_dynamic_queries_require_current_evidence(query):
+    from openjarvis.core.evidence import detect_evidence_requirement
+
+    requirement = detect_evidence_requirement(query)
+
+    assert requirement.required
+    assert requirement.kind == EvidenceKind.CURRENT
