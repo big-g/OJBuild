@@ -129,6 +129,50 @@ class TestWebSocketStreaming:
         }
         assert stream_started is False
 
+    def test_blocked_current_request_records_evidence_trace(
+        self,
+        tmp_path,
+    ):
+        from openjarvis.traces.store import TraceStore
+
+        stream_started = False
+
+        async def forbidden_stream(messages, *, model="test-model", **kwargs):
+            nonlocal stream_started
+            stream_started = True
+            yield "unsupported"
+
+        engine = MagicMock()
+        engine.engine_id = "mock"
+        engine.stream = forbidden_stream
+        app = _make_app(engine=engine)
+        store = TraceStore(tmp_path / "ws-evidence-traces.db")
+        app.state.trace_store = store
+        client = TestClient(app)
+
+        with client.websocket_connect("/v1/chat/stream") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "message": "What's the weather forecast for tomorrow?",
+                    }
+                )
+            )
+            ws.receive_json()
+            ws.receive_json()
+
+        assert stream_started is False
+        traces = store.list_traces()
+        assert len(traces) == 1
+        assert traces[0].metadata["evidence"] == {
+            "required": True,
+            "kind": "current",
+            "status": "required_not_obtained",
+            "reason": "Required evidence was not obtained.",
+            "records": 0,
+        }
+        store.close()
+
     def test_missing_message_field(self):
         """Sending JSON without a 'message' field should return an error."""
         app = _make_app()
