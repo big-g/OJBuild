@@ -448,6 +448,36 @@ def test_semantic_cross_source_conflict_blocks():
     assert len(engine.calls) == 1
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        '["approved", "delayed"]',
+        '["canceled", "approved"]',
+        '["approved", "canceled", "delayed"]',
+    ],
+)
+def test_conflict_validator_rejects_values_not_in_cited_sources(values):
+    engine = _GroundingEngine(
+        '{"conflicting": true, "conflicts": ['
+        '{"claim": "Launch status", "source_ids": ["E1", "E2"], '
+        f'"values": {values}'
+        '}], "reason": "The sources disagree."}'
+    )
+
+    conflict = validate_evidence_conflicts(
+        engine=engine,
+        model="test-model",
+        query="What is the launch status?",
+        records=_conflict_records(
+            "The launch status is approved.",
+            "The launch status is canceled.",
+        ),
+    )
+
+    assert conflict.status == ConflictStatus.VALIDATION_FAILED
+    assert conflict.blocked
+
+
 def test_consistent_independent_sources_pass_conflict_validation():
     engine = _GroundingEngine(
         '{"conflicting": false, "conflicts": [], '

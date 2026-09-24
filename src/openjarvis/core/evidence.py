@@ -871,6 +871,10 @@ def validate_evidence_conflicts(
         )
 
     payload, source_map = _conflict_payload(query, usable)
+    supplied = {
+        item["source_id"]: f'{item["title"]}\n{item["content"]}'
+        for item in json.loads(payload)["evidence"]
+    }
     if len(source_map) < 2:
         return ConflictAssessment(
             status=ConflictStatus.NOT_CHECKED,
@@ -964,12 +968,26 @@ def validate_evidence_conflicts(
             or len(set(source_ids)) < 2
             or not set(source_ids).issubset(source_map)
             or not isinstance(values, list)
-            or len(values) < 2
+            or len(values) != len(source_ids)
             or not all(isinstance(value, str) and value.strip() for value in values)
         ):
             return ConflictAssessment(
                 status=ConflictStatus.VALIDATION_FAILED,
                 reason="Conflict validator returned unverifiable conflict details.",
+                method="llm_judge",
+            )
+
+        if any(
+            not re.search(
+                rf"(?<!\w){re.escape(value.strip())}(?!\w)",
+                supplied[source_id],
+                flags=re.IGNORECASE,
+            )
+            for source_id, value in zip(source_ids, values)
+        ):
+            return ConflictAssessment(
+                status=ConflictStatus.VALIDATION_FAILED,
+                reason="Conflict validator reported values absent from cited sources.",
                 method="llm_judge",
             )
 
