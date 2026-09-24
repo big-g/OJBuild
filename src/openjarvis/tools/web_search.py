@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Any
 
 from openjarvis.core.registry import ToolRegistry
@@ -46,6 +47,7 @@ class WebSearchTool(BaseTool):
             },
             category="search",
             required_capabilities=["network:fetch"],
+            evidence_kinds=["current", "external"],
             metadata={"requires_api_key": "TAVILY_API_KEY", "fallback": "duckduckgo"},
         )
 
@@ -161,11 +163,24 @@ class WebSearchTool(BaseTool):
         if url:
             try:
                 content = self._fetch_url(url)
+                evidence_records = (
+                    [{"url": url, "content": content}]
+                    if content and "cannot be read directly" not in content
+                    else []
+                )
                 return ToolResult(
                     tool_name="web_search",
                     content=content or "No content found at URL.",
                     success=True,
-                    metadata={"url": url, "mode": "fetch"},
+                    metadata={
+                        "url": url,
+                        "mode": "fetch",
+                        "evidence": {
+                            "provider": "web_fetch",
+                            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                            "records": evidence_records,
+                        },
+                    },
                 )
             except Exception as exc:
                 return ToolResult(
@@ -218,6 +233,11 @@ class WebSearchTool(BaseTool):
                     "engine": "tavily",
                     "credits": (response.get("usage") or {}).get("credits"),
                     "results": provenance_results,
+                    "evidence": {
+                        "provider": "tavily",
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "records": provenance_results,
+                    },
                 },
             )
         except Exception as exc:
@@ -237,6 +257,11 @@ class WebSearchTool(BaseTool):
                     "engine": "duckduckgo",
                     "num_results": len(provenance_results),
                     "results": provenance_results,
+                    "evidence": {
+                        "provider": "duckduckgo",
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "records": provenance_results,
+                    },
                 },
             )
 
