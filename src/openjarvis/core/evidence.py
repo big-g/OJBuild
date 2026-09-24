@@ -944,8 +944,15 @@ def validate_evidence_conflicts(
             method="llm_judge",
         )
 
+    if len(conflicts) > 10:
+        return ConflictAssessment(
+            status=ConflictStatus.VALIDATION_FAILED,
+            reason="Conflict validator returned too many conflict items to verify.",
+            method="llm_judge",
+        )
+
     normalized_claims: list[str] = []
-    for item in conflicts[:10]:
+    for item in conflicts:
         if not isinstance(item, dict) or set(item) != {
             "claim",
             "source_ids",
@@ -970,6 +977,7 @@ def validate_evidence_conflicts(
             or not isinstance(values, list)
             or len(values) != len(source_ids)
             or not all(isinstance(value, str) and value.strip() for value in values)
+            or len({" ".join(value.lower().split()) for value in values}) < 2
         ):
             return ConflictAssessment(
                 status=ConflictStatus.VALIDATION_FAILED,

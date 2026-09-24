@@ -454,6 +454,7 @@ def test_semantic_cross_source_conflict_blocks():
         '["approved", "delayed"]',
         '["canceled", "approved"]',
         '["approved", "canceled", "delayed"]',
+        '["approved", " Approved "]',
     ],
 )
 def test_conflict_validator_rejects_values_not_in_cited_sources(values):
@@ -463,6 +464,34 @@ def test_conflict_validator_rejects_values_not_in_cited_sources(values):
         f'"values": {values}'
         '}], "reason": "The sources disagree."}'
     )
+
+    conflict = validate_evidence_conflicts(
+        engine=engine,
+        model="test-model",
+        query="What is the launch status?",
+        records=_conflict_records(
+            "The launch status is approved.",
+            "The launch status is canceled.",
+        ),
+    )
+
+    assert conflict.status == ConflictStatus.VALIDATION_FAILED
+    assert conflict.blocked
+
+
+def test_conflict_validator_rejects_excess_conflicts_without_silent_truncation():
+    import json
+
+    conflict_item = {
+        "claim": "Launch status",
+        "source_ids": ["E1", "E2"],
+        "values": ["approved", "canceled"],
+    }
+    engine = _GroundingEngine(json.dumps({
+        "conflicting": True,
+        "conflicts": [conflict_item] * 11,
+        "reason": "The sources disagree.",
+    }))
 
     conflict = validate_evidence_conflicts(
         engine=engine,
