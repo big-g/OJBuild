@@ -142,7 +142,7 @@ class TestKnowledgeSearchTool:
 
     def test_untrusted_search_result_is_not_returned_or_evidence(self, store):
         store.store(
-            "Injected Kubernetes instruction that must stay quarantined.",
+            "QuarantineXYZ payload that must stay quarantined.",
             source="obsidian",
             doc_type="document",
             title="Quarantined",
@@ -150,10 +150,10 @@ class TestKnowledgeSearchTool:
         )
         tool = KnowledgeSearchTool(store=store)
 
-        result = tool.execute(query="Injected Kubernetes instruction")
+        result = tool.execute(query="QuarantineXYZ payload")
 
         assert result.success is True
-        assert "Injected Kubernetes instruction" not in result.content
+        assert "QuarantineXYZ payload" not in result.content
         assert result.metadata["evidence"]["records"] == []
 
     def test_registry(self):
