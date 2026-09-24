@@ -700,14 +700,14 @@ def _record_anchor_values(record: EvidenceRecord, kind: str) -> set[str]:
     return set(anchors.get(kind, set()))
 
 
-def _numeric_anchor_contexts(text: str) -> dict[str, set[str]]:
+def _numeric_anchor_contexts(text: str) -> dict[str, list[set[str]]]:
     """Return normalized numeric anchors with conservative local word context."""
     scrubbed = _DATE_ANCHOR_RE.sub(" ", text)
     tokens = re.findall(
         r"[A-Za-z_][A-Za-z0-9_-]*|-?\d[\d,]*(?:\.\d+)?",
         scrubbed,
     )
-    contexts: dict[str, set[str]] = {}
+    contexts: dict[str, list[set[str]]] = {}
 
     for index, token in enumerate(tokens):
         if not re.fullmatch(r"-?\d[\d,]*(?:\.\d+)?", token):
@@ -722,7 +722,7 @@ def _numeric_anchor_contexts(text: str) -> dict[str, set[str]]:
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", candidate)
             and candidate.lower() not in _CONFLICT_QUERY_STOPWORDS
         ]
-        contexts[value] = set(nearby[-3:])
+        contexts.setdefault(value, []).append(set(nearby[-3:]))
 
     return contexts
 
@@ -767,15 +767,17 @@ def _deterministic_evidence_conflict(
             ):
                 left_value = next(iter(left_values))
                 right_value = next(iter(right_values))
-                left_context = _numeric_anchor_contexts(left.content).get(
-                    left_value,
-                    set(),
+                left_contexts = _numeric_anchor_contexts(left.content).get(
+                    left_value, [],
                 )
-                right_context = _numeric_anchor_contexts(right.content).get(
-                    right_value,
-                    set(),
+                right_contexts = _numeric_anchor_contexts(right.content).get(
+                    right_value, [],
                 )
-                shared_context = sorted(left_context & right_context)
+                shared_context = max(
+                    (sorted(a & b) for a in left_contexts for b in right_contexts),
+                    key=len,
+                    default=[],
+                )
                 if len(shared_context) >= 2:
                     claim = (
                         "numeric disagreement for context "

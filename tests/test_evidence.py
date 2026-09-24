@@ -380,6 +380,26 @@ def test_numeric_cross_source_conflict_blocks_without_llm_call():
     assert engine.calls == []
 
 
+def test_repeated_numeric_anchor_keeps_earlier_context():
+    engine = _GroundingEngine(
+        '{"conflicting": false, "conflicts": [], "reason": "unused"}'
+    )
+
+    conflict = validate_evidence_conflicts(
+        engine=engine,
+        model="test-model",
+        query="What is the Bitcoin price?",
+        records=_conflict_records(
+            "Bitcoin price is 60000. The reported price is 60000.",
+            "Bitcoin price is 61000.",
+        ),
+    )
+
+    assert conflict.status == ConflictStatus.CONFLICTING
+    assert conflict.method == "numeric_anchor"
+    assert engine.calls == []
+
+
 def test_unrelated_numbers_do_not_trigger_deterministic_conflict():
     engine = _GroundingEngine(
         '{"conflicting": false, "conflicts": [], '
