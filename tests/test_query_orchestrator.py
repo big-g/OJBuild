@@ -359,6 +359,82 @@ class TestSystemEvidenceBoundary:
         ]
         assert len(engine.calls) == 1
 
+    def test_cross_source_conflict_blocks_before_grounding(self):
+        from openjarvis.agents._stubs import AgentResult
+        from openjarvis.core.registry import AgentRegistry
+        from openjarvis.core.types import ToolResult
+
+        class _ConflictAgent(_SystemEvidenceAgent):
+            def run(self, query, context=None):
+                return AgentResult(
+                    content="Tomorrow's weather condition is sunny.",
+                    turns=1,
+                    tool_results=[
+                        ToolResult(
+                            tool_name="system_evidence",
+                            content="conflicting weather reports",
+                            success=True,
+                            metadata={
+                                "evidence": {
+                                    "provider": "test",
+                                    "records": [
+                                        {
+                                            "url": "https://source-a.test/weather",
+                                            "content": (
+                                                "Tomorrow's weather condition "
+                                                "is sunny."
+                                            ),
+                                        },
+                                        {
+                                            "url": "https://source-b.test/weather",
+                                            "content": (
+                                                "Tomorrow's weather condition "
+                                                "is rainy."
+                                            ),
+                                        },
+                                    ],
+                                }
+                            },
+                        )
+                    ],
+                )
+
+        AgentRegistry.register_value(
+            "cross_source_conflict_agent",
+            _ConflictAgent,
+        )
+        engine = _FakeEngine(
+            {
+                "content": (
+                    '{"conflicting": true, "conflicts": ['
+                    '{"claim": "Weather condition", '
+                    '"source_ids": ["E1", "E2"], '
+                    '"values": ["sunny", "rainy"]}], '
+                    '"reason": "The sources disagree on conditions."}'
+                )
+            }
+        )
+        system = _FakeSystem(
+            engine=engine,
+            agent_name="cross_source_conflict_agent",
+            tools=[_SystemEvidenceTool()],
+        )
+
+        result = QueryOrchestrator(system).ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == "The available sources conflict."
+        assert result["metadata"]["evidence_status"] == "conflicting"
+        assert result["metadata"]["evidence_conflict_status"] == "conflicting"
+        assert result["metadata"]["evidence_conflict_method"] == "llm_judge"
+        assert result["metadata"]["evidence_conflict_claims"] == [
+            "Weather condition: sunny vs rainy"
+        ]
+        assert "grounding_status" not in result["metadata"]
+        assert len(engine.calls) == 1
+
     def test_grounding_validator_failure_blocks_response(self):
         from openjarvis.core.registry import AgentRegistry
 
