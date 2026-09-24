@@ -864,6 +864,7 @@ def _record_ws_trace(
     model: str,
     started_at: float,
     ended_at: float,
+    metadata: Optional[dict[str, Any]] = None,
 ) -> None:
     """Record a trace for a completed WebSocket chat (best-effort)."""
     if trace_store is None or not result:
@@ -877,6 +878,7 @@ def _record_ws_trace(
         model=model,
         started_at=started_at,
         ended_at=ended_at,
+        metadata=metadata,
     )
 
 
@@ -956,6 +958,7 @@ async def websocket_chat_stream(websocket: WebSocket):
                 assess_evidence,
                 blocked_response,
                 detect_evidence_requirement,
+                evidence_audit_metadata,
             )
 
             evidence_requirement = detect_evidence_requirement(message)
@@ -975,6 +978,12 @@ async def websocket_chat_stream(websocket: WebSocket):
                     model=model,
                     started_at=_ws_started_at,
                     ended_at=_time.time(),
+                    metadata={
+                        "evidence": evidence_audit_metadata(
+                            evidence_requirement,
+                            assessment,
+                        )
+                    },
                 )
                 continue
 
