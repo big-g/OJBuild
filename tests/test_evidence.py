@@ -225,3 +225,24 @@ def test_tool_spec_must_declare_matching_evidence_kind():
         reason="External retrieval required.",
     )
     assert tool_supports_evidence(_Spec(), requirement)
+
+
+
+def test_what_does_question_does_not_force_external_retrieval():
+    from openjarvis.core.evidence import detect_evidence_requirement
+
+    requirement = detect_evidence_requirement(
+        "What does WAL mode mean?"
+    )
+
+    assert not requirement.required
+
+
+def test_online_as_technical_adjective_does_not_force_external_retrieval():
+    from openjarvis.core.evidence import detect_evidence_requirement
+
+    requirement = detect_evidence_requirement(
+        "What are online algorithms?"
+    )
+
+    assert not requirement.required
