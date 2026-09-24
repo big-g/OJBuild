@@ -75,6 +75,7 @@ class GroundingAssessment:
     status: GroundingStatus
     reason: str = ""
     unsupported_claims: tuple[str, ...] = ()
+    method: str = ""
 
     @property
     def supported(self) -> bool:
@@ -452,6 +453,7 @@ def validate_response_grounding(
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="No evidence records were available for grounding validation.",
+            method="llm_judge",
         )
 
     answer_anchors = _normalized_numeric_anchors(answer)
@@ -465,12 +467,14 @@ def validate_response_grounding(
                 f"Unsupported numeric detail: {anchor}"
                 for anchor in missing_anchors
             ),
+            method="numeric_anchor",
         )
 
     if engine is None or not model:
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="No grounding validator engine/model was available.",
+            method="llm_judge",
         )
 
     try:
@@ -506,12 +510,14 @@ def validate_response_grounding(
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason=f"Grounding validator failed: {exc}",
+            method="llm_judge",
         )
 
     if not isinstance(parsed, dict):
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="Grounding validator did not return an object.",
+            method="llm_judge",
         )
 
     supported = parsed.get("supported")
@@ -527,6 +533,7 @@ def validate_response_grounding(
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="Grounding validator returned an invalid schema.",
+            method="llm_judge",
         )
 
     claims = tuple(
@@ -542,6 +549,7 @@ def validate_response_grounding(
                 "Grounding validator returned contradictory supported and "
                 "unsupported-claims fields."
             ),
+            method="llm_judge",
         )
 
     return GroundingAssessment(
@@ -552,6 +560,7 @@ def validate_response_grounding(
         ),
         reason=reason.strip(),
         unsupported_claims=claims,
+        method="llm_judge",
     )
 
 
@@ -563,6 +572,7 @@ def grounding_result_metadata(
         "grounding_status": grounding.status.value,
         "grounding_reason": grounding.reason,
         "grounding_unsupported_claims": list(grounding.unsupported_claims),
+        "grounding_method": grounding.method,
     }
 
 
@@ -678,6 +688,7 @@ def evidence_audit_from_result_metadata(
         audit["grounding"] = {
             "status": grounding_status,
             "reason": str(metadata.get("grounding_reason", "")),
+            "method": str(metadata.get("grounding_method", "")),
             "unsupported_claims": [
                 str(item)
                 for item in unsupported
