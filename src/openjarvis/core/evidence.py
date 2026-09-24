@@ -467,6 +467,10 @@ _EXTERNAL_PATTERNS = (
     r"notes?|drive)\b",
     r"\bfind\s+.+?\s+in\s+(?:my|the)\s+(?:email|messages?|files?|"
     r"documents?|notes?|drive|knowledge\s+base)\b",
+    r"\bhow many\s+(?:emails?|messages?|notes?|documents?|files?|meetings?)\s+"
+    r"(?:do i have|did i|have i|are in my|from|with)\b",
+    r"\bwho\s+(?:emailed|messaged|contacted)\s+me\b",
+    r"\bwhich\s+.+?\s+have i\s+(?:spoken with|met|emailed|messaged|contacted)\b",
 )
 
 
