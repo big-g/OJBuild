@@ -136,18 +136,16 @@ export function InputArea() {
     const wasConversationMode = conversationModeRef.current;
     conversationModeRef.current = conversationMode;
 
-    // Turning conversation mode off should immediately stop any active
-    // browser speech and recording.
+    // Turning conversation mode off stops only the voice loop. Any model
+    // response already being generated is allowed to finish as text.
     if (wasConversationMode && !conversationMode) {
       conversationStoppingRef.current = true;
+      voiceInteractionRef.current = false;
 
       stopSpeaking();
       if (speechState === 'recording') {
-        void stopRecording().catch(() => {});
+        void stopRecording({ discard: true }).catch(() => {});
       }
-
-    // Cancel any active response generation.
-    abortRef.current?.abort();
     }
 
     if (!wasConversationMode && conversationMode) {
@@ -209,7 +207,7 @@ export function InputArea() {
     stopSpeaking();
 
     if (speechState === 'recording') {
-      void stopRecording().catch(() => {});
+      void stopRecording({ discard: true }).catch(() => {});
     }
 
     resetStream();
@@ -242,30 +240,23 @@ export function InputArea() {
         return;
       }
 
-      console.log('[Conversation] Speaking response');
+      const speechResult = await speak(text);
 
-      try {
-        await speak(text);
-        console.log('[Conversation] Response finished');
+      // Cancellation is deliberate: the user either interrupted Jarvis,
+      // disabled Conversation Mode, or started another message. The caller
+      // that cancelled speech owns any next microphone action.
+      if (speechResult === 'cancelled') {
+        return;
+      }
 
-        // The user may have turned Conversation Mode off while Jarvis
-        // was speaking. Check the current state, not a stale closure.
-        if (
-          conversationModeRef.current &&
-          voiceInteractionRef.current
-        ) {
-          console.log('[Conversation] Listening again');
-          await startRecording();
-        }
-      } catch (error) {
-        console.error('[Conversation] Speech synthesis error:', error);
-
-        if (
-          conversationModeRef.current &&
-          voiceInteractionRef.current
-        ) {
-          await startRecording();
-        }
+      // The user may have turned Conversation Mode off while Jarvis was
+      // speaking. Check the current state, not a stale closure.
+      if (
+        conversationModeRef.current &&
+        voiceInteractionRef.current &&
+        !conversationStoppingRef.current
+      ) {
+        await startRecording();
       }
     },
     [
@@ -734,10 +725,9 @@ const sendMessage = useCallback(async (messageText?: string) => {
     }
     if (speechState === 'recording') {
       try {
-        const text = await stopRecording();
-        if (text) {
-          await sendMessage(text);
-        }
+        // useSpeech owns transcription delivery through its callback. Awaiting
+        // the stop here must not submit the same transcript a second time.
+        await stopRecording();
       } catch {
         // Error is captured in useSpeech
       }
@@ -746,12 +736,11 @@ const sendMessage = useCallback(async (messageText?: string) => {
       await startRecording();
     }
   }, [
-    conversationMode,
-    speechState, 
-    startRecording, 
-    stopRecording, 
+    speechState,
+    startRecording,
+    stopRecording,
     stopSpeaking,
-    sendMessage]);
+  ]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
