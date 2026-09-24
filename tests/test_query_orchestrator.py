@@ -66,6 +66,24 @@ class TestAskDirectEngineMode:
         assert result["model"] == "fake-model"
         assert result["engine"] == "fake"
 
+    def test_current_direct_query_is_blocked_before_engine_call(self):
+        engine = _FakeEngine(
+            {
+                "content": "Tomorrow will be sunny and 82°F.",
+            }
+        )
+        system = _FakeSystem(engine=engine)
+        orchestrator = QueryOrchestrator(system)
+
+        result = orchestrator.ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == "I couldn't retrieve the required data."
+        assert result["metadata"]["evidence_status"] == "required_not_obtained"
+        assert engine.calls == []
+
     def test_forwards_temperature_and_max_tokens(self):
         engine = _FakeEngine({"content": ""})
         system = _FakeSystem(engine=engine)
