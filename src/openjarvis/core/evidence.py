@@ -6,9 +6,9 @@ A successful tool call does not automatically constitute sufficient evidence.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-import re
 from typing import Any, Iterable, Mapping, Optional
 
 
@@ -379,7 +379,7 @@ def detect_evidence_requirement(text: str) -> EvidenceRequirement:
     def contains_term(terms: tuple[str, ...]) -> bool:
         return any(
             re.search(
-                rf"(?<!\\w){re.escape(term)}(?!\\w)",
+                rf"(?<!\w){re.escape(term)}(?!\w)",
                 normalized,
             )
             is not None
