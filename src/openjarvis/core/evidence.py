@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
-from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, Iterable, Mapping, Optional
 
@@ -389,14 +388,24 @@ def _normalized_numeric_anchors(text: str) -> set[str]:
     anchors: set[str] = set()
     for match in re.finditer(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", scrubbed):
         value = match.group(0).replace(",", "")
-        try:
-            decimal_value = Decimal(value)
-        except InvalidOperation:
-            continue
-        if decimal_value == decimal_value.to_integral():
-            normalized = str(decimal_value.quantize(Decimal("1")))
+        negative = value.startswith("-")
+        unsigned = value[1:] if negative else value
+
+        if "." in unsigned:
+            integer_part, fractional_part = unsigned.split(".", 1)
+            integer_part = integer_part.lstrip("0") or "0"
+            fractional_part = fractional_part.rstrip("0")
+            normalized = (
+                integer_part
+                if not fractional_part
+                else f"{integer_part}.{fractional_part}"
+            )
         else:
-            normalized = format(decimal_value.normalize(), "f").rstrip("0").rstrip(".")
+            normalized = unsigned.lstrip("0") or "0"
+
+        if negative and normalized != "0":
+            normalized = f"-{normalized}"
+
         anchors.add(normalized)
     return anchors
 
