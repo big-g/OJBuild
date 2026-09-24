@@ -735,6 +735,31 @@ def evidence_result_metadata(
     }
 
 
+def grounding_audit_from_result_metadata(
+    metadata: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Normalize grounding fields from AgentResult metadata for trace storage."""
+    status = str(metadata.get("grounding_status", "")).strip()
+    if not status:
+        return None
+
+    claims = metadata.get("grounding_unsupported_claims", [])
+    if not isinstance(claims, list):
+        claims = []
+    normalized_claims = [
+        str(claim).strip()
+        for claim in claims
+        if str(claim).strip()
+    ][:20]
+
+    return {
+        "status": status,
+        "reason": str(metadata.get("grounding_reason", "")),
+        "method": str(metadata.get("grounding_method", "")),
+        "unsupported_claims": normalized_claims,
+    }
+
+
 def evidence_audit_metadata(
     requirement: EvidenceRequirement,
     assessment: EvidenceAssessment,
