@@ -13,6 +13,12 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from openjarvis.core.evidence import (
+    assess_evidence,
+    assess_tool_results,
+    blocked_response,
+    detect_evidence_requirement,
+)
 from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message, Role, ToolCall
 from openjarvis.server.auth import get_authenticated_user_id
@@ -616,6 +622,30 @@ def _handle_direct(
     app_config=None,
 ) -> ChatCompletionResponse:
     """Direct engine call without agent."""
+    query_text = ""
+    for message in reversed(req.messages):
+        if message.role == "user" and message.content:
+            query_text = message.content
+            break
+
+    requirement = detect_evidence_requirement(query_text)
+    if requirement.required:
+        assessment = assess_evidence(requirement)
+        return ChatCompletionResponse(
+            model=model,
+            choices=[
+                Choice(
+                    message=ChoiceMessage(
+                        role="assistant",
+                        content=blocked_response(assessment),
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=UsageInfo(),
+            complexity=complexity_info,
+        )
+
     messages = _to_messages(req.messages)
     messages = _ensure_identity_prompt(messages, app_config)
     kwargs: dict[str, Any] = {}
@@ -788,6 +818,24 @@ def _handle_agent(
         finally:
             agent._model = original_model
 
+    requirement = detect_evidence_requirement(input_text)
+    if requirement.required:
+        assessment = assess_tool_results(
+            requirement,
+            getattr(agent, "_tools", []) or [],
+            getattr(result, "tool_results", []) or [],
+        )
+        result.metadata.update(
+            {
+                "evidence_required": True,
+                "evidence_status": assessment.status.value,
+                "evidence_reason": assessment.reason,
+                "evidence_records": len(assessment.records),
+            }
+        )
+        if assessment.blocked:
+            result.content = blocked_response(assessment)
+
     usage = UsageInfo(
         prompt_tokens=result.metadata.get("prompt_tokens", 0),
         completion_tokens=result.metadata.get("completion_tokens", 0),
@@ -867,6 +915,32 @@ async def _handle_agent_stream(
             choices=[StreamChoice(delta=DeltaMessage(role="assistant"))],
         )
         yield f"data: {first_chunk.model_dump_json()}\n\n"
+
+        requirement = detect_evidence_requirement(query_text)
+        if requirement.required:
+            assessment = assess_evidence(requirement)
+            blocked = blocked_response(assessment)
+            content_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[
+                    StreamChoice(delta=DeltaMessage(content=blocked))
+                ],
+            )
+            yield f"data: {content_chunk.model_dump_json()}\n\n"
+            finish_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[
+                    StreamChoice(
+                        delta=DeltaMessage(),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+            yield f"data: {finish_chunk.model_dump_json()}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         try:
             response = await asyncio.to_thread(
@@ -1000,6 +1074,32 @@ async def _handle_stream_tools(
             choices=[StreamChoice(delta=DeltaMessage(role="assistant"))],
         )
         yield f"data: {first_chunk.model_dump_json()}\n\n"
+
+        requirement = detect_evidence_requirement(query_text)
+        if requirement.required:
+            assessment = assess_evidence(requirement)
+            blocked = blocked_response(assessment)
+            content_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[
+                    StreamChoice(delta=DeltaMessage(content=blocked))
+                ],
+            )
+            yield f"data: {content_chunk.model_dump_json()}\n\n"
+            finish_chunk = ChatCompletionChunk(
+                id=chunk_id,
+                model=model,
+                choices=[
+                    StreamChoice(
+                        delta=DeltaMessage(),
+                        finish_reason="stop",
+                    )
+                ],
+            )
+            yield f"data: {finish_chunk.model_dump_json()}\n\n"
+            yield "data: [DONE]\n\n"
+            return
 
         finish_reason = "stop"
         try:
