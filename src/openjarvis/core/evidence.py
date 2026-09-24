@@ -1231,6 +1231,7 @@ def apply_tool_evidence_to_result(
     query: str = "",
     engine: Any = None,
     model: str = "",
+    validate_conflicts: bool = False,
     validate_grounding: bool = False,
 ) -> EvidenceAssessment:
     """Assess tool evidence and apply the final gate to an AgentResult-like object."""
@@ -1239,6 +1240,48 @@ def apply_tool_evidence_to_result(
         tools,
         getattr(result, "tool_results", ()) or (),
     )
+
+    if (
+        validate_conflicts
+        and requirement.required
+        and assessment.status == EvidenceStatus.OBTAINED
+    ):
+        conflict = validate_evidence_conflicts(
+            engine=engine,
+            model=model,
+            query=query,
+            records=assessment.records,
+        )
+        if conflict.status == ConflictStatus.CONFLICTING:
+            assessment = EvidenceAssessment(
+                status=EvidenceStatus.CONFLICTING,
+                records=assessment.records,
+                reason=conflict.reason or "Available sources conflict.",
+                conflict_status=conflict.status.value,
+                conflict_claims=conflict.conflict_claims,
+                conflict_method=conflict.method,
+            )
+        elif conflict.status == ConflictStatus.VALIDATION_FAILED:
+            assessment = EvidenceAssessment(
+                status=EvidenceStatus.INSUFFICIENT,
+                records=assessment.records,
+                reason=(
+                    conflict.reason
+                    or "Could not verify whether the retrieved sources agree."
+                ),
+                conflict_status=conflict.status.value,
+                conflict_claims=conflict.conflict_claims,
+                conflict_method=conflict.method,
+            )
+        elif conflict.status == ConflictStatus.CONSISTENT:
+            assessment = EvidenceAssessment(
+                status=EvidenceStatus.OBTAINED,
+                records=assessment.records,
+                reason=assessment.reason,
+                conflict_status=conflict.status.value,
+                conflict_claims=(),
+                conflict_method=conflict.method,
+            )
 
     metadata = getattr(result, "metadata", None)
     if isinstance(metadata, dict):
@@ -1286,6 +1329,7 @@ def finalize_agent_result_with_evidence(
         query=query,
         engine=getattr(agent, "_engine", None),
         model=str(getattr(agent, "_model", "") or ""),
+        validate_conflicts=True,
         validate_grounding=True,
     )
     return result
