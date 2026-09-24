@@ -690,6 +690,28 @@ def apply_tool_evidence_to_result(
     return assessment
 
 
+def finalize_agent_result_with_evidence(
+    agent: Any,
+    query: str,
+    result: Any,
+) -> Any:
+    """Apply the full evidence + semantic grounding gate to a direct agent run."""
+    requirement = detect_evidence_requirement(query)
+    if not requirement.required:
+        return result
+
+    apply_tool_evidence_to_result(
+        requirement,
+        getattr(agent, "_tools", ()) or (),
+        result,
+        query=query,
+        engine=getattr(agent, "_engine", None),
+        model=str(getattr(agent, "_model", "") or ""),
+        validate_grounding=True,
+    )
+    return result
+
+
 def evidence_result_metadata(
     requirement: EvidenceRequirement,
     assessment: EvidenceAssessment,
