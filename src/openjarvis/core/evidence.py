@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from urllib.parse import urlparse
 from enum import Enum
 from typing import Any, Iterable, Mapping, Optional
 
@@ -21,6 +22,15 @@ class EvidenceStatus(str, Enum):
     OBTAINED = "obtained"
     INSUFFICIENT = "insufficient"
     CONFLICTING = "conflicting"
+
+
+class ConflictStatus(str, Enum):
+    """Whether independently sourced evidence materially disagrees."""
+
+    NOT_CHECKED = "not_checked"
+    CONSISTENT = "consistent"
+    CONFLICTING = "conflicting"
+    VALIDATION_FAILED = "validation_failed"
 
 
 class GroundingStatus(str, Enum):
@@ -90,12 +100,35 @@ class GroundingAssessment:
 
 
 @dataclass(slots=True, frozen=True)
+class ConflictAssessment:
+    """Cross-source contradiction verdict for retrieved evidence."""
+
+    status: ConflictStatus
+    reason: str = ""
+    conflict_claims: tuple[str, ...] = ()
+    method: str = ""
+
+    @property
+    def conflicting(self) -> bool:
+        return self.status == ConflictStatus.CONFLICTING
+
+    @property
+    def blocked(self) -> bool:
+        return self.status in {
+            ConflictStatus.CONFLICTING,
+            ConflictStatus.VALIDATION_FAILED,
+        }
+
+
+@dataclass(slots=True, frozen=True)
 class EvidenceAssessment:
     """Result of evaluating evidence against a requirement."""
 
     status: EvidenceStatus
     records: tuple[EvidenceRecord, ...] = ()
     reason: str = ""
+    conflict_claims: tuple[str, ...] = ()
+    conflict_method: str = ""
 
     @property
     def sufficient(self) -> bool:
