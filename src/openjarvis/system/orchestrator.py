@@ -8,8 +8,8 @@ import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from openjarvis.core.evidence import (
+    apply_tool_evidence_to_result,
     assess_evidence,
-    assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
     evidence_audit_metadata,
@@ -273,6 +273,17 @@ class QueryOrchestrator:
                 "error": True,
             }
 
+        evidence_requirement = detect_evidence_requirement(query)
+
+        def _finalize_result(result: Any) -> Any:
+            if evidence_requirement.required:
+                apply_tool_evidence_to_result(
+                    evidence_requirement,
+                    getattr(ag, "_tools", agent_tools) or [],
+                    result,
+                )
+            return result
+
         telemetry_events: List[Dict[str, Any]] = []
 
         def _on_inference_end(event: Any) -> None:
@@ -293,35 +304,19 @@ class QueryOrchestrator:
                     ag,
                     store=s.trace_store,
                     bus=s.bus,
+                    result_processor=(
+                        _finalize_result
+                        if evidence_requirement.required
+                        else None
+                    ),
                 )
                 result = collector.run(query, context=ctx)
                 s.trace_collector = collector
             else:
                 result = ag.run(query, context=ctx)
+                result = _finalize_result(result)
         finally:
             s.bus.unsubscribe(EventType.INFERENCE_END, _on_inference_end)
-
-        evidence_requirement = detect_evidence_requirement(query)
-        if evidence_requirement.required:
-            assessment = assess_tool_results(
-                evidence_requirement,
-                getattr(ag, "_tools", agent_tools) or [],
-                getattr(result, "tool_results", []) or [],
-            )
-            result.metadata.update(
-                evidence_result_metadata(
-                    evidence_requirement,
-                    assessment,
-                )
-            )
-            if assessment.blocked:
-                result.content = blocked_response(assessment)
-            if collector is not None:
-                collector.annotate_evidence(
-                    evidence_requirement,
-                    assessment,
-                    final_content=result.content,
-                )
 
         _telemetry: Dict[str, Any] = {}
         if telemetry_events:
