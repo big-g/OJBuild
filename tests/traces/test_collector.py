@@ -118,6 +118,51 @@ class _ToolAgent(BaseAgent):
         return AgentResult(content="4", turns=2)
 
 
+class _EvidenceToolEventAgent(BaseAgent):
+    """Agent that emits one evidence-bearing tool event."""
+
+    agent_id = "evidence_tool_event"
+
+    def __init__(self, bus: EventBus) -> None:
+        self._bus = bus
+
+    def run(
+        self,
+        input: str,
+        context: Optional[AgentContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
+        self._bus.publish(
+            EventType.TOOL_CALL_START,
+            {
+                "tool": "knowledge_search",
+                "arguments": {"query": "launch plan"},
+            },
+        )
+        self._bus.publish(
+            EventType.TOOL_CALL_END,
+            {
+                "tool": "knowledge_search",
+                "success": True,
+                "latency": 0.01,
+                "result": "Launch is Friday.",
+                "metadata": {
+                    "evidence": {
+                        "provider": "knowledge_search",
+                        "records": [
+                            {
+                                "source": "obsidian",
+                                "source_id": "doc-1",
+                                "content": "Launch is Friday.",
+                            }
+                        ],
+                    }
+                },
+            },
+        )
+        return AgentResult(content="Launch is Friday.", turns=1)
+
+
 class TestTraceCollector:
     def test_basic_collection(self, tmp_path: Path) -> None:
         bus = EventBus()
@@ -186,6 +231,33 @@ class TestTraceCollector:
             "reason": "Required evidence was not obtained.",
             "records": 0,
         }
+        store.close()
+
+    def test_tool_step_preserves_evidence_provenance(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        bus = EventBus()
+        store = TraceStore(tmp_path / "test.db")
+        collector = TraceCollector(
+            _EvidenceToolEventAgent(bus),
+            store=store,
+            bus=bus,
+        )
+
+        collector.run("Search my notes for the launch plan.")
+
+        trace = store.list_traces()[0]
+        tool_steps = [
+            step
+            for step in trace.steps
+            if step.step_type == StepType.TOOL_CALL
+        ]
+        assert len(tool_steps) == 1
+        evidence = tool_steps[0].metadata["evidence"]
+        assert evidence["provider"] == "knowledge_search"
+        assert evidence["records"][0]["source"] == "obsidian"
+        assert evidence["records"][0]["source_id"] == "doc-1"
         store.close()
 
     def test_records_generate_steps(self, tmp_path: Path) -> None:
