@@ -448,10 +448,13 @@ def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
         value = (match.group(1) or match.group(2) or "").strip()
         if value:
             quotes.add(" ".join(value.lower().split()))
-    names = {
-        " ".join(match.group(0).lower().split())
-        for match in _NAME_ANCHOR_RE.finditer(text)
-    }
+    names: set[str] = set()
+    for match in _NAME_ANCHOR_RE.finditer(text):
+        words = match.group(0).split()
+        if words and words[0].lower() in {"the", "a", "an"}:
+            words = words[1:]
+        if len(words) >= 2:
+            names.add(" ".join(word.lower() for word in words))
     return {
         "date": dates,
         "url": urls,
