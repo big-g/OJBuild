@@ -952,6 +952,32 @@ async def websocket_chat_stream(websocket: WebSocket):
             trace_store = getattr(websocket.app.state, "trace_store", None)
             _ws_started_at = _time.time()
 
+            from openjarvis.core.evidence import (
+                assess_evidence,
+                blocked_response,
+                detect_evidence_requirement,
+            )
+
+            evidence_requirement = detect_evidence_requirement(message)
+            if evidence_requirement.required:
+                assessment = assess_evidence(evidence_requirement)
+                blocked = blocked_response(assessment)
+                await websocket.send_json(
+                    {"type": "chunk", "content": blocked},
+                )
+                await websocket.send_json(
+                    {"type": "done", "content": blocked},
+                )
+                _record_ws_trace(
+                    trace_store,
+                    query=message,
+                    result=blocked,
+                    model=model,
+                    started_at=_ws_started_at,
+                    ended_at=_time.time(),
+                )
+                continue
+
             try:
                 # Prefer streaming if the engine supports it
                 stream_fn = getattr(engine, "stream", None)
