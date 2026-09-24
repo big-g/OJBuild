@@ -10,6 +10,11 @@ import {
   engineFromCompletionChunk,
   resolveChatEngine,
 } from '../../lib/chat-telemetry';
+import {
+  getConversationModeTransition,
+  isVoiceInteraction,
+  shouldResumeListening,
+} from '../../lib/conversation-mode';
 import { MicButton } from './MicButton';
 import { useSpeech } from '../../hooks/useSpeech';
 import { useSpeechSynthesis } from '../../hooks/useSpeechSynthesis';
@@ -136,9 +141,12 @@ export function InputArea() {
     const wasConversationMode = conversationModeRef.current;
     conversationModeRef.current = conversationMode;
 
-    // Turning conversation mode off stops only the voice loop. Any model
-    // response already being generated is allowed to finish as text.
-    if (wasConversationMode && !conversationMode) {
+    const transition = getConversationModeTransition(
+      wasConversationMode,
+      conversationMode,
+    );
+
+    if (transition.stopVoiceLoop) {
       conversationStoppingRef.current = true;
       voiceInteractionRef.current = false;
 
@@ -148,7 +156,7 @@ export function InputArea() {
       }
     }
 
-    if (!wasConversationMode && conversationMode) {
+    if (transition.resetStopping) {
       conversationStoppingRef.current = false;
     }
   }, [
@@ -232,8 +240,12 @@ export function InputArea() {
         console.warn('[Conversation] Browser speech synthesis unavailable');
         
         if (
-          conversationModeRef.current &&
-          voiceInteractionRef.current
+          shouldResumeListening({
+            conversationMode: conversationModeRef.current,
+            voiceInteraction: voiceInteractionRef.current,
+            stopping: conversationStoppingRef.current,
+            speechResult: 'error',
+          })
         ) {
           await startRecording();
         }
@@ -242,19 +254,13 @@ export function InputArea() {
 
       const speechResult = await speak(text);
 
-      // Cancellation is deliberate: the user either interrupted Jarvis,
-      // disabled Conversation Mode, or started another message. The caller
-      // that cancelled speech owns any next microphone action.
-      if (speechResult === 'cancelled') {
-        return;
-      }
-
-      // The user may have turned Conversation Mode off while Jarvis was
-      // speaking. Check the current state, not a stale closure.
       if (
-        conversationModeRef.current &&
-        voiceInteractionRef.current &&
-        !conversationStoppingRef.current
+        shouldResumeListening({
+          conversationMode: conversationModeRef.current,
+          voiceInteraction: voiceInteractionRef.current,
+          stopping: conversationStoppingRef.current,
+          speechResult,
+        })
       ) {
         await startRecording();
       }
@@ -274,8 +280,9 @@ const sendMessage = useCallback(async (messageText?: string) => {
     return;
   }
 
-  // Track whether this message was initiated by voice.
-  voiceInteractionRef.current = messageText !== undefined;
+  // Typed chat remains text-only; transcribed microphone input participates
+  // in the Conversation Mode speak/listen loop.
+  voiceInteractionRef.current = isVoiceInteraction(messageText);
 
   // A new query interrupts any response currently being spoken.
   stopSpeaking();
