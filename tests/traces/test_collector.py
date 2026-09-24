@@ -11,9 +11,11 @@ from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
 from openjarvis.core.evidence import (
     EvidenceAssessment,
     EvidenceKind,
+    EvidenceRecord,
     EvidenceRequirement,
     EvidenceStatus,
     apply_tool_evidence_to_result,
+    evidence_result_metadata,
 )
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import StepType, ToolResult
@@ -375,6 +377,63 @@ class TestTraceCollector:
             trace_events[0].data["trace"].metadata["evidence"]["status"]
             == "required_not_obtained"
         )
+        store.close()
+
+    def test_trace_records_cross_source_conflict_verdict(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = TraceStore(tmp_path / "conflict.db")
+        requirement = EvidenceRequirement(
+            required=True,
+            kind=EvidenceKind.CURRENT,
+            reason="Current data required.",
+        )
+        assessment = EvidenceAssessment(
+            status=EvidenceStatus.CONFLICTING,
+            records=(
+                EvidenceRecord(
+                    source="source-a",
+                    content="Launch is approved.",
+                ),
+                EvidenceRecord(
+                    source="source-b",
+                    content="Launch is canceled.",
+                ),
+            ),
+            reason="Independent sources disagree.",
+            conflict_status="conflicting",
+            conflict_claims=("Launch status: approved vs canceled",),
+            conflict_method="llm_judge",
+        )
+
+        def finalize(result: AgentResult) -> AgentResult:
+            result.content = "The available sources conflict."
+            result.metadata.update(
+                evidence_result_metadata(
+                    requirement,
+                    assessment,
+                )
+            )
+            return result
+
+        collector = TraceCollector(
+            _FakeAgent(response="Launch is approved."),
+            store=store,
+            result_processor=finalize,
+        )
+
+        result = collector.run("What is the launch status?")
+
+        assert result.content == "The available sources conflict."
+        trace = store.list_traces()[0]
+        assert trace.result == "The available sources conflict."
+        assert trace.metadata["evidence"]["status"] == "conflicting"
+        assert trace.metadata["evidence"]["conflict"] == {
+            "status": "conflicting",
+            "method": "llm_judge",
+            "claims": ["Launch status: approved vs canceled"],
+        }
         store.close()
 
     def test_trace_records_semantic_grounding_verdict(
