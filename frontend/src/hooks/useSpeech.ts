@@ -32,6 +32,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
   const speechDetectedRef = useRef(false);
   const silenceStartedRef = useRef<number | null>(null);
   const discardRecordingRef = useRef(false);
+  const startingRef = useRef(false);
 
   useEffect(() => {
     fetchSpeechHealth()
@@ -134,7 +135,10 @@ export function useSpeech(onTranscription?: (text: string) => void) {
   const startRecording = useCallback(async (): Promise<void> => {
     setError(null);
 
-    if (mediaRecorderRef.current?.state === 'recording') {
+    if (
+      startingRef.current ||
+      mediaRecorderRef.current?.state === 'recording'
+    ) {
       return;
     }
 
@@ -144,6 +148,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
     }
 
     try {
+      startingRef.current = true;
       discardRecordingRef.current = false;
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -230,6 +235,8 @@ export function useSpeech(onTranscription?: (text: string) => void) {
       mediaRecorderRef.current = null;
       setError('Microphone access denied');
       setState('idle');
+    } finally {
+      startingRef.current = false;
     }
   }, [stopRecording]);
 
