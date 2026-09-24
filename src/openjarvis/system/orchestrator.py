@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -165,6 +166,8 @@ class QueryOrchestrator:
             agent_kwargs["system_prompt"] = system_prompt
         if s.capability_policy is not None:
             agent_kwargs["capability_policy"] = s.capability_policy
+        if bool(getattr(s.config.security, "enforce_tool_management", False)):
+            agent_kwargs["tool_management_registry"] = s.tool_management_registry
         if operator_id is not None:
             agent_kwargs["operator_id"] = operator_id
             agent_kwargs["session_store"] = s.session_store
@@ -197,12 +200,18 @@ class QueryOrchestrator:
             agent_kwargs["tools"] = digest_tools + list(existing)
 
         try:
-            ag = agent_cls(s.engine, s.model, **agent_kwargs)
-        except TypeError:
-            try:
-                ag = agent_cls(s.engine, s.model)
-            except TypeError:
-                ag = agent_cls()
+            ag = self._construct_agent(agent_cls, agent_kwargs)
+        except Exception as exc:
+            logger.error(
+                "Agent %r initialization failed; refusing fallback construction: %s",
+                agent_name,
+                exc,
+                exc_info=True,
+            )
+            return {
+                "content": f"Agent initialization failed: {exc}",
+                "error": True,
+            }
 
         telemetry_events: List[Dict[str, Any]] = []
 
@@ -293,6 +302,61 @@ class QueryOrchestrator:
             "engine": s.engine_key,
             "_telemetry": _telemetry,
         }
+
+    def _construct_agent(
+        self,
+        agent_cls: Any,
+        agent_kwargs: Dict[str, Any],
+    ) -> Any:
+        """Construct one agent without silently dropping security/configuration."""
+        signature = inspect.signature(agent_cls)
+        parameters = signature.parameters
+        accepts_var_kwargs = any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
+
+        security_required = {
+            key
+            for key in ("capability_policy", "tool_management_registry")
+            if key in agent_kwargs and agent_kwargs[key] is not None
+        }
+        unsupported_security = {
+            key
+            for key in security_required
+            if key not in parameters and not accepts_var_kwargs
+        }
+        if unsupported_security:
+            names = ", ".join(sorted(unsupported_security))
+            raise TypeError(
+                f"Agent {agent_cls.__name__} does not accept required security "
+                f"configuration: {names}"
+            )
+
+        kwargs = (
+            dict(agent_kwargs)
+            if accepts_var_kwargs
+            else {
+                key: value
+                for key, value in agent_kwargs.items()
+                if key in parameters
+            }
+        )
+
+        args: list[Any] = []
+        for name, value in (
+            ("engine", self._system.engine),
+            ("model", self._system.model),
+        ):
+            parameter = parameters.get(name)
+            if parameter is None:
+                continue
+            if parameter.kind is inspect.Parameter.POSITIONAL_ONLY:
+                args.append(value)
+            else:
+                kwargs[name] = value
+
+        return agent_cls(*args, **kwargs)
 
     def _build_tools(self, tool_names: List[str]) -> List[BaseTool]:
         """Build tool instances from tool names."""
