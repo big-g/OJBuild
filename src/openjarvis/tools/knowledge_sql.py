@@ -99,7 +99,7 @@ class KnowledgeSQLTool(BaseTool):
         if query.endswith(";"):
             query = query[:-1].rstrip()
         if ";" in query:
-            return False, "", "Only one SELECT statement is allowed."
+            return False, "", "SQL error: only one SELECT statement is allowed."
 
         normalized = query.lstrip().upper()
         if not normalized.startswith("SELECT"):
