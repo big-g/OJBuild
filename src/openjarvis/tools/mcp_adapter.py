@@ -76,17 +76,48 @@ class MCPToolProvider:
         The ``MCPClient`` connected to the MCP server.
     """
 
-    def __init__(self, client: MCPClient, *, source_id: str = "mcp") -> None:
+    def __init__(
+        self,
+        client: MCPClient,
+        *,
+        source_id: str = "mcp",
+        management_registry: Any = None,
+        capability_registry: Any = None,
+    ) -> None:
         self._client = client
         self._source_id = str(source_id or "mcp")
+        self._management_registry = management_registry
+        self._capability_registry = capability_registry
 
     def discover(self) -> List[BaseTool]:
         """Discover available tools and return them as BaseTool adapters."""
         specs = self._client.list_tools()
-        return [
+        tools = [
             MCPToolAdapter(self._client, s, source_id=self._source_id)
             for s in specs
         ]
+        if self._management_registry is not None:
+            if self._capability_registry is None:
+                raise ValueError(
+                    "capability_registry is required when management_registry is set"
+                )
+            from openjarvis.security.capability_registry import Provenance
+            from openjarvis.security.tool_management_bootstrap import sync_managed_tool
+
+            implementation_id = f"{MCPToolAdapter.__module__}.{MCPToolAdapter.__qualname__}"
+            for tool in tools:
+                sync_managed_tool(
+                    self._management_registry,
+                    tool,
+                    identity=tool.management_identity,
+                    provenance=Provenance(
+                        source_type="mcp",
+                        source_id=self._source_id,
+                    ),
+                    capability_registry=self._capability_registry,
+                    implementation_id=implementation_id,
+                )
+        return tools
 
 
 __all__ = ["MCPToolAdapter", "MCPToolProvider"]

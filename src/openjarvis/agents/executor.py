@@ -416,6 +416,17 @@ class AgentExecutor:
         # actively invoking web_search/memory_*/etc.
         if self._bus is not None:
             agent_kwargs["bus"] = self._bus
+        if self._system is not None:
+            capability_policy = getattr(self._system, "capability_policy", None)
+            if capability_policy is not None:
+                agent_kwargs["capability_policy"] = capability_policy
+            security_cfg = getattr(getattr(self._system, "config", None), "security", None)
+            if bool(getattr(security_cfg, "enforce_tool_management", False)):
+                agent_kwargs["tool_management_registry"] = getattr(
+                    self._system,
+                    "tool_management_registry",
+                    None,
+                )
         # Propagate confirmation policy from the AgentExecutor down to the
         # agent's own ToolExecutor. Set by CLI paths like `jarvis agents ask`
         # so non-interactive runs can auto-approve tool execution.

@@ -34,6 +34,8 @@ def load_mcp_tools_from_config(
     mcp_cfg: Any,
     *,
     allowed_names: Optional[set[str]] = None,
+    management_registry: Any = None,
+    capability_registry: Any = None,
 ) -> tuple[list["BaseTool"], list["MCPClient"]]:
     """Load tools from every server in ``mcp_cfg.servers``.
 
@@ -123,7 +125,12 @@ def load_mcp_tools_from_config(
                 raise
             clients.append(client)
 
-            provider = MCPToolProvider(client, source_id=name)
+            provider = MCPToolProvider(
+                client,
+                source_id=name,
+                management_registry=management_registry,
+                capability_registry=capability_registry,
+            )
             discovered = provider.discover()
 
             include_tools = set(cfg.get("include_tools", []))

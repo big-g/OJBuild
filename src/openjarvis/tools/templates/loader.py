@@ -171,7 +171,14 @@ class ToolTemplate(BaseTool):
 
     tool_id: str
 
-    def __init__(self, template_data: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        template_data: Dict[str, Any],
+        *,
+        management_registry: Any = None,
+        capability_registry: Any = None,
+        source_id: str = "",
+    ) -> None:
         self._data = template_data
         self.tool_id = template_data.get("name", "template")
         self._name = template_data.get("name", "template")
@@ -179,6 +186,25 @@ class ToolTemplate(BaseTool):
         self._parameters = template_data.get("parameters", {})
         self._action = template_data.get("action", {})
         self.management_identity = f"template:{self._name}"
+        if management_registry is not None:
+            if capability_registry is None:
+                raise ValueError(
+                    "capability_registry is required when management_registry is set"
+                )
+            from openjarvis.security.capability_registry import Provenance
+            from openjarvis.security.tool_management_bootstrap import sync_managed_tool
+
+            sync_managed_tool(
+                management_registry,
+                self,
+                identity=self.management_identity,
+                provenance=Provenance(
+                    source_type="template",
+                    source_id=source_id or self._name,
+                ),
+                capability_registry=capability_registry,
+                implementation_id=f"{type(self).__module__}.{type(self).__qualname__}",
+            )
 
     @property
     def spec(self) -> ToolSpec:
@@ -343,17 +369,30 @@ class ToolTemplate(BaseTool):
             )
 
 
-def load_template(path: str | Path) -> ToolTemplate:
+def load_template(
+    path: str | Path,
+    *,
+    management_registry: Any = None,
+    capability_registry: Any = None,
+) -> ToolTemplate:
     """Load a single tool template from a TOML file."""
     path = Path(path)
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
     tool_data = data.get("tool", data)
-    return ToolTemplate(tool_data)
+    return ToolTemplate(
+        tool_data,
+        management_registry=management_registry,
+        capability_registry=capability_registry,
+        source_id=str(path.resolve()),
+    )
 
 
 def discover_templates(
     directory: Optional[str | Path] = None,
+    *,
+    management_registry: Any = None,
+    capability_registry: Any = None,
 ) -> List[ToolTemplate]:
     """Discover all TOML templates in a directory."""
     if directory is None:
@@ -364,7 +403,13 @@ def discover_templates(
     templates = []
     for path in sorted(directory.glob("*.toml")):
         try:
-            templates.append(load_template(path))
+            templates.append(
+                load_template(
+                    path,
+                    management_registry=management_registry,
+                    capability_registry=capability_registry,
+                )
+            )
         except Exception as exc:
             logger.debug("Skipping unparseable template %s: %s", path, exc)
     return templates

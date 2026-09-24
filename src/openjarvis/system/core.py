@@ -76,6 +76,7 @@ class JarvisSystem:
     workflow_engine: Optional[WorkflowEngine] = None
     session_store: Optional[SessionStore] = None
     capability_policy: Optional[CapabilityPolicy] = None
+    tool_management_registry: Any = None
     audit_logger: Optional[AuditLogger] = None
     boundary_guard: Optional[BoundaryGuard] = None
     operator_manager: Optional[OperatorManager] = None

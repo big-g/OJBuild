@@ -181,3 +181,28 @@ def test_template_capabilities_follow_action_type():
     assert transform.spec.required_capabilities == ["none"]
     assert shell.spec.required_capabilities == ["code:execute"]
     assert transform.management_identity == "template:transform_cap"
+
+
+
+def test_template_registers_with_management_registry():
+    from openjarvis.security.capability_registry import (
+        ResourceStatus,
+        create_builtin_capability_registry,
+    )
+    from openjarvis.security.tool_management_registry import ToolManagementRegistry
+
+    managed = ToolManagementRegistry()
+    template = ToolTemplate(
+        {
+            "name": "managed_template",
+            "description": "Managed template",
+            "action": {"type": "transform", "transform": "upper"},
+        },
+        management_registry=managed,
+        capability_registry=create_builtin_capability_registry(),
+        source_id="tests/managed_template.toml",
+    )
+
+    record = managed.require(template.management_identity)
+    assert record.status == ResourceStatus.VALIDATED
+    assert record.approval is None

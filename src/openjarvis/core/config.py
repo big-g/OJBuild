@@ -1430,6 +1430,7 @@ class SecurityConfig:
         default_factory=lambda: str(get_config_dir() / "audit.db")
     )
     enforce_tool_confirmation: bool = True
+    enforce_tool_management: bool = False
     merkle_audit: bool = True
     signing_key_path: str = ""
     ssrf_protection: bool = True
@@ -2331,6 +2332,7 @@ scan_output = true
 secret_scanner = true
 pii_scanner = true
 enforce_tool_confirmation = true
+# enforce_tool_management = false  # Require managed tool approval before execution
 ssrf_protection = true
 # rate_limit_enabled = false
 # rate_limit_rpm = 60

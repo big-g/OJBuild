@@ -8,8 +8,8 @@ from typing import Any
 
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.security.capabilities import (
-    CapabilityPolicy,
     CapabilityResolutionError,
+    resolve_declared_tool_capabilities,
 )
 from openjarvis.security.capability_registry import (
     CapabilityRegistry,
@@ -44,7 +44,7 @@ def _validate_builtin_record(
     registry_key: str,
     tool: Any,
     record: ManagedToolRecord,
-    capability_policy: CapabilityPolicy,
+    capability_registry: CapabilityRegistry,
 ) -> ValidationRecord:
     """Validate one built-in tool without authorizing it."""
 
@@ -82,7 +82,7 @@ def _validate_builtin_record(
     )
 
     try:
-        capability_policy.resolve_tool_capabilities(tool.spec)
+        resolve_declared_tool_capabilities(tool.spec, capability_registry)
     except CapabilityResolutionError as exc:
         checks.append(
             ValidationCheck(
@@ -111,6 +111,89 @@ def _validate_builtin_record(
     )
 
 
+def sync_managed_tool(
+    managed: ToolManagementRegistry,
+    tool: Any,
+    *,
+    identity: str,
+    provenance: Provenance,
+    capability_registry: CapabilityRegistry,
+    implementation_id: str = "",
+) -> ManagedToolRecord:
+    """Register or refresh a runtime-discovered tool without losing approval.
+
+    An unchanged fingerprint preserves existing validation and approval.
+    Definition changes reset lifecycle state through update_definition() and
+    are revalidated, but never automatically approved.
+    """
+    spec = tool.spec
+    fingerprint = compute_tool_fingerprint(
+        identity=identity,
+        spec=spec,
+        provenance=provenance,
+        implementation_id=implementation_id,
+        is_local=bool(getattr(tool, "is_local", True)),
+    )
+
+    existing = managed.get(identity)
+    if existing is not None:
+        unchanged = existing.fingerprint == fingerprint
+        managed.update_definition(
+            identity,
+            spec=spec,
+            provenance=provenance,
+            fingerprint=fingerprint,
+            implementation_id=implementation_id,
+            is_local=bool(getattr(tool, "is_local", True)),
+        )
+        if unchanged and existing.validation is not None:
+            return existing
+        record = existing
+    else:
+        record = ManagedToolRecord(
+            identity=identity,
+            spec=spec,
+            provenance=provenance,
+            fingerprint=fingerprint,
+            implementation_id=implementation_id,
+            is_local=bool(getattr(tool, "is_local", True)),
+        )
+        managed.register(record)
+
+    try:
+        resolve_declared_tool_capabilities(spec, capability_registry)
+    except CapabilityResolutionError as exc:
+        checks = (
+            ValidationCheck(
+                name="capability_resolution",
+                passed=False,
+                severity="error",
+                message=str(exc),
+            ),
+        )
+    else:
+        checks = (
+            ValidationCheck(
+                name="capability_resolution",
+                passed=True,
+                severity="error",
+            ),
+        )
+
+    managed.validate(
+        identity,
+        ValidationRecord(
+            validation_id=uuid.uuid4().hex,
+            validator=_VALIDATOR_NAME,
+            validator_version=_VALIDATOR_VERSION,
+            timestamp=datetime.now(timezone.utc),
+            fingerprint=fingerprint,
+            checks=checks,
+        ),
+    )
+    return record
+
+
 def build_builtin_tool_management_registry(
     *,
     capability_registry: CapabilityRegistry | None = None,
@@ -130,8 +213,6 @@ def build_builtin_tool_management_registry(
     capability_registry = (
         capability_registry or create_builtin_capability_registry()
     )
-    capability_policy = CapabilityPolicy(registry=capability_registry)
-
     managed = ToolManagementRegistry()
 
     for registry_key, tool_cls in sorted(ToolRegistry.items()):
@@ -176,7 +257,7 @@ def build_builtin_tool_management_registry(
             registry_key=registry_key,
             tool=tool,
             record=record,
-            capability_policy=capability_policy,
+            capability_registry=capability_registry,
         )
 
         managed.validate(identity, validation)
@@ -186,4 +267,5 @@ def build_builtin_tool_management_registry(
 
 __all__ = [
     "build_builtin_tool_management_registry",
+    "sync_managed_tool",
 ]

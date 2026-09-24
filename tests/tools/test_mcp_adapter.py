@@ -165,3 +165,26 @@ def test_mcp_adapter_declares_external_invoke_capability(client):
     assert adapter.spec.required_capabilities == ["tool:invoke"]
     assert adapter.is_local is False
     assert adapter.management_identity == "mcp:test-server:calculator"
+
+
+
+def test_mcp_provider_registers_discovered_tools_for_management(client):
+    from openjarvis.security.capability_registry import (
+        ResourceStatus,
+        create_builtin_capability_registry,
+    )
+    from openjarvis.security.tool_management_registry import ToolManagementRegistry
+
+    managed = ToolManagementRegistry()
+    provider = MCPToolProvider(
+        client,
+        source_id="managed-server",
+        management_registry=managed,
+        capability_registry=create_builtin_capability_registry(),
+    )
+
+    provider.discover()
+
+    record = managed.require("mcp:managed-server:calculator")
+    assert record.status == ResourceStatus.VALIDATED
+    assert record.approval is None

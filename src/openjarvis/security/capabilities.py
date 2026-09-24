@@ -54,6 +54,58 @@ class CapabilityResolutionError(ValueError):
     """Raised when a tool's effective capability requirements are unknown."""
 
 
+def resolve_declared_tool_capabilities(
+    tool_spec: Any,
+    registry: CapabilityRegistry,
+) -> tuple[str, ...]:
+    """Resolve and validate a ToolSpec capability declaration without RBAC."""
+    name = getattr(tool_spec, "name", None)
+    explicit = getattr(tool_spec, "required_capabilities", None)
+
+    if explicit is not None and not isinstance(explicit, (list, tuple)):
+        raise CapabilityResolutionError(
+            f"Tool '{name or '<unknown>'}' has invalid required_capabilities"
+        )
+
+    if explicit:
+        values = tuple(str(cap).strip() for cap in explicit)
+
+        if any(not cap for cap in values):
+            raise CapabilityResolutionError(
+                f"Tool '{name or '<unknown>'}' has an empty capability declaration"
+            )
+
+        if "none" in values:
+            if len(values) != 1:
+                raise CapabilityResolutionError(
+                    f"Tool '{name or '<unknown>'}' cannot combine 'none' "
+                    "with other capabilities"
+                )
+            return ()
+
+        capabilities = values
+        source = "ToolSpec.required_capabilities"
+    else:
+        capabilities = tuple(DEFAULT_TOOL_CAPABILITIES.get(name, ()))
+        source = "legacy capability mapping"
+
+    if not capabilities:
+        raise CapabilityResolutionError(
+            f"Tool '{name or '<unknown>'}' has no resolvable capability requirements"
+        )
+
+    for capability in capabilities:
+        try:
+            registry.require_pattern(capability)
+        except KeyError as exc:
+            raise CapabilityResolutionError(
+                f"Tool '{name or '<unknown>'}' declares unknown capability "
+                f"'{capability}' via {source}"
+            ) from exc
+
+    return capabilities
+
+
 class CapabilityPolicy:
     """RBAC capability policy for tool dispatch.
 
@@ -91,63 +143,8 @@ class CapabilityPolicy:
         self._registry.require_pattern(capability)
 
     def resolve_tool_capabilities(self, tool_spec: Any) -> tuple[str, ...]:
-        """Resolve a tool's effective capability requirements.
-
-        ``ToolSpec.required_capabilities`` has three states:
-
-        - ``[]``: declaration missing/not migrated; resolve through the
-          temporary legacy mapping.
-        - ``["none"]``: explicitly capability-free.
-        - one or more capability names: explicit requirements.
-
-        The legacy name-based mapping remains temporary and is only consulted
-        when the ToolSpec declaration is empty.
-        """
-        name = getattr(tool_spec, "name", None)
-        explicit = getattr(tool_spec, "required_capabilities", None)
-
-        if explicit is not None and not isinstance(explicit, (list, tuple)):
-            raise CapabilityResolutionError(
-                f"Tool '{name or '<unknown>'}' has invalid required_capabilities"
-            )
-
-        if explicit:
-            values = tuple(str(cap).strip() for cap in explicit)
-
-            if any(not cap for cap in values):
-                raise CapabilityResolutionError(
-                    f"Tool '{name or '<unknown>'}' has an empty capability declaration"
-                )
-
-            if "none" in values:
-                if len(values) != 1:
-                    raise CapabilityResolutionError(
-                        f"Tool '{name or '<unknown>'}' cannot combine 'none' "
-                        "with other capabilities"
-                    )
-                return ()
-
-            capabilities = values
-            source = "ToolSpec.required_capabilities"
-        else:
-            capabilities = tuple(DEFAULT_TOOL_CAPABILITIES.get(name, ()))
-            source = "legacy capability mapping"
-
-        if not capabilities:
-            raise CapabilityResolutionError(
-                f"Tool '{name or '<unknown>'}' has no resolvable capability requirements"
-            )
-
-        for capability in capabilities:
-            try:
-                self._registry.require_pattern(capability)
-            except KeyError as exc:
-                raise CapabilityResolutionError(
-                    f"Tool '{name or '<unknown>'}' declares unknown capability "
-                    f"'{capability}' via {source}"
-                ) from exc
-
-        return capabilities
+        """Resolve a tool's statically declared capability requirements."""
+        return resolve_declared_tool_capabilities(tool_spec, self._registry)
 
     def resolve_effective_tool_capabilities(
         self,

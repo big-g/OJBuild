@@ -186,6 +186,28 @@ class SystemBuilder:
         sec = setup_security(config, engine, bus)
         engine = sec.engine
 
+        from openjarvis.security.capability_registry import (
+            create_builtin_capability_registry,
+        )
+        from openjarvis.security.tool_management_bootstrap import (
+            build_builtin_tool_management_registry,
+        )
+
+        management_capability_registry = (
+            sec.capability_registry or create_builtin_capability_registry()
+        )
+        tool_management_registry = build_builtin_tool_management_registry(
+            capability_registry=management_capability_registry,
+        )
+        if (
+            config.security.enforce_tool_management
+            and sec.capability_policy is None
+        ):
+            raise RuntimeError(
+                "security.enforce_tool_management requires "
+                "security.capabilities.enabled=true"
+            )
+
         if telemetry_enabled:
             from openjarvis.telemetry.instrumented_engine import (
                 InstrumentedEngine,
@@ -210,8 +232,24 @@ class SystemBuilder:
             model,
             memory_backend,
             channel_backend,
+            tool_management_registry=tool_management_registry,
+            capability_registry=management_capability_registry,
         )
-        tool_executor = ToolExecutor(tool_list, bus) if tool_list else None
+        executor_management_registry = (
+            tool_management_registry
+            if config.security.enforce_tool_management
+            else None
+        )
+        tool_executor = (
+            ToolExecutor(
+                tool_list,
+                bus,
+                capability_policy=sec.capability_policy,
+                tool_management_registry=executor_management_registry,
+            )
+            if tool_list
+            else None
+        )
 
         skill_manager = None
         skill_few_shot_examples: List[str] = []
@@ -236,7 +274,12 @@ class SystemBuilder:
                 )
                 tool_list.extend(skill_tools)
                 if tool_list:
-                    tool_executor = ToolExecutor(tool_list, bus)
+                    tool_executor = ToolExecutor(
+                        tool_list,
+                        bus,
+                        capability_policy=sec.capability_policy,
+                        tool_management_registry=executor_management_registry,
+                    )
                 skill_few_shot_examples = skill_manager.get_few_shot_examples()
             except Exception as exc:
                 logger.warning("Failed to initialize skills: %s", exc)
@@ -333,6 +376,7 @@ class SystemBuilder:
             workflow_engine=workflow_engine,
             session_store=session_store,
             capability_policy=capability_policy,
+            tool_management_registry=tool_management_registry,
             audit_logger=sec.audit_logger,
             agent_manager=agent_manager,
             agent_scheduler=agent_scheduler,
@@ -442,7 +486,15 @@ class SystemBuilder:
             return None
 
     def _resolve_tools(
-        self, config, engine, model, memory_backend, channel_backend=None
+        self,
+        config,
+        engine,
+        model,
+        memory_backend,
+        channel_backend=None,
+        *,
+        tool_management_registry=None,
+        capability_registry=None,
     ):
         """Resolve tool instances via MCPServer (primary) + external MCP servers."""
         from openjarvis.mcp.server import MCPServer
@@ -480,7 +532,11 @@ class SystemBuilder:
                 )
                 for server_cfg in server_list:
                     try:
-                        external_tools = self._discover_external_mcp(server_cfg)
+                        external_tools = self._discover_external_mcp(
+                            server_cfg,
+                            tool_management_registry=tool_management_registry,
+                            capability_registry=capability_registry,
+                        )
                         self._mcp_tools.extend(external_tools)
                         if tool_names:
                             external_tools = [
@@ -642,7 +698,13 @@ class SystemBuilder:
             logger.warning("Failed to set up learning orchestrator: %s", exc)
             return None
 
-    def _discover_external_mcp(self, server_cfg) -> List[BaseTool]:
+    def _discover_external_mcp(
+        self,
+        server_cfg,
+        *,
+        tool_management_registry=None,
+        capability_registry=None,
+    ) -> List[BaseTool]:
         """Discover tools from an external MCP server configuration.
 
         Supports both stdio (command + args) and Streamable HTTP (url)
@@ -699,7 +761,12 @@ class SystemBuilder:
 
         self._mcp_clients.append(client)
 
-        provider = MCPToolProvider(client)
+        provider = MCPToolProvider(
+            client,
+            source_id=name,
+            management_registry=tool_management_registry,
+            capability_registry=capability_registry,
+        )
         discovered = provider.discover()
 
         include_tools = set(cfg.get("include_tools", []))
