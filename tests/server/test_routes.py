@@ -1853,7 +1853,10 @@ def test_current_request_is_allowed_with_web_evidence(tmp_path):
     from openjarvis.tools.web_search import WebSearchTool
 
     engine = _make_engine(
-        content="Tomorrow's forecast is a high of 82°F."
+        content=(
+            '{"supported": true, "unsupported_claims": [], '
+            '"reason": "The forecast claim is supported."}'
+        )
     )
 
     agent = OrchestratorAgent(
@@ -1939,6 +1942,82 @@ def test_current_request_is_allowed_with_web_evidence(tmp_path):
     assert body["choices"][0]["message"]["content"] == (
         "Tomorrow's forecast is a high of 82°F."
     )
+
+
+def test_streamed_agent_answer_is_grounded_before_content_is_emitted():
+    """Unsupported factual content must never leak through SSE before grounding."""
+    from unittest.mock import MagicMock
+
+    from openjarvis.agents.orchestrator import OrchestratorAgent
+    from openjarvis.core.types import ToolResult
+    from openjarvis.tools.web_search import WebSearchTool
+
+    engine = _make_engine(
+        content=(
+            '{"supported": false, '
+            '"unsupported_claims": ["Sunny conditions are not in evidence."], '
+            '"reason": "The condition is unsupported."}'
+        )
+    )
+    agent = OrchestratorAgent(
+        engine,
+        "test-model",
+        tools=[WebSearchTool(api_key="test-key")],
+        bus=EventBus(),
+        max_turns=3,
+        temperature=0.7,
+        max_tokens=128,
+        system_prompt="Answer the user's question.",
+    )
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow's high will be 82°F and it will be sunny.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Forecast: tomorrow high 82°F.",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test-search",
+                            "records": [
+                                {
+                                    "source": "weather",
+                                    "content": "Forecast: tomorrow high 82°F.",
+                                }
+                            ],
+                        }
+                    },
+                )
+            ],
+        )
+    )
+    app = create_app(
+        engine,
+        "test-model",
+        agent=agent,
+        bus=EventBus(),
+        config=_test_config(),
+    )
+    client = TestClient(app)
+
+    resp = client.post(
+        "/v1/chat/completions",
+        json={
+            "model": "test-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "What's the weather forecast for tomorrow?",
+                }
+            ],
+            "stream": True,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert "I couldn't verify the response against the retrieved evidence." in resp.text
+    assert "it will be sunny" not in resp.text
 
 
 def test_current_request_is_blocked_when_web_search_fails(tmp_path):
