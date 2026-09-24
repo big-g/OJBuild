@@ -7,6 +7,7 @@ from openjarvis.core.evidence import (
     EvidenceRequirement,
     EvidenceStatus,
     GroundingStatus,
+    apply_tool_evidence_to_result,
     assess_evidence,
     assessment_from_tool_result,
     blocked_response,
@@ -476,6 +477,77 @@ def test_conflict_validator_malformed_output_fails_closed(content):
     # these text-only status values require the semantic verifier.
     assert conflict.status == ConflictStatus.VALIDATION_FAILED
     assert conflict.blocked
+
+
+def test_finalizer_blocks_cross_source_conflict_before_grounding():
+    from openjarvis.core.types import ToolResult
+    from openjarvis.tools._stubs import ToolSpec
+
+    class _Tool:
+        @property
+        def spec(self):
+            return ToolSpec(
+                name="test_conflict_tool",
+                description="test",
+                evidence_kinds=["current"],
+            )
+
+    class _Result:
+        content = "The launch is approved."
+
+        def __init__(self):
+            self.metadata = {}
+            self.tool_results = [
+                ToolResult(
+                    tool_name="test_conflict_tool",
+                    content="conflicting launch status",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test",
+                            "records": [
+                                {
+                                    "url": "https://source-a.test/status",
+                                    "content": "The launch status is approved.",
+                                },
+                                {
+                                    "url": "https://source-b.test/status",
+                                    "content": "The launch status is canceled.",
+                                },
+                            ],
+                        }
+                    },
+                )
+            ]
+
+    engine = _GroundingEngine(
+        '{"conflicting": true, "conflicts": ['
+        '{"claim": "Launch status", "source_ids": ["E1", "E2"], '
+        '"values": ["approved", "canceled"]}], '
+        '"reason": "The sources disagree."}'
+    )
+    result = _Result()
+
+    assessment = apply_tool_evidence_to_result(
+        required_current(),
+        [_Tool()],
+        result,
+        query="What is the launch status?",
+        engine=engine,
+        model="test-model",
+        validate_conflicts=True,
+        validate_grounding=True,
+    )
+
+    assert assessment.status == EvidenceStatus.CONFLICTING
+    assert result.content == "The available sources conflict."
+    assert result.metadata["evidence_conflict_status"] == "conflicting"
+    assert result.metadata["evidence_conflict_method"] == "llm_judge"
+    assert result.metadata["evidence_conflict_claims"] == [
+        "Launch status: approved vs canceled"
+    ]
+    assert "grounding_status" not in result.metadata
+    assert len(engine.calls) == 1
 
 
 def test_conflict_prompt_treats_sources_as_untrusted_data():
