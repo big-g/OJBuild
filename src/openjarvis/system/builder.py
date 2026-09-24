@@ -260,7 +260,10 @@ class SystemBuilder:
                 from openjarvis.skills.manager import SkillManager
 
                 skill_manager = SkillManager(
-                    bus, capability_policy=sec.capability_policy
+                    bus,
+                    capability_policy=sec.capability_policy,
+                    management_registry=tool_management_registry,
+                    capability_registry=management_capability_registry,
                 )
                 skill_paths = [Path(config.skills.skills_dir).expanduser()]
                 workspace_skills = Path("./skills")
