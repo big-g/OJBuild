@@ -49,6 +49,7 @@ class UserProfileManageTool(BaseTool):
                 "required": ["action"],
             },
             category="memory",
+            required_capabilities=["memory:read", "memory:write"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

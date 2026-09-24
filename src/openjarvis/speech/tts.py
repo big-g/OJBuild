@@ -29,6 +29,7 @@ class TTSBackend(ABC):
     """Abstract base class for text-to-speech backends."""
 
     backend_id: str = ""
+    is_cloud: bool = False
 
     @abstractmethod
     def synthesize(

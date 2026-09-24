@@ -146,6 +146,17 @@ class BaseTool(ABC):
     tool_id: str
     is_local: bool = True
 
+    def resolve_required_capabilities(
+        self,
+        params: Dict[str, Any],
+    ) -> tuple[str, ...] | None:
+        """Return per-call requirements or None for the full static envelope.
+
+        Overrides may narrow ToolSpec.required_capabilities but must never
+        expand beyond it.
+        """
+        return None
+
     @property
     @abstractmethod
     def spec(self) -> ToolSpec:
@@ -264,9 +275,17 @@ class ToolExecutor:
         # RBAC capability check
         if self._capability_policy:
             try:
-                required_capabilities = (
-                    self._capability_policy.resolve_tool_capabilities(tool.spec)
+                resolve_effective = getattr(
+                    self._capability_policy,
+                    "resolve_effective_tool_capabilities",
+                    None,
                 )
+                if callable(resolve_effective):
+                    required_capabilities = resolve_effective(tool, params)
+                else:
+                    required_capabilities = (
+                        self._capability_policy.resolve_tool_capabilities(tool.spec)
+                    )
             except CapabilityResolutionError as exc:
                 return ToolResult(
                     tool_name=tool_call.name,

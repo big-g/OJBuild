@@ -130,6 +130,10 @@ class InferenceEngine(ABC):
         """
         return True
 
+    def is_cloud_for(self, model: str) -> bool:
+        """Return whether serving *model* crosses the cloud boundary."""
+        return bool(self.is_cloud)
+
     def close(self) -> None:
         """Release resources (HTTP clients, connections, threads, etc.)."""
 

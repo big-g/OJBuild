@@ -188,13 +188,6 @@ def ensure_registries_populated() -> None:
     except Exception:
         pass
 
-    browser_modules = ("openjarvis.tools.browser", "openjarvis.tools.browser_axtree")
-    for module_name in browser_modules:
-        try:
-            importlib.import_module(module_name)
-        except Exception:
-            pass
-
     if not ChannelRegistry.keys():
         for module_name in list(sys.modules):
             if module_name.startswith(
@@ -205,6 +198,12 @@ def ensure_registries_populated() -> None:
                 except Exception:
                     pass
 
+    # If tests or another caller cleared ToolRegistry, importing the already
+    # cached openjarvis.tools package above cannot re-run registration
+    # decorators. Restore the complete static registry before performing
+    # browser-specific discovery; otherwise the browser imports make the
+    # registry non-empty and incorrectly suppress restoration of every other
+    # built-in tool.
     if not ToolRegistry.keys():
         for module_name in list(sys.modules):
             if (
@@ -216,6 +215,16 @@ def ensure_registries_populated() -> None:
                     importlib.reload(sys.modules[module_name])
                 except Exception:
                     pass
+
+    browser_modules = (
+        "openjarvis.tools.browser",
+        "openjarvis.tools.browser_axtree",
+    )
+    for module_name in browser_modules:
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            pass
 
     if not any(ToolRegistry.contains(name) for name in BROWSER_SUB_TOOLS):
         for module_name in browser_modules:

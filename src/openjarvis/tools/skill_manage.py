@@ -52,6 +52,7 @@ class SkillManageTool(BaseTool):
                 "required": ["action"],
             },
             category="skill",
+            required_capabilities=["system:admin"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

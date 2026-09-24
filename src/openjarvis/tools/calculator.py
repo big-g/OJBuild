@@ -139,6 +139,7 @@ class CalculatorTool(BaseTool):
                 "required": ["expression"],
             },
             category="math",
+            required_capabilities=["none"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

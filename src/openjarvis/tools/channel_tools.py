@@ -48,6 +48,7 @@ class ChannelSendTool(BaseTool):
                 "required": ["channel", "content"],
             },
             category="channel",
+            required_capabilities=["channel:send"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -109,6 +110,7 @@ class ChannelListTool(BaseTool):
                 "properties": {},
             },
             category="channel",
+            required_capabilities=["channel:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -158,6 +160,7 @@ class ChannelStatusTool(BaseTool):
                 "properties": {},
             },
             category="channel",
+            required_capabilities=["channel:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

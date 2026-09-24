@@ -417,6 +417,7 @@ class AppleCalendarConnector(BaseConnector):
                     },
                 },
                 category="knowledge",
+                required_capabilities=["calendar:read"],
             ),
             ToolSpec(
                 name="calendar_search",
@@ -437,5 +438,6 @@ class AppleCalendarConnector(BaseConnector):
                     "required": ["query"],
                 },
                 category="knowledge",
+                required_capabilities=["calendar:read"],
             ),
         ]

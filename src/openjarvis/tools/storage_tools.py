@@ -44,6 +44,7 @@ class MemoryStoreTool(BaseTool):
                 "required": ["content"],
             },
             category="storage",
+            required_capabilities=["memory:write"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -107,6 +108,7 @@ class MemoryRetrieveTool(BaseTool):
                 "required": ["query"],
             },
             category="storage",
+            required_capabilities=["memory:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -178,6 +180,7 @@ class MemorySearchTool(BaseTool):
                 "required": ["query"],
             },
             category="storage",
+            required_capabilities=["memory:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -253,6 +256,7 @@ class MemoryIndexTool(BaseTool):
                 "required": ["path"],
             },
             category="storage",
+            required_capabilities=["memory:write"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

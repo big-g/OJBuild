@@ -48,7 +48,23 @@ class LLMTool(BaseTool):
                 "required": ["prompt"],
             },
             category="inference",
+            required_capabilities=["network:fetch"],
         )
+
+    def resolve_required_capabilities(
+        self,
+        params: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Require network capability only for cloud-backed inference."""
+        if self._engine is None or not self._model:
+            return ("network:fetch",)
+
+        try:
+            is_cloud = self._engine.is_cloud_for(self._model)
+        except Exception:
+            return ("network:fetch",)
+
+        return ("network:fetch",) if is_cloud else ()
 
     def execute(self, **params: Any) -> ToolResult:
         if self._engine is None:

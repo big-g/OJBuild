@@ -94,6 +94,7 @@ class CheckPermissionTool(BaseTool):
                 "required": ["permission_key"],
             },
             category="proactive",
+            required_capabilities=["permission:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

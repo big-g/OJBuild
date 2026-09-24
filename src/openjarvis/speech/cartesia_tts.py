@@ -56,6 +56,7 @@ class CartesiaTTSBackend(TTSBackend):
     """Cartesia TTS backend — fast, high-quality synthesis."""
 
     backend_id = "cartesia"
+    is_cloud = True
 
     def __init__(
         self, *, api_key: str = "", model: str = "sonic", language: str = "en"

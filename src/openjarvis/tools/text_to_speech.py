@@ -50,7 +50,30 @@ class TextToSpeechTool(BaseTool):
             },
             category="audio",
             timeout_seconds=120.0,
+            required_capabilities=["file:write", "network:fetch"],
         )
+
+    def resolve_required_capabilities(
+        self,
+        params: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Resolve requirements from the selected TTS backend."""
+        import openjarvis.speech  # noqa: F401
+
+        backend_key = params.get("backend", "cartesia")
+        aliases = {"openai": "openai_tts"}
+        backend_key = aliases.get(backend_key, backend_key)
+
+        if not TTSRegistry.contains(backend_key):
+            raise ValueError(f"Unknown TTS backend: {backend_key}")
+
+        backend_cls = TTSRegistry.get(backend_key)
+
+        capabilities = ["file:write"]
+        if bool(getattr(backend_cls, "is_cloud", False)):
+            capabilities.append("network:fetch")
+
+        return tuple(capabilities)
 
     def execute(self, **params: Any) -> ToolResult:
         # Ensure TTS backends are registered

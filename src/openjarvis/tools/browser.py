@@ -211,6 +211,7 @@ class BrowserClickTool(BaseTool):
                 ],
             },
             category="browser",
+            required_capabilities=["network:fetch"],
         )
 
     _ORDINALS = {"first": 0, "second": 1, "third": 2, "fourth": 3, "last": -1}
@@ -423,6 +424,7 @@ class BrowserTypeTool(BaseTool):
                 "required": ["selector", "text"],
             },
             category="browser",
+            required_capabilities=["network:fetch"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -509,6 +511,7 @@ class BrowserScreenshotTool(BaseTool):
                 },
             },
             category="browser",
+            required_capabilities=["network:fetch", "file:write"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -592,6 +595,7 @@ class BrowserExtractTool(BaseTool):
                 },
             },
             category="browser",
+            required_capabilities=["network:fetch"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

@@ -34,6 +34,7 @@ class ThinkTool(BaseTool):
                 "required": ["thought"],
             },
             category="reasoning",
+            required_capabilities=["memory:read", "memory:write"],
             cost_estimate=0.0,
             latency_estimate=0.0,
         )

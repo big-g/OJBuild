@@ -128,6 +128,10 @@ class MultiEngine(InferenceEngine):
         self._refresh_map()
         return self._model_key_map.get(model)
 
+    def is_cloud_for(self, model: str) -> bool:
+        """Return locality of the engine that will actually serve *model*."""
+        return self._engine_for(model).is_cloud_for(model)
+
     def health(self) -> bool:
         return any(engine.health() for _key, engine in self._engines)
 

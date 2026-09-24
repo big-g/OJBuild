@@ -74,6 +74,7 @@ class KnowledgeSQLTool(BaseTool):
                 "required": ["query"],
             },
             category="knowledge",
+            required_capabilities=["memory:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

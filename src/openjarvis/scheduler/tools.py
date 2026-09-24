@@ -62,6 +62,7 @@ class ScheduleTaskTool(BaseTool):
                 "required": ["prompt", "schedule_type", "schedule_value"],
             },
             category="scheduler",
+            required_capabilities=["schedule:create"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

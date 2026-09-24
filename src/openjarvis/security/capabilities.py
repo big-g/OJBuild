@@ -149,6 +149,65 @@ class CapabilityPolicy:
 
         return capabilities
 
+    def resolve_effective_tool_capabilities(
+        self,
+        tool: Any,
+        params: dict[str, Any],
+    ) -> tuple[str, ...]:
+        """Resolve per-call capabilities within the static ToolSpec envelope."""
+        declared = tuple(self.resolve_tool_capabilities(tool.spec))
+        declared_set = set(declared)
+
+        resolver = getattr(tool, "resolve_required_capabilities", None)
+        if not callable(resolver):
+            return declared
+
+        try:
+            resolved = resolver(params)
+        except CapabilityResolutionError:
+            raise
+        except Exception as exc:
+            raise CapabilityResolutionError(
+                f"Tool '{tool.spec.name}' runtime capability resolution "
+                f"failed: {exc}"
+            ) from exc
+
+        if resolved is None:
+            return declared
+
+        if (
+            isinstance(resolved, str)
+            or not isinstance(resolved, (list, tuple, set, frozenset))
+        ):
+            raise CapabilityResolutionError(
+                f"Tool '{tool.spec.name}' returned invalid runtime capabilities"
+            )
+
+        effective = tuple(str(cap).strip() for cap in resolved)
+
+        if any(not cap or cap == "none" for cap in effective):
+            raise CapabilityResolutionError(
+                f"Tool '{tool.spec.name}' returned an invalid runtime capability"
+            )
+
+        undeclared = sorted(set(effective) - declared_set)
+        if undeclared:
+            raise CapabilityResolutionError(
+                f"Tool '{tool.spec.name}' attempted to expand beyond its "
+                f"declared capability envelope: {', '.join(undeclared)}"
+            )
+
+        for capability in effective:
+            try:
+                self._registry.require_pattern(capability)
+            except KeyError as exc:
+                raise CapabilityResolutionError(
+                    f"Tool '{tool.spec.name}' resolved unknown capability "
+                    f"'{capability}'"
+                ) from exc
+
+        return tuple(dict.fromkeys(effective))
+
     def grant(self, agent_id: str, capability: str, pattern: str = "*") -> None:
         """Grant a known capability (or known capability glob) to an agent."""
         self._validate_capability_pattern(capability)

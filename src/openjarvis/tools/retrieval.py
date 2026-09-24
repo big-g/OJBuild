@@ -49,6 +49,7 @@ class RetrievalTool(BaseTool):
                 "required": ["query"],
             },
             category="memory",
+            required_capabilities=["memory:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

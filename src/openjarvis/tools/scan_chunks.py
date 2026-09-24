@@ -80,6 +80,7 @@ class ScanChunksTool(BaseTool):
                 "required": ["question"],
             },
             category="knowledge",
+            required_capabilities=["memory:read"],
         )
 
     def execute(self, **params: Any) -> ToolResult:

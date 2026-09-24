@@ -159,6 +159,20 @@ BUILTIN_CAPABILITIES: tuple[tuple[str, str, str, str, RiskLevel], ...] = (
         RiskLevel.HIGH,
     ),
     (
+        "calendar:read",
+        "Allows reading calendar data.",
+        "calendar",
+        "read",
+	RiskLevel.MEDIUM,
+    ),
+    (
+        "channel:read",
+        "Allows inspecting messaging-channel availability and connection status.",
+        "channel",
+        "read",
+        RiskLevel.MEDIUM,
+    ),
+    (
         "channel:send",
         "Send a message through an external communication channel.",
         "channel",
@@ -178,6 +192,13 @@ BUILTIN_CAPABILITIES: tuple[tuple[str, str, str, str, RiskLevel], ...] = (
         "schedule",
         "create",
         RiskLevel.HIGH,
+    ),
+    (
+        "permission:read",
+        "Allows reading stored permission/approval decisions.",
+        "permission",
+        "read",
+        RiskLevel.MEDIUM,
     ),
     (
         "system:admin",
