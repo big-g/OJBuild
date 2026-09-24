@@ -198,6 +198,67 @@ def test_rejects_other_tables_even_for_select(store: KnowledgeStore) -> None:
     assert "only from knowledge_chunks" in result.content.lower()
 
 
+def test_allows_comment_markers_inside_string_literal(
+    store: KnowledgeStore,
+) -> None:
+    from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
+
+    tool = KnowledgeSQLTool(store=store)
+    result = tool.execute(
+        query="SELECT content FROM knowledge_chunks WHERE content LIKE '%--%'"
+    )
+
+    assert result.success, result.content
+
+
+def test_authorizer_blocks_comma_join_to_other_table(
+    store: KnowledgeStore,
+) -> None:
+    from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
+
+    store._conn.execute("CREATE TABLE other_data (value TEXT)")
+    store._conn.execute("INSERT INTO other_data VALUES ('secret')")
+    store._conn.commit()
+
+    tool = KnowledgeSQLTool(store=store)
+    result = tool.execute(
+        query=(
+            "SELECT knowledge_chunks.author, other_data.value "
+            "FROM knowledge_chunks, other_data"
+        )
+    )
+
+    assert not result.success
+    assert "sql error" in result.content.lower()
+
+
+def test_in_memory_store_uses_isolated_trusted_query_connection() -> None:
+    from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
+
+    store = KnowledgeStore(":memory:")
+    store.store(
+        "Trusted in-memory row",
+        source="notes",
+        metadata={"trust": "trusted"},
+    )
+    store.store(
+        "Quarantined in-memory row",
+        source="notes",
+        metadata={"trust": "untrusted"},
+    )
+
+    result = KnowledgeSQLTool(store=store).execute(
+        query="SELECT COUNT(*) as total FROM knowledge_chunks"
+    )
+
+    assert result.success, result.content
+    assert "1" in result.content
+    assert result.metadata["evidence"]["records"][0]["metadata"][
+        "snapshot"
+    ]["trusted_active_rows"] == 1
+    store.close()
+
+
 def test_aggregate_evidence_preserves_sql_and_snapshot(
     store: KnowledgeStore,
 ) -> None:
