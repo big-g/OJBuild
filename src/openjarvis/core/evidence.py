@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import re
 from typing import Any, Iterable, Mapping, Optional
 
 
@@ -362,9 +363,7 @@ _EXTERNAL_TERMS = (
     "search the web",
     "find online",
     "on the internet",
-    "online",
     "according to",
-    "what does",
     "what is the latest",
 )
 
@@ -377,8 +376,18 @@ def detect_evidence_requirement(text: str) -> EvidenceRequirement:
     """
     normalized = " ".join(text.lower().split())
 
-    current_match = any(term in normalized for term in _CURRENT_TERMS)
-    external_match = any(term in normalized for term in _EXTERNAL_TERMS)
+    def contains_term(terms: tuple[str, ...]) -> bool:
+        return any(
+            re.search(
+                rf"(?<!\\w){re.escape(term)}(?!\\w)",
+                normalized,
+            )
+            is not None
+            for term in terms
+        )
+
+    current_match = contains_term(_CURRENT_TERMS)
+    external_match = contains_term(_EXTERNAL_TERMS)
 
     if current_match:
         return EvidenceRequirement(
