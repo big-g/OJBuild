@@ -12,6 +12,7 @@ from openjarvis.core.evidence import (
     EvidenceKind,
     EvidenceRequirement,
     EvidenceStatus,
+    apply_tool_evidence_to_result,
 )
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import StepType
@@ -273,6 +274,50 @@ class TestTraceCollector:
         assert evidence["provider"] == "knowledge_search"
         assert evidence["records"][0]["source"] == "obsidian"
         assert evidence["records"][0]["source_id"] == "doc-1"
+        store.close()
+
+    def test_result_processor_finalizes_before_trace_complete(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        bus = EventBus(record_history=True)
+        store = TraceStore(tmp_path / "test.db")
+        requirement = EvidenceRequirement(
+            required=True,
+            kind=EvidenceKind.CURRENT,
+            reason="Current data required.",
+        )
+
+        def finalize(result: AgentResult) -> AgentResult:
+            apply_tool_evidence_to_result(requirement, [], result)
+            return result
+
+        collector = TraceCollector(
+            _FakeAgent(response="Unsupported current answer.", bus=bus),
+            store=store,
+            bus=bus,
+            result_processor=finalize,
+        )
+
+        result = collector.run("What's the weather tomorrow?")
+
+        blocked = "I couldn't retrieve the required data."
+        assert result.content == blocked
+        trace = store.list_traces()[0]
+        assert trace.result == blocked
+        assert trace.metadata["evidence"]["status"] == "required_not_obtained"
+
+        trace_events = [
+            event
+            for event in bus.history
+            if event.event_type == EventType.TRACE_COMPLETE
+        ]
+        assert len(trace_events) == 1
+        assert trace_events[0].data["trace"].result == blocked
+        assert (
+            trace_events[0].data["trace"].metadata["evidence"]["status"]
+            == "required_not_obtained"
+        )
         store.close()
 
     def test_records_generate_steps(self, tmp_path: Path) -> None:
