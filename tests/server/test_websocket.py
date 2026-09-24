@@ -94,6 +94,41 @@ class TestWebSocketStreaming:
             assert done is not None
             assert done["content"] == "Hello world"
 
+    def test_current_request_is_blocked_before_engine_stream(self):
+        stream_started = False
+
+        async def forbidden_stream(messages, *, model="test-model", **kwargs):
+            nonlocal stream_started
+            stream_started = True
+            yield "unsupported"
+
+        engine = MagicMock()
+        engine.engine_id = "mock"
+        engine.stream = forbidden_stream
+        app = _make_app(engine=engine)
+        client = TestClient(app)
+
+        with client.websocket_connect("/v1/chat/stream") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "message": "What's the weather forecast for tomorrow?",
+                    }
+                )
+            )
+            chunk = ws.receive_json()
+            done = ws.receive_json()
+
+        assert chunk == {
+            "type": "chunk",
+            "content": "I couldn't retrieve the required data.",
+        }
+        assert done == {
+            "type": "done",
+            "content": "I couldn't retrieve the required data.",
+        }
+        assert stream_started is False
+
     def test_missing_message_field(self):
         """Sending JSON without a 'message' field should return an error."""
         app = _make_app()
