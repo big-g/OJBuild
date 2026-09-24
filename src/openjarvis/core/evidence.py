@@ -1340,13 +1340,22 @@ def evidence_result_metadata(
     assessment: EvidenceAssessment,
 ) -> dict[str, Any]:
     """Return the canonical flat AgentResult evidence metadata."""
-    return {
+    metadata = {
         "evidence_required": bool(requirement.required),
         "evidence_kind": requirement.kind.value,
         "evidence_status": assessment.status.value,
         "evidence_reason": assessment.reason or requirement.reason,
         "evidence_records": len(assessment.records),
     }
+    if assessment.conflict_status:
+        metadata.update(
+            {
+                "evidence_conflict_status": assessment.conflict_status,
+                "evidence_conflict_method": assessment.conflict_method,
+                "evidence_conflict_claims": list(assessment.conflict_claims),
+            }
+        )
+    return metadata
 
 
 def grounding_audit_from_result_metadata(
@@ -1379,13 +1388,20 @@ def evidence_audit_metadata(
     assessment: EvidenceAssessment,
 ) -> dict[str, Any]:
     """Return the normalized trace/audit representation of an assessment."""
-    return {
+    audit = {
         "required": bool(requirement.required),
         "kind": requirement.kind.value,
         "status": assessment.status.value,
         "reason": assessment.reason or requirement.reason,
         "records": len(assessment.records),
     }
+    if assessment.conflict_status:
+        audit["conflict"] = {
+            "status": assessment.conflict_status,
+            "method": assessment.conflict_method,
+            "claims": list(assessment.conflict_claims),
+        }
+    return audit
 
 
 def evidence_audit_from_result_metadata(
@@ -1411,6 +1427,23 @@ def evidence_audit_from_result_metadata(
         "reason": str(metadata.get("evidence_reason", "")),
         "records": max(records, 0),
     }
+
+    conflict_status = str(
+        metadata.get("evidence_conflict_status", "")
+    ).strip()
+    if conflict_status:
+        conflict_claims = metadata.get("evidence_conflict_claims", [])
+        if not isinstance(conflict_claims, list):
+            conflict_claims = []
+        audit["conflict"] = {
+            "status": conflict_status,
+            "method": str(metadata.get("evidence_conflict_method", "")),
+            "claims": [
+                str(item).strip()
+                for item in conflict_claims
+                if str(item).strip()
+            ][:20],
+        }
 
     grounding_status = str(metadata.get("grounding_status", "")).strip()
     if grounding_status:
@@ -1440,6 +1473,8 @@ def blocked_response(assessment: EvidenceAssessment) -> str:
         return "I couldn't retrieve the required data."
 
     if assessment.status == EvidenceStatus.INSUFFICIENT:
+        if assessment.conflict_status == ConflictStatus.VALIDATION_FAILED.value:
+            return "I couldn't verify whether the retrieved sources agree."
         return "Insufficient data to respond."
 
     return ""
