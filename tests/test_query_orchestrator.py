@@ -166,6 +166,58 @@ class TestAskAgentRouting:
         assert "does_not_exist" in result["content"]
 
 
+class _SystemEvidenceTool:
+    tool_id = "system_evidence"
+
+    @property
+    def spec(self):
+        from openjarvis.tools._stubs import ToolSpec
+
+        return ToolSpec(
+            name="system_evidence",
+            description="System evidence test tool.",
+            evidence_kinds=["current", "external"],
+        )
+
+
+class _SystemEvidenceAgent:
+    accepts_tools = True
+    answer = "Tomorrow's high will be 82°F."
+    evidence_content = "Forecast: tomorrow high 82°F."
+
+    def __init__(self, engine, model, *, tools=None, **kwargs):
+        self._engine = engine
+        self._model = model
+        self._tools = list(tools or [])
+
+    def run(self, query, context=None):
+        from openjarvis.agents._stubs import AgentResult
+        from openjarvis.core.types import ToolResult
+
+        return AgentResult(
+            content=self.answer,
+            turns=1,
+            tool_results=[
+                ToolResult(
+                    tool_name="system_evidence",
+                    content=self.evidence_content,
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test",
+                            "records": [
+                                {
+                                    "source": "test-source",
+                                    "content": self.evidence_content,
+                                }
+                            ],
+                        }
+                    },
+                )
+            ],
+        )
+
+
 class TestSystemEvidenceBoundary:
     def test_non_orchestrator_agent_cannot_bypass_current_evidence_gate(self):
         from openjarvis.agents._stubs import AgentResult
@@ -202,6 +254,134 @@ class TestSystemEvidenceBoundary:
 
         assert result["content"] == "I couldn't retrieve the required data."
         assert result["metadata"]["evidence_status"] == "required_not_obtained"
+
+
+    def test_supported_claim_survives_semantic_grounding(self):
+        from openjarvis.core.registry import AgentRegistry
+
+        class _SupportedAgent(_SystemEvidenceAgent):
+            answer = "Tomorrow's high will be 82°F."
+
+        AgentRegistry.register_value("supported_grounding_agent", _SupportedAgent)
+        engine = _FakeEngine(
+            {
+                "content": (
+                    '{"supported": true, "unsupported_claims": [], '
+                    '"reason": "The claim is supported."}'
+                )
+            }
+        )
+        system = _FakeSystem(
+            engine=engine,
+            agent_name="supported_grounding_agent",
+            tools=[_SystemEvidenceTool()],
+        )
+
+        result = QueryOrchestrator(system).ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == "Tomorrow's high will be 82°F."
+        assert result["metadata"]["evidence_status"] == "obtained"
+        assert result["metadata"]["grounding_status"] == "supported"
+        assert result["metadata"]["grounding_method"] == "llm_judge"
+        assert len(engine.calls) == 1
+
+    def test_changed_numeric_claim_is_blocked_before_validator_call(self):
+        from openjarvis.core.registry import AgentRegistry
+
+        class _WrongNumberAgent(_SystemEvidenceAgent):
+            answer = "Tomorrow's high will be 91°F."
+
+        AgentRegistry.register_value("wrong_number_grounding_agent", _WrongNumberAgent)
+        engine = _FakeEngine(
+            {
+                "content": (
+                    '{"supported": true, "unsupported_claims": [], '
+                    '"reason": "should not be used"}'
+                )
+            }
+        )
+        system = _FakeSystem(
+            engine=engine,
+            agent_name="wrong_number_grounding_agent",
+            tools=[_SystemEvidenceTool()],
+        )
+
+        result = QueryOrchestrator(system).ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == (
+            "I couldn't verify the response against the retrieved evidence."
+        )
+        assert result["metadata"]["evidence_status"] == "obtained"
+        assert result["metadata"]["grounding_status"] == "unsupported"
+        assert result["metadata"]["grounding_method"] == "numeric_anchor"
+        assert engine.calls == []
+
+    def test_semantically_unsupported_claim_is_blocked(self):
+        from openjarvis.core.registry import AgentRegistry
+
+        class _SunnyAgent(_SystemEvidenceAgent):
+            answer = "Tomorrow's high will be 82°F and it will be sunny."
+
+        AgentRegistry.register_value("sunny_grounding_agent", _SunnyAgent)
+        engine = _FakeEngine(
+            {
+                "content": (
+                    '{"supported": false, '
+                    '"unsupported_claims": ["Sunny conditions are not in evidence."], '
+                    '"reason": "The weather condition is unsupported."}'
+                )
+            }
+        )
+        system = _FakeSystem(
+            engine=engine,
+            agent_name="sunny_grounding_agent",
+            tools=[_SystemEvidenceTool()],
+        )
+
+        result = QueryOrchestrator(system).ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == (
+            "I couldn't verify the response against the retrieved evidence."
+        )
+        assert result["metadata"]["grounding_status"] == "unsupported"
+        assert result["metadata"]["grounding_method"] == "llm_judge"
+        assert result["metadata"]["grounding_unsupported_claims"] == [
+            "Sunny conditions are not in evidence."
+        ]
+        assert len(engine.calls) == 1
+
+    def test_grounding_validator_failure_blocks_response(self):
+        from openjarvis.core.registry import AgentRegistry
+
+        AgentRegistry.register_value(
+            "malformed_grounding_agent",
+            _SystemEvidenceAgent,
+        )
+        engine = _FakeEngine({"content": "not json"})
+        system = _FakeSystem(
+            engine=engine,
+            agent_name="malformed_grounding_agent",
+            tools=[_SystemEvidenceTool()],
+        )
+
+        result = QueryOrchestrator(system).ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == (
+            "I couldn't verify the response against the retrieved evidence."
+        )
+        assert result["metadata"]["grounding_status"] == "validation_failed"
 
 
 class TestDetectAgentIntent:
