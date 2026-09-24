@@ -56,54 +56,6 @@ class EvidenceRecord:
         """Whether this record contains actual source material."""
         return bool(self.content.strip()) and bool(self.source.strip())
 
-def evidence_records_from_tool_result(
-    *,
-    tool_name: str,
-    metadata: Mapping[str, Any],
-    fallback_content: str = "",
-) -> list[EvidenceRecord]:
-    """Convert structured tool provenance into individual evidence records."""
-    provenance_results = metadata.get("results")
-
-    if isinstance(provenance_results, list):
-        records: list[EvidenceRecord] = []
-
-        for item in provenance_results:
-            if not isinstance(item, Mapping):
-                continue
-
-            content = str(item.get("content", "")).strip()
-            if not content:
-                continue
-
-            records.append(
-                EvidenceRecord(
-                    source=tool_name,
-                    content=content,
-                    title=str(item.get("title", "")),
-                    url=str(item.get("url", "")),
-                    source_id=str(item.get("source_id", "")),
-                    metadata={
-                        "engine": metadata.get("engine", ""),
-                    },
-                )
-            )
-
-        return records
-
-    content = fallback_content.strip()
-    if not content:
-        return []
-
-    return [
-        EvidenceRecord(
-            source=tool_name,
-            content=content,
-            url=str(metadata.get("url", "")),
-            source_id=str(metadata.get("source_id", "")),
-            metadata=dict(metadata),
-        )
-    ]
 
 @dataclass(slots=True, frozen=True)
 class EvidenceAssessment:
@@ -125,6 +77,111 @@ class EvidenceAssessment:
     def blocked(self) -> bool:
         """Whether evidence integrity prevents a factual response."""
         return not self.sufficient
+
+
+def tool_supports_evidence(
+    tool_spec: Any,
+    requirement: EvidenceRequirement,
+) -> bool:
+    """Whether a ToolSpec explicitly supports this evidence requirement."""
+    declared = getattr(tool_spec, "evidence_kinds", None)
+    if not isinstance(declared, (list, tuple, set, frozenset)):
+        return False
+
+    values = {
+        value.value if isinstance(value, EvidenceKind) else str(value).strip()
+        for value in declared
+    }
+    return requirement.kind.value in values
+
+
+def evidence_records_from_tool_result(
+    *,
+    tool_name: str,
+    metadata: Mapping[str, Any],
+    fallback_content: str = "",
+) -> list[EvidenceRecord]:
+    """Convert the standardized ToolResult evidence contract into records.
+
+    Evidence must be explicitly carried under metadata["evidence"].
+    Successful tool output without that contract is not evidence.
+    """
+    evidence = metadata.get("evidence")
+    if not isinstance(evidence, Mapping):
+        return []
+
+    provider = str(evidence.get("provider", "") or tool_name).strip()
+    retrieved_at = str(evidence.get("retrieved_at", ""))
+    provenance_results = evidence.get("records")
+
+    if isinstance(provenance_results, list):
+        records: list[EvidenceRecord] = []
+
+        for item in provenance_results:
+            if not isinstance(item, Mapping):
+                continue
+
+            item_content = str(item.get("content", "")).strip()
+            if not item_content:
+                continue
+
+            item_metadata = item.get("metadata")
+            if not isinstance(item_metadata, Mapping):
+                item_metadata = {}
+
+            records.append(
+                EvidenceRecord(
+                    source=str(item.get("source", "") or provider or tool_name),
+                    content=item_content,
+                    title=str(item.get("title", "")),
+                    url=str(item.get("url", "")),
+                    source_id=str(item.get("source_id", "")),
+                    retrieved_at=str(item.get("retrieved_at", "") or retrieved_at),
+                    metadata={
+                        "provider": provider,
+                        **dict(item_metadata),
+                    },
+                )
+            )
+
+        return records
+
+    if evidence.get("use_result_content") is not True:
+        return []
+
+    content = fallback_content.strip()
+    if not content:
+        return []
+
+    return [
+        EvidenceRecord(
+            source=str(evidence.get("source", "") or provider or tool_name),
+            content=content,
+            title=str(evidence.get("title", "")),
+            url=str(evidence.get("url", "")),
+            source_id=str(evidence.get("source_id", "")),
+            retrieved_at=retrieved_at,
+            metadata={
+                key: value
+                for key, value in evidence.items()
+                if key not in {
+                    "records",
+                    "source",
+                    "title",
+                    "url",
+                    "source_id",
+                    "retrieved_at",
+                    "use_result_content",
+                }
+            },
+        )
+    ]
+
+
+def evidence_conflict_from_tool_result(metadata: Mapping[str, Any]) -> bool:
+    """Return an explicit conflict signal from standardized evidence metadata."""
+    evidence = metadata.get("evidence")
+    return isinstance(evidence, Mapping) and evidence.get("conflicting") is True
 
 
 def assess_evidence(
@@ -182,11 +239,7 @@ def assessment_from_tool_result(
     retrieved_at: str = "",
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> EvidenceAssessment:
-    """Convert one tool result into a conservative evidence assessment.
-
-    Tool success alone is never enough: the returned content must contain
-    actual source material.
-    """
+    """Assess one record when trusted provenance is already explicit."""
     if not success:
         return EvidenceAssessment(
             status=EvidenceStatus.REQUIRED_NOT_OBTAINED,
