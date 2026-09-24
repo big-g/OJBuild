@@ -479,6 +479,9 @@ def _normalized_numeric_anchors(text: str) -> set[str]:
     """Extract hard numeric anchors while ignoring structural/date numbers."""
     scrubbed = re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
     scrubbed = re.sub(r"\[(?:\d+|\d+(?:\s*,\s*\d+)+)\]", "", scrubbed)
+    # A URL is provenance, not support for numbers mentioned in an answer.
+    # Exact URLs are checked separately by the URL anchor validator.
+    scrubbed = re.sub(r"https?://[^\s)\]>]+", "", scrubbed, flags=re.IGNORECASE)
 
     # Dates have their own grounding anchor semantics. Remove complete date
     # spans here so day/year components are not misclassified as unrelated
@@ -597,8 +600,6 @@ def _evidence_numeric_anchors(records: Iterable[EvidenceRecord]) -> set[str]:
     for record in records:
         anchors.update(_normalized_numeric_anchors(record.content))
         anchors.update(_normalized_numeric_anchors(record.title))
-        anchors.update(_normalized_numeric_anchors(record.url))
-        anchors.update(_normalized_numeric_anchors(record.source_id))
     return anchors
 
 

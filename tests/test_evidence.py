@@ -2,6 +2,7 @@ import pytest
 
 from openjarvis.core.evidence import (
     ConflictStatus,
+    EvidenceAssessment,
     EvidenceKind,
     EvidenceRecord,
     EvidenceRequirement,
@@ -723,6 +724,64 @@ def test_grounding_numeric_mismatch_blocks_without_llm_call():
     assert grounding.method == "numeric_anchor"
     assert "91" in grounding.unsupported_claims[0]
     assert engine.calls == []
+
+
+def test_grounding_does_not_treat_provenance_numbers_as_factual_support():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+    assessment = _grounding_assessment("The forecast is available.")
+    record = assessment.records[0]
+    assessment = EvidenceAssessment(
+        status=assessment.status,
+        records=(EvidenceRecord(
+            source=record.source,
+            content=record.content,
+            title=record.title,
+            url="https://example.test/forecast/91",
+            source_id="forecast-91",
+        ),),
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="What's the weather tomorrow?",
+        answer="Tomorrow's high will be 91°F.",
+        assessment=assessment,
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "numeric_anchor"
+    assert engine.calls == []
+
+
+def test_grounding_url_digits_use_url_anchor_without_numeric_false_positive():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+    assessment = _grounding_assessment("The forecast is available.")
+    record = assessment.records[0]
+    assessment = EvidenceAssessment(
+        status=assessment.status,
+        records=(EvidenceRecord(
+            source=record.source,
+            content=record.content,
+            title=record.title,
+            url="https://example.test/forecast/91",
+        ),),
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="Where is the forecast?",
+        answer="The source is https://example.test/forecast/91",
+        assessment=assessment,
+    )
+
+    assert grounding.status == GroundingStatus.SUPPORTED
+    assert len(engine.calls) == 1
 
 
 def test_grounding_supported_json_allows_response():
