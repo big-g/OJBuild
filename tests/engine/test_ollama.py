@@ -18,6 +18,7 @@ except ImportError:  # respx is an optional test-only dep; the async MockTranspo
 from openjarvis.core.registry import EngineRegistry
 from openjarvis.core.types import Message, Role
 from openjarvis.engine._base import EngineConnectionError
+from openjarvis.engine._stubs import ResponseFormat
 from openjarvis.engine.ollama import OllamaEngine, _is_control_token_only_args
 
 # respx-backed tests exercise the SYNC client paths (generate/list_models/health)
@@ -56,6 +57,66 @@ class TestOllamaGenerate:
         assert result["usage"]["prompt_tokens"] == 10
         assert result["usage"]["completion_tokens"] == 5
         assert result["usage"]["total_tokens"] == 15
+
+    def test_generate_passes_json_schema_to_ollama(
+        self,
+        engine: OllamaEngine,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"supported": {"type": "boolean"}},
+            "required": ["supported"],
+        }
+        with respx.mock:
+            route = respx.post("http://testhost:11434/api/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"supported": true}',
+                        },
+                        "model": "qwen3:8b",
+                    },
+                )
+            )
+            engine.generate(
+                [Message(role=Role.USER, content="judge this")],
+                model="qwen3:8b",
+                response_format=ResponseFormat(
+                    type="json_schema",
+                    schema=schema,
+                ),
+            )
+
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["format"] == schema
+
+    def test_generate_keeps_plain_json_mode(
+        self,
+        engine: OllamaEngine,
+    ) -> None:
+        with respx.mock:
+            route = respx.post("http://testhost:11434/api/chat").mock(
+                return_value=httpx.Response(
+                    200,
+                    json={
+                        "message": {
+                            "role": "assistant",
+                            "content": '{"ok": true}',
+                        },
+                        "model": "qwen3:8b",
+                    },
+                )
+            )
+            engine.generate(
+                [Message(role=Role.USER, content="json please")],
+                model="qwen3:8b",
+                response_format=ResponseFormat(type="json_object"),
+            )
+
+        payload = json.loads(route.calls[0].request.content)
+        assert payload["format"] == "json"
 
     def test_generate_connection_error(self, engine: OllamaEngine) -> None:
         with respx.mock:
