@@ -175,6 +175,7 @@ class KnowledgeSQLTool(BaseTool):
             "AND COALESCE(json_extract(metadata, '$.trust'), '') "
             f"IN ({trust_literals})"
         )
+        conn.execute("PRAGMA query_only=ON")
 
         def authorizer(
             action: int,
