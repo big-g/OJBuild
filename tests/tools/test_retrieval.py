@@ -57,6 +57,7 @@ class TestRetrievalTool:
         tool = RetrievalTool()
         assert tool.spec.name == "retrieval"
         assert tool.spec.category == "memory"
+        assert tool.spec.evidence_kinds == ["external"]
 
     def test_no_backend(self):
         tool = RetrievalTool()
@@ -86,6 +87,68 @@ class TestRetrievalTool:
         assert "Answer 1" in result.content
         assert "[Source: doc.md]" in result.content
         assert result.metadata["num_results"] == 2
+
+    def test_results_emit_structured_evidence_provenance(self):
+        results = [
+            RetrievalResult(
+                content="Answer 1",
+                score=0.9,
+                source="doc.md",
+                metadata={
+                    "doc_id": "doc-1",
+                    "chunk_id": "chunk-1",
+                    "title": "Document One",
+                    "url": "file:///doc.md",
+                    "timestamp": "2026-09-01T12:00:00Z",
+                    "trust": "trusted",
+                },
+            )
+        ]
+        tool = RetrievalTool(backend=_FakeBackend(results))
+
+        result = tool.execute(query="test")
+
+        assert result.success is True
+        assert result.metadata["evidence"]["provider"] == "memory_retrieval"
+        records = result.metadata["evidence"]["records"]
+        assert len(records) == 1
+        assert records[0]["source"] == "doc.md"
+        assert records[0]["source_id"] == "doc-1"
+        assert records[0]["title"] == "Document One"
+        assert records[0]["content"] == "Answer 1"
+        assert records[0]["metadata"]["chunk_id"] == "chunk-1"
+
+    def test_untrusted_results_are_excluded_from_output_and_evidence(self):
+        results = [
+            RetrievalResult(
+                content="Trusted answer",
+                score=0.9,
+                source="trusted.md",
+                metadata={"trust": "trusted", "doc_id": "trusted-1"},
+            ),
+            RetrievalResult(
+                content="Quarantined answer",
+                score=0.95,
+                source="bad.md",
+                metadata={"trust": "untrusted", "doc_id": "bad-1"},
+            ),
+            RetrievalResult(
+                content="Unknown-tier answer",
+                score=0.99,
+                source="future.md",
+                metadata={"trust": "future-tier", "doc_id": "future-1"},
+            ),
+        ]
+        tool = RetrievalTool(backend=_FakeBackend(results))
+
+        result = tool.execute(query="test")
+
+        assert result.success is True
+        assert "Trusted answer" in result.content
+        assert "Quarantined answer" not in result.content
+        assert "Unknown-tier answer" not in result.content
+        records = result.metadata["evidence"]["records"]
+        assert [record["source_id"] for record in records] == ["trusted-1"]
 
     def test_top_k_override(self):
         results = [
