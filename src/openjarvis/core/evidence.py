@@ -317,6 +317,33 @@ def assessment_from_tool_result(
     return assess_evidence(requirement, [record])
 
 
+def apply_tool_evidence_to_result(
+    requirement: EvidenceRequirement,
+    tools: Iterable[Any],
+    result: Any,
+) -> EvidenceAssessment:
+    """Assess tool evidence and apply the final gate to an AgentResult-like object."""
+    assessment = assess_tool_results(
+        requirement,
+        tools,
+        getattr(result, "tool_results", ()) or (),
+    )
+
+    metadata = getattr(result, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata.update(
+            evidence_result_metadata(
+                requirement,
+                assessment,
+            )
+        )
+
+    if assessment.blocked and hasattr(result, "content"):
+        result.content = blocked_response(assessment)
+
+    return assessment
+
+
 def evidence_result_metadata(
     requirement: EvidenceRequirement,
     assessment: EvidenceAssessment,
