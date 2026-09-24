@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from openjarvis.core.evidence import (
@@ -11,6 +12,7 @@ from openjarvis.core.evidence import (
     assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
+    evidence_audit_metadata,
     evidence_result_metadata,
 )
 from openjarvis.core.types import Message, Role
@@ -91,10 +93,31 @@ class QueryOrchestrator:
                 prior_messages=prior_messages,
             )
 
+        direct_started_at = time.time()
         if evidence_requirement.required:
             assessment = assess_evidence(evidence_requirement)
+            blocked = blocked_response(assessment)
+            if s.trace_store is not None:
+                from openjarvis.traces.collector import record_response_trace
+
+                record_response_trace(
+                    s.trace_store,
+                    query=query,
+                    result=blocked,
+                    model=s.model,
+                    engine=s.engine_key,
+                    agent="system_direct",
+                    started_at=direct_started_at,
+                    ended_at=time.time(),
+                    metadata={
+                        "evidence": evidence_audit_metadata(
+                            evidence_requirement,
+                            assessment,
+                        )
+                    },
+                )
             return {
-                "content": blocked_response(assessment),
+                "content": blocked,
                 "usage": {},
                 "model": s.model,
                 "engine": s.engine_key,
@@ -110,6 +133,19 @@ class QueryOrchestrator:
             temperature=temperature,
             max_tokens=max_tokens,
         )
+        if s.trace_store is not None:
+            from openjarvis.traces.collector import record_response_trace
+
+            record_response_trace(
+                s.trace_store,
+                query=query,
+                result=result.get("content", ""),
+                model=s.model,
+                engine=s.engine_key,
+                agent="system_direct",
+                started_at=direct_started_at,
+                ended_at=time.time(),
+            )
         return {
             "content": result.get("content", ""),
             "usage": result.get("usage", {}),
