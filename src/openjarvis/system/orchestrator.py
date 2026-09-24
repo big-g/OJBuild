@@ -244,6 +244,8 @@ class QueryOrchestrator:
 
         s.bus.subscribe(EventType.INFERENCE_END, _on_inference_end)
 
+        collector = None
+
         # Check trace_store (set at build time) instead of config.traces.enabled
         # because the shared config singleton can be mutated by other SystemBuilder
         # instances (e.g. the judge backend).
@@ -276,6 +278,11 @@ class QueryOrchestrator:
                     assessment,
                 )
             )
+            if collector is not None:
+                collector.annotate_evidence(
+                    evidence_requirement,
+                    assessment,
+                )
             if assessment.blocked:
                 result.content = blocked_response(assessment)
 
