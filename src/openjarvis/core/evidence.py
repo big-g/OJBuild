@@ -700,6 +700,33 @@ def _record_anchor_values(record: EvidenceRecord, kind: str) -> set[str]:
     return set(anchors.get(kind, set()))
 
 
+def _numeric_anchor_contexts(text: str) -> dict[str, set[str]]:
+    """Return normalized numeric anchors with conservative local word context."""
+    scrubbed = _DATE_ANCHOR_RE.sub(" ", text)
+    tokens = re.findall(
+        r"[A-Za-z_][A-Za-z0-9_-]*|-?\d[\d,]*(?:\.\d+)?",
+        scrubbed,
+    )
+    contexts: dict[str, set[str]] = {}
+
+    for index, token in enumerate(tokens):
+        if not re.fullmatch(r"-?\d[\d,]*(?:\.\d+)?", token):
+            continue
+        normalized_values = _normalized_numeric_anchors(token)
+        if len(normalized_values) != 1:
+            continue
+        value = next(iter(normalized_values))
+        nearby = [
+            candidate.lower()
+            for candidate in tokens[max(0, index - 3) : index]
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", candidate)
+            and candidate.lower() not in _CONFLICT_QUERY_STOPWORDS
+        ]
+        contexts[value] = set(nearby[-3:])
+
+    return contexts
+
+
 def _deterministic_evidence_conflict(
     query: str,
     records: Iterable[EvidenceRecord],
@@ -731,26 +758,35 @@ def _deterministic_evidence_conflict(
             if not shared_focus:
                 continue
 
-            for kind in ("numeric", "date", "name"):
-                left_values = _record_anchor_values(left, kind)
-                right_values = _record_anchor_values(right, kind)
-                if (
-                    len(left_values) == 1
-                    and len(right_values) == 1
-                    and left_values != right_values
-                ):
-                    left_value = next(iter(left_values))
-                    right_value = next(iter(right_values))
+            left_values = _record_anchor_values(left, "numeric")
+            right_values = _record_anchor_values(right, "numeric")
+            if (
+                len(left_values) == 1
+                and len(right_values) == 1
+                and left_values != right_values
+            ):
+                left_value = next(iter(left_values))
+                right_value = next(iter(right_values))
+                left_context = _numeric_anchor_contexts(left.content).get(
+                    left_value,
+                    set(),
+                )
+                right_context = _numeric_anchor_contexts(right.content).get(
+                    right_value,
+                    set(),
+                )
+                shared_context = sorted(left_context & right_context)
+                if len(shared_context) >= 2:
                     claim = (
-                        f"{kind} disagreement for query focus "
-                        f"{', '.join(shared_focus[:3])}: "
+                        "numeric disagreement for context "
+                        f"{', '.join(shared_context[:3])}: "
                         f"{left_value} vs {right_value}"
                     )
                     return ConflictAssessment(
                         status=ConflictStatus.CONFLICTING,
                         reason="Independent sources make incompatible factual claims.",
                         conflict_claims=(claim,),
-                        method=f"{kind}_anchor",
+                        method="numeric_anchor",
                     )
 
     return ConflictAssessment(
