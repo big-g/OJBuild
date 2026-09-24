@@ -35,7 +35,7 @@ def _trusted_facts(facts: Sequence[Fact]) -> List[Fact]:
     return [fact for fact in facts if bool(getattr(fact, "trusted_for_recall", True))]
 
 
-def _result_trusted_for_recall(result: RetrievalResult) -> bool:
+def result_trusted_for_recall(result: RetrievalResult) -> bool:
     """Whether a retrieved document may be placed in model-facing context.
 
     Documents carry provenance in ``metadata["trust"]`` using the same tier
@@ -54,11 +54,16 @@ def _result_trusted_for_recall(result: RetrievalResult) -> bool:
     return tier in RECALLABLE_TRUST_TIERS
 
 
-def _trusted_results(
+def trusted_results(
     results: Sequence[RetrievalResult],
 ) -> List[RetrievalResult]:
     """Return only retrieved documents safe for model-facing recall."""
-    return [result for result in results if _result_trusted_for_recall(result)]
+    return [result for result in results if result_trusted_for_recall(result)]
+
+
+# Backward-compatible private aliases for existing internal callers.
+_result_trusted_for_recall = result_trusted_for_recall
+_trusted_results = trusted_results
 
 
 def format_context(results: List[RetrievalResult]) -> str:
@@ -89,7 +94,7 @@ def build_context_message(
     # inject_context() path. Quarantined facts must never become instructions
     # merely because a caller skipped the budget-selection helper.
     facts = _trusted_facts(facts)
-    results = _trusted_results(results)
+    results = trusted_results(results)
     sections = []
     if facts:
         fact_text = "\n".join(f"- {fact.text}" for fact in facts)
@@ -178,7 +183,7 @@ def inject_context(
     # Drop quarantined-provenance documents before anything else, so a
     # hostile document cannot consume context budget it will never be
     # allowed to spend.
-    results = _trusted_results(results)
+    results = trusted_results(results)
 
     # Filter by minimum score
     results = [r for r in results if r.score >= cfg.min_score]
@@ -242,4 +247,6 @@ __all__ = [
     "build_context_message",
     "format_context",
     "inject_context",
+    "result_trusted_for_recall",
+    "trusted_results",
 ]
