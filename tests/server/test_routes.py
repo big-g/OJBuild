@@ -248,6 +248,70 @@ class TestChatCompletions:
         assert data["object"] == "chat.completion"
         assert data["choices"][0]["message"]["content"] == "Hello from server"
 
+    def test_current_direct_completion_is_blocked_before_engine_call(self):
+        engine = _make_engine(content="Tomorrow will be sunny and 82°F.")
+        app = create_app(
+            engine,
+            "test-model",
+            config=_test_config(),
+        )
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "What's the weather forecast for tomorrow?",
+                    }
+                ],
+            },
+        )
+
+        assert resp.status_code == 200
+        assert (
+            resp.json()["choices"][0]["message"]["content"]
+            == "I couldn't retrieve the required data."
+        )
+        engine.generate.assert_not_called()
+
+    def test_current_direct_stream_is_blocked_before_engine_stream(self):
+        engine = _make_engine()
+        stream_started = False
+
+        async def forbidden_stream(*args, **kwargs):
+            nonlocal stream_started
+            stream_started = True
+            yield "unsupported"
+
+        engine.stream = forbidden_stream
+        app = create_app(
+            engine,
+            "test-model",
+            config=_test_config(),
+        )
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "What's the weather forecast for tomorrow?",
+                    }
+                ],
+                "stream": True,
+            },
+        )
+
+        assert resp.status_code == 200
+        assert "I couldn't retrieve the required data." in resp.text
+        assert stream_started is False
+
     def test_completion_has_usage(self, client):
         resp = client.post(
             "/v1/chat/completions",
