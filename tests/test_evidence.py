@@ -8,6 +8,7 @@ from openjarvis.core.evidence import (
     assess_evidence,
     assessment_from_tool_result,
     blocked_response,
+    detect_evidence_requirement,
     tool_supports_evidence,
 )
 
