@@ -28,6 +28,42 @@ def required_current():
     )
 
 
+@pytest.mark.parametrize("success", ["false", "true", 1, None, {"ok": True}])
+def test_evidence_intake_requires_boolean_success(success):
+    from types import SimpleNamespace
+
+    from openjarvis.tools._stubs import ToolSpec
+
+    content = "The launch status is approved."
+    direct = assessment_from_tool_result(
+        required_current(), success=success, source="test", content=content,
+    )
+    assert direct.status == EvidenceStatus.REQUIRED_NOT_OBTAINED
+
+    tool = SimpleNamespace(spec=ToolSpec(
+        name="test_evidence", description="test", evidence_kinds=["current"],
+    ))
+    result = SimpleNamespace(
+        content=content, metadata={},
+        tool_results=[SimpleNamespace(
+            tool_name="test_evidence", success=success, content=content,
+            metadata={"evidence": {"records": [{"content": content}]}},
+        )],
+    )
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "unused"}'
+    )
+    assessment = apply_tool_evidence_to_result(
+        required_current(), [tool], result,
+        query="What is the latest launch status?", engine=engine,
+        model="test-model", validate_conflicts=True, validate_grounding=True,
+    )
+
+    assert assessment.status == EvidenceStatus.REQUIRED_NOT_OBTAINED
+    assert result.content == "I couldn't retrieve the required data."
+    assert engine.calls == []
+
+
 @pytest.mark.parametrize("content", [None, 42, False, [], {"answer": "approved"}])
 @pytest.mark.parametrize("use_result_content", [False, True])
 def test_finalizer_rejects_non_text_evidence(content, use_result_content):

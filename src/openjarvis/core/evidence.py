@@ -276,7 +276,7 @@ def assess_tool_results(
     conflicting = False
 
     for tool_result in tool_results:
-        if not bool(getattr(tool_result, "success", False)):
+        if getattr(tool_result, "success", False) is not True:
             continue
 
         tool_name = str(getattr(tool_result, "tool_name", ""))
@@ -376,7 +376,7 @@ def assessment_from_tool_result(
     metadata: Optional[Mapping[str, Any]] = None,
 ) -> EvidenceAssessment:
     """Assess one record when trusted provenance is already explicit."""
-    if not success:
+    if success is not True:
         return EvidenceAssessment(
             status=EvidenceStatus.REQUIRED_NOT_OBTAINED,
             reason="I couldn't retrieve the required data.",
