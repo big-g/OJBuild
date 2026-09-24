@@ -6,6 +6,7 @@ import logging
 import os
 import time
 import urllib.parse
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -78,6 +79,7 @@ class HttpRequestTool(BaseTool):
             },
             category="network",
             required_capabilities=["network:fetch"],
+            evidence_kinds=["current", "external"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -126,17 +128,28 @@ class HttpRequestTool(BaseTool):
         if _rust is not None and not headers:
             try:
                 content = _rust.HttpRequestTool().execute(url, method, body)
+                result_content = (
+                    content[:_MAX_RESPONSE_BYTES]
+                    if len(content) > _MAX_RESPONSE_BYTES
+                    else content
+                )
+                evidence_records = (
+                    [{"url": url, "content": result_content}]
+                    if method == "GET" and result_content.strip()
+                    else []
+                )
                 return ToolResult(
                     tool_name="http_request",
-                    content=(
-                        content[:_MAX_RESPONSE_BYTES]
-                        if len(content) > _MAX_RESPONSE_BYTES
-                        else content
-                    ),
+                    content=result_content,
                     success=True,
                     metadata={
                         "status_code": 200,
                         "truncated": len(content) > _MAX_RESPONSE_BYTES,
+                        "evidence": {
+                            "provider": "http",
+                            "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                            "records": evidence_records,
+                        },
                     },
                 )
             except Exception as exc:
@@ -166,6 +179,25 @@ class HttpRequestTool(BaseTool):
             if truncated:
                 content += "\n\n[Response truncated at 1 MB]"
 
+            evidence_records = (
+                [
+                    {
+                        "url": str(response.url),
+                        "content": content,
+                        "metadata": {
+                            "status_code": response.status_code,
+                            "content_type": content_type,
+                        },
+                    }
+                ]
+                if (
+                    method == "GET"
+                    and 200 <= response.status_code < 300
+                    and content.strip()
+                )
+                else []
+            )
+
             return ToolResult(
                 tool_name="http_request",
                 content=content,
@@ -176,6 +208,11 @@ class HttpRequestTool(BaseTool):
                     "content_type": content_type,
                     "elapsed_ms": round(elapsed_ms, 2),
                     "truncated": truncated,
+                    "evidence": {
+                        "provider": "http",
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "records": evidence_records,
+                    },
                 },
             )
         except httpx.TimeoutException as exc:
