@@ -7,6 +7,12 @@ from pathlib import Path
 from typing import Any, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
+from openjarvis.core.evidence import (
+    EvidenceAssessment,
+    EvidenceKind,
+    EvidenceRequirement,
+    EvidenceStatus,
+)
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import StepType
 from openjarvis.traces.collector import TraceCollector
@@ -48,6 +54,30 @@ class _FakeAgent(BaseAgent):
                 },
             )
         return AgentResult(content=self._response, turns=1)
+
+
+class _EvidenceAgent(BaseAgent):
+    """Agent that already carries a completed evidence verdict."""
+
+    agent_id = "evidence"
+
+    def run(
+        self,
+        input: str,
+        context: Optional[AgentContext] = None,
+        **kwargs: Any,
+    ) -> AgentResult:
+        return AgentResult(
+            content="grounded answer",
+            turns=1,
+            metadata={
+                "evidence_required": True,
+                "evidence_kind": "external",
+                "evidence_status": "obtained",
+                "evidence_reason": "External retrieval required.",
+                "evidence_records": 2,
+            },
+        )
 
 
 class _ToolAgent(BaseAgent):
@@ -107,6 +137,55 @@ class TestTraceCollector:
         assert trace.model == "qwen3:8b"
         assert trace.engine == "ollama"
         assert trace.result == "hello"
+        store.close()
+
+    def test_initial_trace_captures_agent_evidence_verdict(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = TraceStore(tmp_path / "test.db")
+        collector = TraceCollector(_EvidenceAgent(), store=store)
+
+        collector.run("search for this")
+
+        trace = store.list_traces()[0]
+        assert trace.metadata["evidence"] == {
+            "required": True,
+            "kind": "external",
+            "status": "obtained",
+            "reason": "External retrieval required.",
+            "records": 2,
+        }
+        store.close()
+
+    def test_post_run_evidence_annotation_persists(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        store = TraceStore(tmp_path / "test.db")
+        collector = TraceCollector(_FakeAgent(), store=store)
+
+        collector.run("What's the weather tomorrow?")
+        requirement = EvidenceRequirement(
+            required=True,
+            kind=EvidenceKind.CURRENT,
+            reason="Current data required.",
+        )
+        assessment = EvidenceAssessment(
+            status=EvidenceStatus.REQUIRED_NOT_OBTAINED,
+            reason="Required evidence was not obtained.",
+        )
+
+        assert collector.annotate_evidence(requirement, assessment) is True
+
+        trace = store.list_traces()[0]
+        assert trace.metadata["evidence"] == {
+            "required": True,
+            "kind": "current",
+            "status": "required_not_obtained",
+            "reason": "Required evidence was not obtained.",
+            "records": 0,
+        }
         store.close()
 
     def test_records_generate_steps(self, tmp_path: Path) -> None:
