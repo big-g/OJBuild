@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any, Iterable, Mapping, Optional
 
@@ -389,9 +390,13 @@ def _normalized_numeric_anchors(text: str) -> set[str]:
     for match in re.finditer(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", scrubbed):
         value = match.group(0).replace(",", "")
         try:
-            normalized = format(float(value), ".15g")
-        except ValueError:
+            decimal_value = Decimal(value)
+        except InvalidOperation:
             continue
+        if decimal_value == decimal_value.to_integral():
+            normalized = str(decimal_value.quantize(Decimal("1")))
+        else:
+            normalized = format(decimal_value.normalize(), "f").rstrip("0").rstrip(".")
         anchors.add(normalized)
     return anchors
 
@@ -401,6 +406,8 @@ def _evidence_numeric_anchors(records: Iterable[EvidenceRecord]) -> set[str]:
     for record in records:
         anchors.update(_normalized_numeric_anchors(record.content))
         anchors.update(_normalized_numeric_anchors(record.title))
+        anchors.update(_normalized_numeric_anchors(record.url))
+        anchors.update(_normalized_numeric_anchors(record.source_id))
     return anchors
 
 
@@ -426,6 +433,7 @@ def _grounding_payload(
                 "source": record.source,
                 "source_id": record.source_id,
                 "title": record.title,
+                "url": record.url,
                 "content": content,
             }
         )
@@ -453,12 +461,15 @@ def validate_response_grounding(
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="No evidence records were available for grounding validation.",
-            method="llm_judge",
+            method="precondition",
         )
 
     answer_anchors = _normalized_numeric_anchors(answer)
     evidence_anchors = _evidence_numeric_anchors(assessment.records)
-    missing_anchors = sorted(answer_anchors - evidence_anchors)
+    query_anchors = _normalized_numeric_anchors(query)
+    missing_anchors = sorted(
+        answer_anchors - evidence_anchors - query_anchors
+    )
     if missing_anchors:
         return GroundingAssessment(
             status=GroundingStatus.UNSUPPORTED,
@@ -474,7 +485,7 @@ def validate_response_grounding(
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="No grounding validator engine/model was available.",
-            method="llm_judge",
+            method="precondition",
         )
 
     try:
