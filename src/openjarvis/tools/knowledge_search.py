@@ -161,7 +161,7 @@ class KnowledgeSearchTool(BaseTool):
         lines: list[str] = []
         evidence_records: list[dict[str, Any]] = []
         for i, result in enumerate(results, start=1):
-            meta = result.metadata
+            meta = result.metadata if isinstance(result.metadata, dict) else {}
             src_label = result.source or meta.get("source", "")
             title = meta.get("title", "")
             result_author = meta.get("author", "")
