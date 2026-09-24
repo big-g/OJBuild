@@ -308,3 +308,26 @@ def test_generic_search_concept_does_not_require_external_evidence():
     from openjarvis.core.evidence import detect_evidence_requirement
 
     assert not detect_evidence_requirement("Explain binary search.").required
+
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "How many emails from Alice?",
+        "How many messages do I have from Bob?",
+        "Who emailed me?",
+        "Which VCs have I spoken with?",
+    ],
+)
+def test_personal_aggregate_queries_require_external_evidence(query):
+    requirement = detect_evidence_requirement(query)
+
+    assert requirement.required
+    assert requirement.kind == EvidenceKind.EXTERNAL
+
+
+def test_generic_aggregate_concept_does_not_require_external_evidence():
+    assert not detect_evidence_requirement(
+        "How many messages can Kafka process per second?"
+    ).required
