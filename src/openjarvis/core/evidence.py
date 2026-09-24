@@ -411,6 +411,47 @@ def _evidence_numeric_anchors(records: Iterable[EvidenceRecord]) -> set[str]:
     return anchors
 
 
+_GROUNDING_METADATA_KEYS = frozenset(
+    {
+        "provider",
+        "author",
+        "doc_type",
+        "timestamp",
+        "trust",
+        "chunk_id",
+        "score",
+        "derived",
+        "derivation",
+        "query",
+        "trusted_rows_only",
+        "active_rows_only",
+        "snapshot",
+        "result_rows",
+        "truncated",
+    }
+)
+
+
+def _grounding_record_metadata(metadata: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a bounded allowlist of provenance fields for the verifier."""
+    selected = {
+        str(key): value
+        for key, value in metadata.items()
+        if str(key) in _GROUNDING_METADATA_KEYS
+    }
+    try:
+        encoded = json.dumps(selected, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return {}
+    if len(encoded) > 6000:
+        return {}
+    try:
+        decoded = json.loads(encoded)
+    except json.JSONDecodeError:
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
+
+
 def _grounding_payload(
     query: str,
     answer: str,
@@ -434,6 +475,8 @@ def _grounding_payload(
                 "source_id": record.source_id,
                 "title": record.title,
                 "url": record.url,
+                "retrieved_at": record.retrieved_at,
+                "metadata": _grounding_record_metadata(record.metadata),
                 "content": content,
             }
         )
@@ -528,6 +571,14 @@ def validate_response_grounding(
         return GroundingAssessment(
             status=GroundingStatus.VALIDATION_FAILED,
             reason="Grounding validator did not return an object.",
+            method="llm_judge",
+        )
+
+    expected_keys = {"supported", "unsupported_claims", "reason"}
+    if set(parsed) != expected_keys:
+        return GroundingAssessment(
+            status=GroundingStatus.VALIDATION_FAILED,
+            reason="Grounding validator returned unexpected fields.",
             method="llm_judge",
         )
 
