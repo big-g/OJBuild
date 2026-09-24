@@ -41,6 +41,7 @@ class SkillTool(BaseTool):
         self._executor = executor
         self._skill_manager = skill_manager
         self.tool_id = f"skill_{manifest.name}"
+        self.management_identity = f"skill:{manifest.name}"
         self._parameters = self._build_parameters()
 
     # ------------------------------------------------------------------
