@@ -222,6 +222,35 @@ def test_aggregate_evidence_preserves_sql_and_snapshot(
     assert set(metadata["trust_tiers"]) == {"", "auto", "trusted"}
 
 
+def test_derived_sql_satisfies_external_but_not_current_evidence(
+    store: KnowledgeStore,
+) -> None:
+    from openjarvis.core.evidence import (
+        EvidenceKind,
+        EvidenceRequirement,
+        assess_tool_results,
+    )
+    from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
+
+    tool = KnowledgeSQLTool(store=store)
+    result = tool.execute(
+        query="SELECT COUNT(*) as total FROM knowledge_chunks"
+    )
+    external = EvidenceRequirement(
+        required=True,
+        kind=EvidenceKind.EXTERNAL,
+        reason="Personal knowledge retrieval required.",
+    )
+    current = EvidenceRequirement(
+        required=True,
+        kind=EvidenceKind.CURRENT,
+        reason="Current information required.",
+    )
+
+    assert assess_tool_results(external, [tool], [result]).sufficient
+    assert assess_tool_results(current, [tool], [result]).blocked
+
+
 def test_query_without_knowledge_table_is_not_evidence(
     store: KnowledgeStore,
 ) -> None:
