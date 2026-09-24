@@ -624,3 +624,28 @@ class TestSkillManagerRemove:
         mgr = SkillManager(bus=EventBus())
         with pytest.raises(FileNotFoundError):
             mgr.remove("ghost", roots=[tmp_path])
+
+
+
+def test_skill_tools_register_with_management_catalog(tmp_path: Path) -> None:
+    from openjarvis.security.capability_registry import (
+        ResourceStatus,
+        create_builtin_capability_registry,
+    )
+    from openjarvis.security.tool_management_registry import ToolManagementRegistry
+
+    _write_toml_skill(tmp_path, "managed_skill")
+    managed = ToolManagementRegistry()
+    mgr = SkillManager(
+        bus=EventBus(),
+        management_registry=managed,
+        capability_registry=create_builtin_capability_registry(),
+    )
+    mgr.discover(paths=[tmp_path])
+
+    tools = mgr.get_skill_tools(tool_executor=ToolExecutor([EchoTool()]))
+    assert tools[0].management_identity == "skill:managed_skill"
+    record = managed.require("skill:managed_skill")
+    assert record.status == ResourceStatus.VALIDATED
+    assert record.approval is None
+    assert tools[0].spec.required_capabilities == ["tool:invoke"]

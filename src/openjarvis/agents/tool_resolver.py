@@ -35,9 +35,16 @@ _CHANNEL_TOOLS = frozenset({"channel_send", "channel_list", "channel_status"})
 class _SpecOverrideTool:
     """Delegate execution while exposing an agent-configured OpenAI schema."""
 
-    def __init__(self, wrapped: Any, advertised_spec: dict[str, Any]) -> None:
+    def __init__(
+        self,
+        wrapped: Any,
+        advertised_spec: dict[str, Any],
+        *,
+        management_identity: str = "",
+    ) -> None:
         self._wrapped = wrapped
         self._advertised_spec = advertised_spec
+        self.management_identity = management_identity
 
     @property
     def spec(self) -> Any:
@@ -328,6 +335,8 @@ def resolve_agent_tools(
     mcp_tools: Iterable[Any] = (),
     mcp_clients: Iterable[Any] = (),
     knowledge_db_path: str | Path | None = None,
+    tool_management_registry: Any = None,
+    capability_registry: Any = None,
 ) -> ResolvedAgentTools:
     """Resolve the effective live toolkit for a managed agent.
 
@@ -358,6 +367,54 @@ def resolve_agent_tools(
         name = _tool_name(tool)
         if not name or name in seen:
             return
+
+        if tool_management_registry is not None:
+            if capability_registry is None:
+                raise ValueError(
+                    "capability_registry is required when tool management is active"
+                )
+            from openjarvis.security.capability_registry import Provenance
+            from openjarvis.security.tool_management_bootstrap import sync_managed_tool
+
+            identity = str(
+                getattr(tool, "management_identity", "")
+                or f"builtin:{name}"
+            )
+            existing = tool_management_registry.get(identity)
+            implementation_target = getattr(tool, "_wrapped", tool)
+            implementation_id = (
+                f"{type(implementation_target).__module__}."
+                f"{type(implementation_target).__qualname__}"
+            )
+            if existing is not None:
+                provenance = existing.provenance
+                if existing.implementation_id:
+                    implementation_id = existing.implementation_id
+            else:
+                source_type = "native"
+                source_id = implementation_id
+                if identity.startswith("agent:"):
+                    source_type = "agent_config"
+                    source_id = str(agent_record.get("id") or "configured")
+                elif identity.startswith("mcp:"):
+                    source_type = "mcp"
+                    source_id = identity.split(":", 2)[1]
+                elif identity.startswith("skill:"):
+                    source_type = "skill"
+                    source_id = identity.split(":", 1)[1]
+                provenance = Provenance(
+                    source_type=source_type,
+                    source_id=source_id,
+                )
+            sync_managed_tool(
+                tool_management_registry,
+                tool,
+                identity=identity,
+                provenance=provenance,
+                capability_registry=capability_registry,
+                implementation_id=implementation_id,
+            )
+
         instances.append(tool)
         advertised_specs.append(advertised_spec or _openai_spec(tool))
         seen.add(name)
@@ -418,8 +475,15 @@ def resolve_agent_tools(
                     backing_tool = mcp_by_name[name]
 
             if backing_tool is not None:
+                configured_identity = (
+                    f"agent:{agent_record.get('id') or 'configured'}:{name}"
+                )
                 add_instance(
-                    _SpecOverrideTool(backing_tool, raw_spec),
+                    _SpecOverrideTool(
+                        backing_tool,
+                        raw_spec,
+                        management_identity=configured_identity,
+                    ),
                     advertised_spec=raw_spec,
                 )
             else:

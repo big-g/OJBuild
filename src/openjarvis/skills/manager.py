@@ -35,10 +35,14 @@ class SkillManager:
         bus: EventBus,
         *,
         capability_policy: Optional[Any] = None,
+        management_registry: Optional[Any] = None,
+        capability_registry: Optional[Any] = None,
         overlay_dir: Optional[Path] = None,
     ) -> None:
         self._bus = bus
         self._capability_policy = capability_policy
+        self._management_registry = management_registry
+        self._capability_registry = capability_registry
         self._skills: Dict[str, SkillManifest] = {}
         self._tool_executor: Optional[ToolExecutor] = None
         if overlay_dir is None:
@@ -200,6 +204,27 @@ class SkillManager:
             skill_exec.set_skill_resolver(self._make_resolver())
 
             skill_tool = SkillTool(manifest, skill_exec, skill_manager=self)
+            if self._management_registry is not None:
+                if self._capability_registry is None:
+                    raise ValueError(
+                        "capability_registry is required when management_registry is set"
+                    )
+                from openjarvis.security.capability_registry import Provenance
+                from openjarvis.security.tool_management_bootstrap import sync_managed_tool
+
+                sync_managed_tool(
+                    self._management_registry,
+                    skill_tool,
+                    identity=skill_tool.management_identity,
+                    provenance=Provenance(
+                        source_type="skill",
+                        source_id=manifest.name,
+                    ),
+                    capability_registry=self._capability_registry,
+                    implementation_id=(
+                        f"{type(skill_tool).__module__}.{type(skill_tool).__qualname__}"
+                    ),
+                )
             tools.append(skill_tool)
 
         return tools

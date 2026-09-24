@@ -125,12 +125,15 @@ class SkillTool(BaseTool):
 
     @property
     def spec(self) -> ToolSpec:
+        declared = list(self._manifest.required_capabilities or [])
+        if not declared:
+            declared = ["tool:invoke"] if self._manifest.steps else ["none"]
         return ToolSpec(
             name=f"skill_{self._manifest.name}",
             description=self._manifest.description or f"Skill: {self._manifest.name}",
             parameters=self._parameters,
             category="skill",
-            required_capabilities=self._manifest.required_capabilities,
+            required_capabilities=declared,
         )
 
     def execute(self, **params: Any) -> ToolResult:

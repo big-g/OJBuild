@@ -282,3 +282,97 @@ def test_mcp_tools_can_be_disabled_per_agent() -> None:
 
     assert [tool.spec.name for tool in resolved.instances] == ["shared"]
     assert resolved.mcp_clients == []
+
+
+
+def test_resolved_agent_tools_are_registered_for_management() -> None:
+    from openjarvis.security.capability_registry import (
+        ResourceStatus,
+        create_builtin_capability_registry,
+    )
+    from openjarvis.security.tool_management_registry import ToolManagementRegistry
+
+    class _ManagedAlphaTool(BaseTool):
+        tool_id = "managed_alpha"
+
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(
+                name=self.tool_id,
+                description="Managed alpha",
+                required_capabilities=["none"],
+            )
+
+        def execute(self, **params) -> ToolResult:
+            return ToolResult(tool_name=self.tool_id, content="ok", success=True)
+
+    ToolRegistry.register_value("managed_alpha", _ManagedAlphaTool)
+    managed = ToolManagementRegistry()
+    capability_registry = create_builtin_capability_registry()
+
+    resolved = tool_resolver.resolve_agent_tools(
+        {
+            "id": "agent-1",
+            "agent_type": "simple",
+            "config": {"tools": ["managed_alpha"]},
+        },
+        engine=object(),
+        model="test-model",
+        tool_management_registry=managed,
+        capability_registry=capability_registry,
+    )
+
+    record = managed.require("builtin:managed_alpha")
+    assert record.status == ResourceStatus.VALIDATED
+    assert resolved.by_name["managed_alpha"].spec.name == "managed_alpha"
+
+
+def test_agent_specific_schema_gets_distinct_management_identity() -> None:
+    from openjarvis.security.capability_registry import create_builtin_capability_registry
+    from openjarvis.security.tool_management_registry import ToolManagementRegistry
+
+    class _ConfiguredTool(BaseTool):
+        tool_id = "configured"
+
+        @property
+        def spec(self) -> ToolSpec:
+            return ToolSpec(
+                name=self.tool_id,
+                description="Configured base",
+                required_capabilities=["none"],
+            )
+
+        def execute(self, **params) -> ToolResult:
+            return ToolResult(tool_name=self.tool_id, content="ok", success=True)
+
+    ToolRegistry.register_value("configured", _ConfiguredTool)
+    managed = ToolManagementRegistry()
+
+    custom_spec = {
+        "type": "function",
+        "function": {
+            "name": "configured",
+            "description": "Agent-specific schema",
+            "parameters": {
+                "type": "object",
+                "properties": {"query": {"type": "string"}},
+            },
+        },
+    }
+
+    resolved = tool_resolver.resolve_agent_tools(
+        {
+            "id": "agent-42",
+            "agent_type": "simple",
+            "config": {"tools": [custom_spec]},
+        },
+        engine=object(),
+        model="test-model",
+        tool_management_registry=managed,
+        capability_registry=create_builtin_capability_registry(),
+    )
+
+    configured = resolved.by_name["configured"]
+    assert configured.management_identity == "agent:agent-42:configured"
+    assert managed.contains("agent:agent-42:configured")
+    assert not managed.contains("builtin:configured")

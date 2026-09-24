@@ -376,6 +376,7 @@ class SystemBuilder:
             workflow_engine=workflow_engine,
             session_store=session_store,
             capability_policy=capability_policy,
+            capability_registry=management_capability_registry,
             tool_management_registry=tool_management_registry,
             audit_logger=sec.audit_logger,
             agent_manager=agent_manager,

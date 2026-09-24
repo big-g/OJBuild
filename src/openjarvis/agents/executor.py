@@ -376,6 +376,12 @@ class AgentExecutor:
             mcp_tools=mcp_tools,
             mcp_clients=mcp_clients,
             knowledge_db_path=getattr(self._system, "knowledge_db_path", None),
+            tool_management_registry=getattr(
+                self._system, "tool_management_registry", None
+            ),
+            capability_registry=getattr(
+                self._system, "capability_registry", None
+            ),
         )
         self._toolkit_local.current = resolved_toolkit
         tool_instances = resolved_toolkit.instances
