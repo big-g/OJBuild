@@ -845,6 +845,10 @@ def _handle_agent(
                 requirement,
                 getattr(agent, "_tools", []) or [],
                 result,
+                query=input_text,
+                engine=getattr(agent, "_engine", None),
+                model=str(getattr(agent, "_model", model) or model),
+                validate_grounding=True,
             )
         return result
 
