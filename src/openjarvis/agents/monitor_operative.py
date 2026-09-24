@@ -130,6 +130,15 @@ class MonitorOperativeAgent(ToolUsingAgent):
         prompt_builder: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
+        capability_policy = kwargs.pop("capability_policy", None)
+        tool_management_registry = kwargs.pop(
+            "tool_management_registry",
+            None,
+        )
+        skill_few_shot_examples = kwargs.pop(
+            "skill_few_shot_examples",
+            None,
+        )
         super().__init__(
             engine,
             model,
@@ -141,6 +150,9 @@ class MonitorOperativeAgent(ToolUsingAgent):
             interactive=interactive,
             confirm_callback=confirm_callback,
             prompt_builder=prompt_builder,
+            capability_policy=capability_policy,
+            tool_management_registry=tool_management_registry,
+            skill_few_shot_examples=skill_few_shot_examples,
         )
         # Validate strategies
         if memory_extraction not in VALID_MEMORY_EXTRACTION:
