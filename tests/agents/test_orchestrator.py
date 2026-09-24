@@ -63,6 +63,24 @@ class _ThinkStub(BaseTool):
         )
 
 
+class _EvidenceStub(BaseTool):
+    def __init__(self, name: str, evidence_kinds: list[str]):
+        self.tool_id = name
+        self._name = name
+        self._evidence_kinds = evidence_kinds
+
+    @property
+    def spec(self) -> ToolSpec:
+        return ToolSpec(
+            name=self._name,
+            description="Evidence provider.",
+            evidence_kinds=list(self._evidence_kinds),
+        )
+
+    def execute(self, **params) -> ToolResult:
+        raise AssertionError("Evidence stub should not execute in these tests")
+
+
 def _make_engine_no_tools(content: str = "Final answer.") -> MagicMock:
     """Engine that never returns tool calls."""
     engine = MagicMock()
@@ -967,7 +985,11 @@ def test_current_request_is_blocked_when_web_search_fails():
 
 def test_current_request_is_allowed_with_web_evidence():
     engine = _make_engine_no_tools()
-    agent = OrchestratorAgent(engine, "test-model", tools=[])
+    agent = OrchestratorAgent(
+        engine,
+        "test-model",
+        tools=[_EvidenceStub("web_search", ["current", "external"])],
+    )
 
     agent._run_function_calling = MagicMock(
         return_value=AgentResult(
@@ -978,8 +1000,20 @@ def test_current_request_is_allowed_with_web_evidence():
                     content="Weather forecast: Tomorrow, high 82°F, low 68°F.",
                     success=True,
                     metadata={
-                        "engine": "test",
-                        "url": "https://example.test/weather",
+                        "evidence": {
+                            "provider": "test-search",
+                            "retrieved_at": "2026-09-24T10:00:00+00:00",
+                            "records": [
+                                {
+                                    "title": "Weather",
+                                    "url": "https://example.test/weather",
+                                    "content": (
+                                        "Weather forecast: Tomorrow, "
+                                        "high 82°F, low 68°F."
+                                    ),
+                                }
+                            ],
+                        }
                     },
                 )
             ],
@@ -995,7 +1029,11 @@ def test_current_request_is_allowed_with_web_evidence():
 
 def test_current_request_splits_web_provenance_into_separate_records():
     engine = _make_engine_no_tools()
-    agent = OrchestratorAgent(engine, "test-model", tools=[])
+    agent = OrchestratorAgent(
+        engine,
+        "test-model",
+        tools=[_EvidenceStub("web_search", ["current", "external"])],
+    )
 
     agent._run_function_calling = MagicMock(
         return_value=AgentResult(
@@ -1006,20 +1044,22 @@ def test_current_request_splits_web_provenance_into_separate_records():
                     content="Combined search output.",
                     success=True,
                     metadata={
-                        "engine": "duckduckgo",
-                        "num_results": 2,
-                        "results": [
-                            {
-                                "title": "Weather Source A",
-                                "url": "https://example.test/a",
-                                "content": "Source A says partly cloudy.",
-                            },
-                            {
-                                "title": "Weather Source B",
-                                "url": "https://example.test/b",
-                                "content": "Source B says partly cloudy.",
-                            },
-                        ],
+                        "evidence": {
+                            "provider": "duckduckgo",
+                            "retrieved_at": "2026-09-24T10:00:00+00:00",
+                            "records": [
+                                {
+                                    "title": "Weather Source A",
+                                    "url": "https://example.test/a",
+                                    "content": "Source A says partly cloudy.",
+                                },
+                                {
+                                    "title": "Weather Source B",
+                                    "url": "https://example.test/b",
+                                    "content": "Source B says partly cloudy.",
+                                },
+                            ],
+                        }
                     },
                 )
             ],
@@ -1032,3 +1072,133 @@ def test_current_request_splits_web_provenance_into_separate_records():
     assert result.metadata["evidence_required"] is True
     assert result.metadata["evidence_status"] == "obtained"
     assert result.metadata["evidence_records"] == 2
+
+
+
+def test_successful_unmarked_tool_output_is_not_evidence():
+    agent = OrchestratorAgent(
+        _make_engine_no_tools(),
+        "test-model",
+        tools=[_EvidenceStub("web_search", ["current"])],
+    )
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow is 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Looks authoritative but has no provenance contract.",
+                    success=True,
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "I couldn't retrieve the required data."
+    assert result.metadata["evidence_status"] == "required_not_obtained"
+
+
+def test_non_web_provider_can_satisfy_current_evidence():
+    agent = OrchestratorAgent(
+        _make_engine_no_tools(),
+        "test-model",
+        tools=[_EvidenceStub("http_request", ["current", "external"])],
+    )
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="The API reports 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="http_request",
+                    content='{"high_f":82}',
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "http",
+                            "retrieved_at": "2026-09-24T10:00:00+00:00",
+                            "records": [
+                                {
+                                    "url": "https://api.example.test/weather",
+                                    "content": '{"high_f":82}',
+                                }
+                            ],
+                        }
+                    },
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "The API reports 82°F."
+    assert result.metadata["evidence_status"] == "obtained"
+    assert result.metadata["evidence_records"] == 1
+
+
+def test_evidence_kind_must_match_requirement():
+    agent = OrchestratorAgent(
+        _make_engine_no_tools(),
+        "test-model",
+        tools=[_EvidenceStub("archive_lookup", ["external"])],
+    )
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="Tomorrow is 82°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="archive_lookup",
+                    content="Archived weather data.",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "archive",
+                            "records": [{"content": "Archived weather data."}],
+                        }
+                    },
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "I couldn't retrieve the required data."
+    assert result.metadata["evidence_status"] == "required_not_obtained"
+
+
+def test_explicit_evidence_conflict_blocks_response():
+    agent = OrchestratorAgent(
+        _make_engine_no_tools(),
+        "test-model",
+        tools=[_EvidenceStub("web_search", ["current"])],
+    )
+    agent._run_function_calling = MagicMock(
+        return_value=AgentResult(
+            content="One source says 82°F and another says 91°F.",
+            tool_results=[
+                ToolResult(
+                    tool_name="web_search",
+                    content="Conflicting forecasts.",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test-search",
+                            "conflicting": True,
+                            "records": [
+                                {"source": "a", "content": "Tomorrow: 82°F."},
+                                {"source": "b", "content": "Tomorrow: 91°F."},
+                            ],
+                        }
+                    },
+                )
+            ],
+        )
+    )
+
+    result = agent.run("What's the weather forecast for tomorrow?")
+
+    assert result.content == "The available sources conflict."
+    assert result.metadata["evidence_status"] == "conflicting"
