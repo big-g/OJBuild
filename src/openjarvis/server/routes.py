@@ -800,6 +800,8 @@ def _handle_agent(
     # Last message is the input
     input_text = req.messages[-1].content if req.messages else ""
 
+    collector = None
+
     # Override agent model for this request if the caller specified one.
     # Locked for the full override-run-restore cycle (#759): only the
     # override/restore lines racing wouldn't be enough, since agent.run()
@@ -832,6 +834,11 @@ def _handle_agent(
                 assessment,
             )
         )
+        if collector is not None:
+            collector.annotate_evidence(
+                requirement,
+                assessment,
+            )
         if assessment.blocked:
             result.content = blocked_response(assessment)
 
