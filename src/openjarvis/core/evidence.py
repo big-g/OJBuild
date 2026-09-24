@@ -454,8 +454,16 @@ def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
         value = (match.group(1) or match.group(2) or "").strip()
         if value:
             quotes.add(" ".join(value.lower().split()))
+    # Anchor classes must be mutually exclusive. Remove spans already
+    # handled by stronger date/URL/quote validators before looking for names;
+    # otherwise phrases such as "On September 24, 2026" can be misread as the
+    # proper name "On September".
+    name_source = _DATE_ANCHOR_RE.sub(" ", text)
+    name_source = _URL_ANCHOR_RE.sub(" ", name_source)
+    name_source = _QUOTED_ANCHOR_RE.sub(" ", name_source)
+
     names: set[str] = set()
-    for match in _NAME_ANCHOR_RE.finditer(text):
+    for match in _NAME_ANCHOR_RE.finditer(name_source):
         words = match.group(0).split()
         if words and words[0].lower() in {"the", "a", "an"}:
             words = words[1:]
