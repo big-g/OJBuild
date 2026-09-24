@@ -538,9 +538,12 @@ _NAME_ANCHOR_RE = re.compile(
 
 def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
     """Extract conservative non-numeric anchors from response/evidence text."""
+    # A date embedded in a link path identifies a resource; it does not state
+    # that an event happened on that date.
+    date_source = _URL_ANCHOR_RE.sub(" ", text)
     dates = {
         " ".join(match.group(0).lower().split())
-        for match in _DATE_ANCHOR_RE.finditer(text)
+        for match in _DATE_ANCHOR_RE.finditer(date_source)
     }
     urls = {
         match.group(0).rstrip(".,;:")
@@ -582,16 +585,14 @@ def _evidence_text_anchors(records: Iterable[EvidenceRecord]) -> dict[str, set[s
         "name": set(),
     }
     for record in records:
-        for value in (
-            record.content,
-            record.title,
-            record.url,
-            record.source_id,
-            record.source,
-        ):
+        # Provenance labels can contain dates, quoted phrases, and names, but
+        # only the retrieved text and title can support those factual claims.
+        for value in (record.content, record.title):
             anchors = _normalized_text_anchors(str(value or ""))
             for kind, items in anchors.items():
                 combined[kind].update(items)
+        if record.url:
+            combined["url"].update(_normalized_text_anchors(record.url)["url"])
     return combined
 
 

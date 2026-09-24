@@ -927,6 +927,47 @@ def test_grounding_iso_date_uses_date_anchor_not_numeric_anchor():
     assert engine.calls == []
 
 
+@pytest.mark.parametrize(
+    "content,url,source_id",
+    [
+        ("The migration was approved.", "https://example.test/2026-09-24", ""),
+        ("The migration was approved.", "", "approval-2026-09-24"),
+        (
+            "The migration was approved. See https://example.test/2026-09-24",
+            "",
+            "",
+        ),
+    ],
+)
+def test_grounding_date_in_provenance_does_not_support_event_date(
+    content, url, source_id,
+):
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+    assessment = EvidenceAssessment(
+        status=EvidenceStatus.OBTAINED,
+        records=(EvidenceRecord(
+            source="search",
+            content=content,
+            url=url,
+            source_id=source_id,
+        ),),
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="When was the migration approved?",
+        answer="The migration was approved on 2026-09-24.",
+        assessment=assessment,
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "date_anchor"
+    assert engine.calls == []
+
+
 def test_grounding_keeps_real_number_next_to_date_as_numeric_anchor():
     engine = _GroundingEngine(
         '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
