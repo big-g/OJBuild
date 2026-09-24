@@ -166,6 +166,44 @@ class TestAskAgentRouting:
         assert "does_not_exist" in result["content"]
 
 
+class TestSystemEvidenceBoundary:
+    def test_non_orchestrator_agent_cannot_bypass_current_evidence_gate(self):
+        from openjarvis.agents._stubs import AgentResult
+        from openjarvis.core.registry import AgentRegistry
+
+        class _UngroundedAgent:
+            accepts_tools = False
+
+            def __init__(self, engine, model, **kwargs):
+                self._engine = engine
+                self._model = model
+
+            def run(self, query, context=None):
+                return AgentResult(
+                    content="Tomorrow will be sunny and 82°F.",
+                    turns=1,
+                )
+
+        AgentRegistry.register_value(
+            "ungrounded_evidence_test_agent",
+            _UngroundedAgent,
+        )
+
+        system = _FakeSystem(
+            engine=_FakeEngine({"content": ""}),
+            agent_name="ungrounded_evidence_test_agent",
+        )
+        orchestrator = QueryOrchestrator(system)
+
+        result = orchestrator.ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == "I couldn't retrieve the required data."
+        assert result["metadata"]["evidence_status"] == "required_not_obtained"
+
+
 class TestDetectAgentIntent:
     @pytest.mark.parametrize(
         "query",
