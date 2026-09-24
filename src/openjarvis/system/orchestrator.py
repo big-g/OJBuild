@@ -284,7 +284,8 @@ class QueryOrchestrator:
                     query=query,
                     engine=s.engine,
                     model=s.model,
-                    validate_grounding=True,
+                    validate_conflicts=True,
+                validate_grounding=True,
                 )
             return result
 
