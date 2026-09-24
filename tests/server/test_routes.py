@@ -277,6 +277,46 @@ class TestChatCompletions:
         )
         engine.generate.assert_not_called()
 
+    def test_blocked_current_direct_completion_records_evidence_trace(
+        self,
+        tmp_path,
+    ):
+        engine = _make_engine(content="Unsupported current answer.")
+        config = _test_config()
+        config.traces.enabled = True
+        config.traces.db_path = str(tmp_path / "direct-evidence-traces.db")
+        app = create_app(
+            engine,
+            "test-model",
+            config=config,
+        )
+        client = TestClient(app)
+
+        resp = client.post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": "What's the weather forecast for tomorrow?",
+                    }
+                ],
+            },
+        )
+
+        assert resp.status_code == 200
+        traces = app.state.trace_store.list_traces()
+        assert len(traces) == 1
+        assert traces[0].metadata["evidence"] == {
+            "required": True,
+            "kind": "current",
+            "status": "required_not_obtained",
+            "reason": "Required evidence was not obtained.",
+            "records": 0,
+        }
+        app.state.trace_store.close()
+
     def test_current_direct_stream_is_blocked_before_engine_stream(self):
         engine = _make_engine()
         stream_started = False
