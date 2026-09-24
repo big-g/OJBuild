@@ -259,6 +259,15 @@ class ChannelBridge:
         if self._deep_research_agent is not None:
             try:
                 result = self._deep_research_agent.run(content)
+                from openjarvis.core.evidence import (
+                    finalize_agent_result_with_evidence,
+                )
+
+                result = finalize_agent_result_with_evidence(
+                    self._deep_research_agent,
+                    content,
+                    result,
+                )
                 response_text = result.content or "No results found."
             except Exception as exc:
                 logger.error("DeepResearch agent failed: %s", exc)
