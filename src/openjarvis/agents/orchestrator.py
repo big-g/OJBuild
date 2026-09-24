@@ -25,7 +25,9 @@ from openjarvis.core.evidence import (
     assess_evidence,
     blocked_response,
     detect_evidence_requirement,
+    evidence_conflict_from_tool_result,
     evidence_records_from_tool_result,
+    tool_supports_evidence,
 )
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
@@ -116,30 +118,40 @@ class OrchestratorAgent(ToolUsingAgent):
             return result
 
         evidence_records: list[EvidenceRecord] = []
+        conflicting = False
+        tool_specs = {
+            tool.spec.name: tool.spec
+            for tool in self._tools
+        }
 
         for tool_result in result.tool_results:
             if not tool_result.success:
                 continue
 
-            # Only external retrieval currently counts as evidence.
-            if tool_result.tool_name != "web_search":
+            tool_spec = tool_specs.get(tool_result.tool_name)
+            if tool_spec is None or not tool_supports_evidence(
+                tool_spec,
+                requirement,
+            ):
                 continue
 
-            content = tool_result.content.strip()
-            if not content or content == "No results found.":
-                continue
-
+            metadata = tool_result.metadata or {}
             evidence_records.extend(
                 evidence_records_from_tool_result(
                     tool_name=tool_result.tool_name,
-                    metadata=tool_result.metadata or {},
-                    fallback_content=content,
+                    metadata=metadata,
+                    fallback_content=tool_result.content,
                 )
+            )
+            conflicting = (
+                conflicting
+                or evidence_conflict_from_tool_result(metadata)
             )
 
         assessment = assess_evidence(
             requirement,
             evidence_records,
+            conflicting=conflicting,
         )
 
         if assessment.blocked:
