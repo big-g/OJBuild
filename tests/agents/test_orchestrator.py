@@ -163,6 +163,21 @@ def _make_engine_multi_tool() -> MagicMock:
 # ---------------------------------------------------------------------------
 
 
+def test_orchestrator_private_executor_keeps_security_dependencies():
+    policy = object()
+    management = object()
+    agent = OrchestratorAgent(
+        _make_engine_no_tools(),
+        "test-model",
+        tools=[],
+        capability_policy=policy,
+        tool_management_registry=management,
+    )
+
+    assert agent._executor._capability_policy is policy
+    assert agent._executor._tool_management_registry is management
+
+
 class TestOrchestratorAgent:
     def test_agent_id(self):
         engine = _make_engine_no_tools()
