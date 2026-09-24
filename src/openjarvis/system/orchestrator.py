@@ -6,6 +6,12 @@ import inspect
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from openjarvis.core.evidence import (
+    assess_evidence,
+    assess_tool_results,
+    blocked_response,
+    detect_evidence_requirement,
+)
 from openjarvis.core.types import Message, Role
 from openjarvis.tools._stubs import BaseTool
 
@@ -34,6 +40,7 @@ class QueryOrchestrator:
     ) -> Dict[str, Any]:
         """Execute a query through the system and return a result dict."""
         s = self._system
+        evidence_requirement = detect_evidence_requirement(query)
         if temperature is None:
             temperature = s.config.intelligence.temperature
         if max_tokens is None:
@@ -82,6 +89,20 @@ class QueryOrchestrator:
                 operator_id=operator_id,
                 prior_messages=prior_messages,
             )
+
+        if evidence_requirement.required:
+            assessment = assess_evidence(evidence_requirement)
+            return {
+                "content": blocked_response(assessment),
+                "usage": {},
+                "model": s.model,
+                "engine": s.engine_key,
+                "metadata": {
+                    "evidence_required": True,
+                    "evidence_status": assessment.status.value,
+                    "evidence_reason": assessment.reason,
+                },
+            }
 
         result = s.engine.generate(
             messages,
@@ -238,6 +259,24 @@ class QueryOrchestrator:
                 result = ag.run(query, context=ctx)
         finally:
             s.bus.unsubscribe(EventType.INFERENCE_END, _on_inference_end)
+
+        evidence_requirement = detect_evidence_requirement(query)
+        if evidence_requirement.required:
+            assessment = assess_tool_results(
+                evidence_requirement,
+                getattr(ag, "_tools", agent_tools) or [],
+                getattr(result, "tool_results", []) or [],
+            )
+            result.metadata.update(
+                {
+                    "evidence_required": True,
+                    "evidence_status": assessment.status.value,
+                    "evidence_reason": assessment.reason,
+                    "evidence_records": len(assessment.records),
+                }
+            )
+            if assessment.blocked:
+                result.content = blocked_response(assessment)
 
         _telemetry: Dict[str, Any] = {}
         if telemetry_events:
