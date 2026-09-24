@@ -314,13 +314,14 @@ class QueryOrchestrator:
                     assessment,
                 )
             )
+            if assessment.blocked:
+                result.content = blocked_response(assessment)
             if collector is not None:
                 collector.annotate_evidence(
                     evidence_requirement,
                     assessment,
+                    final_content=result.content,
                 )
-            if assessment.blocked:
-                result.content = blocked_response(assessment)
 
         _telemetry: Dict[str, Any] = {}
         if telemetry_events:
