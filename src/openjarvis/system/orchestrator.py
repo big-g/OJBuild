@@ -281,6 +281,10 @@ class QueryOrchestrator:
                     evidence_requirement,
                     getattr(ag, "_tools", agent_tools) or [],
                     result,
+                    query=query,
+                    engine=s.engine,
+                    model=s.model,
+                    validate_grounding=True,
                 )
             return result
 
