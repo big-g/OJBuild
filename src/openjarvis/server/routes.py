@@ -848,6 +848,7 @@ def _handle_agent(
                 query=input_text,
                 engine=getattr(agent, "_engine", None),
                 model=str(getattr(agent, "_model", model) or model),
+                validate_conflicts=True,
                 validate_grounding=True,
             )
         return result
