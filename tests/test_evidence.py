@@ -296,6 +296,50 @@ def test_unmarked_tool_metadata_is_not_evidence():
     assert records == []
 
 
+@pytest.mark.parametrize("records", [None, "invalid", 1, {}, [], [{}]])
+def test_explicit_invalid_or_empty_records_cannot_fall_back_to_output(records):
+    from types import SimpleNamespace
+
+    from openjarvis.tools._stubs import ToolSpec
+
+    tool = SimpleNamespace(spec=ToolSpec(
+        name="test_evidence", description="test", evidence_kinds=["current"],
+    ))
+    result = SimpleNamespace(
+        content="The launch is approved.", metadata={},
+        tool_results=[SimpleNamespace(
+            tool_name="test_evidence", success=True,
+            content="Ordinary output must not replace invalid source records.",
+            metadata={"evidence": {
+                "records": records, "use_result_content": True,
+            }},
+        )],
+    )
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "unused"}'
+    )
+    assessment = apply_tool_evidence_to_result(
+        required_current(), [tool], result,
+        query="What is the latest launch status?", engine=engine,
+        model="test-model", validate_conflicts=True, validate_grounding=True,
+    )
+
+    assert assessment.status == EvidenceStatus.REQUIRED_NOT_OBTAINED
+    assert result.content == "I couldn't retrieve the required data."
+    assert engine.calls == []
+
+
+def test_result_content_fallback_remains_available_without_explicit_records():
+    records = evidence_records_from_tool_result(
+        tool_name="test_evidence",
+        metadata={"evidence": {"use_result_content": True}},
+        fallback_content="The launch is approved.",
+    )
+
+    assert len(records) == 1
+    assert records[0].content == "The launch is approved."
+
+
 def test_tool_spec_must_declare_matching_evidence_kind():
     class _Spec:
         evidence_kinds = ["external"]

@@ -180,6 +180,11 @@ def evidence_records_from_tool_result(
     retrieved_at = str(evidence.get("retrieved_at", ""))
     provenance_results = evidence.get("records")
 
+    # Explicit records take precedence over the opt-in content fallback.
+    # A malformed records field must not silently select a different contract.
+    if "records" in evidence and not isinstance(provenance_results, list):
+        return []
+
     if isinstance(provenance_results, list):
         records: list[EvidenceRecord] = []
 
