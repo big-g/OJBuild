@@ -97,11 +97,12 @@ class TraceCollector:
         trace_metadata: Dict[str, Any] = {}
         evidence_audit = evidence_audit_from_result_metadata(result.metadata)
         if evidence_audit is not None:
+            grounding_audit = grounding_audit_from_result_metadata(
+                result.metadata
+            )
+            if grounding_audit is not None:
+                evidence_audit["grounding"] = grounding_audit
             trace_metadata["evidence"] = evidence_audit
-
-        grounding_audit = grounding_audit_from_result_metadata(result.metadata)
-        if grounding_audit is not None:
-            trace_metadata["grounding"] = grounding_audit
 
         # Build and persist the trace
         trace = Trace(
