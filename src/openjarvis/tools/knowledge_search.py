@@ -7,12 +7,14 @@ Optionally delegates to a ``TwoStageRetriever`` for BM25 + reranking.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 from openjarvis.connectors.store import KnowledgeStore
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.core.types import ToolResult
 from openjarvis.tools._stubs import BaseTool, ToolSpec
+from openjarvis.tools.storage.context import trusted_results
 
 if TYPE_CHECKING:
     from openjarvis.connectors.retriever import TwoStageRetriever
@@ -92,6 +94,7 @@ class KnowledgeSearchTool(BaseTool):
             },
             category="knowledge",
             required_capabilities=["memory:read"],
+            evidence_kinds=["external"],
         )
 
     def execute(self, **params: Any) -> ToolResult:
@@ -138,15 +141,25 @@ class KnowledgeSearchTool(BaseTool):
                 until=until,
             )
 
+        results = trusted_results(results)
+
         if not results:
             return ToolResult(
                 tool_name="knowledge_search",
                 content="No relevant results found.",
                 success=True,
-                metadata={"num_results": 0},
+                metadata={
+                    "num_results": 0,
+                    "evidence": {
+                        "provider": "knowledge_search",
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                        "records": [],
+                    },
+                },
             )
 
         lines: list[str] = []
+        evidence_records: list[dict[str, Any]] = []
         for i, result in enumerate(results, start=1):
             meta = result.metadata
             src_label = result.source or meta.get("source", "")
@@ -170,13 +183,43 @@ class KnowledgeSearchTool(BaseTool):
             lines.append(result.content)
             lines.append("")
 
+            evidence_records.append(
+                {
+                    "source": src_label or "knowledge_store",
+                    "source_id": str(
+                        meta.get("doc_id")
+                        or meta.get("chunk_id")
+                        or meta.get("source_id")
+                        or ""
+                    ),
+                    "title": str(title),
+                    "url": str(url),
+                    "content": result.content,
+                    "metadata": {
+                        "score": result.score,
+                        "author": str(result_author),
+                        "doc_type": str(meta.get("doc_type", "")),
+                        "timestamp": str(meta.get("timestamp", "")),
+                        "chunk_id": str(meta.get("chunk_id", "")),
+                        "trust": str(meta.get("trust", "")),
+                    },
+                }
+            )
+
         formatted = "\n".join(lines).rstrip()
 
         return ToolResult(
             tool_name="knowledge_search",
             content=formatted,
             success=True,
-            metadata={"num_results": len(results)},
+            metadata={
+                "num_results": len(results),
+                "evidence": {
+                    "provider": "knowledge_search",
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                    "records": evidence_records,
+                },
+            },
         )
 
 
