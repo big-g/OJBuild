@@ -1059,6 +1059,15 @@ async def _stream_managed_agent(
                     agent_metadata = {}
                     try:
                         result = dr_agent.run(user_content)
+                        from openjarvis.core.evidence import (
+                            finalize_agent_result_with_evidence,
+                        )
+
+                        result = finalize_agent_result_with_evidence(
+                            dr_agent,
+                            user_content,
+                            result,
+                        )
                         content = result.content or "No results found."
                         agent_metadata = result.metadata or {}
                     except Exception as exc:
@@ -1813,6 +1822,15 @@ def create_agent_manager_router(
 
                                 def handler(text: str) -> str:
                                     result = agent_inst.run(text)
+                                    from openjarvis.core.evidence import (
+                                        finalize_agent_result_with_evidence,
+                                    )
+
+                                    result = finalize_agent_result_with_evidence(
+                                        agent_inst,
+                                        text,
+                                        result,
+                                    )
                                     return result.content or "No results."
 
                                 t = threading.Thread(
