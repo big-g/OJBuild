@@ -512,6 +512,47 @@ def test_grounding_unsupported_date_blocks_without_llm_call():
     assert engine.calls == []
 
 
+def test_grounding_iso_date_uses_date_anchor_not_numeric_anchor():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="When was the migration approved?",
+        answer="The migration was approved on 2026-09-24.",
+        assessment=_grounding_assessment(
+            "The migration was approved on 2026-09-23."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "date_anchor"
+    assert engine.calls == []
+
+
+def test_grounding_keeps_real_number_next_to_date_as_numeric_anchor():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="What happened on September 24, 2026?",
+        answer="On September 24, 2026, the cost increased 91%.",
+        assessment=_grounding_assessment(
+            "On September 24, 2026, the cost increased 40%."
+        ),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "numeric_anchor"
+    assert "91" in grounding.unsupported_claims[0]
+    assert engine.calls == []
+
+
 def test_grounding_unsupported_url_blocks_without_llm_call():
     engine = _GroundingEngine(
         '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
