@@ -114,11 +114,13 @@ Match the depth to the query. Don't over-research simple questions.
 - **knowledge_search**: BM25 keyword search. Filters: source, doc_type, \
 author, since, until, top_k. Returns text with source attribution.
 
-- **knowledge_sql**: SQL against knowledge_chunks table. \
-Schema: id, content, source, doc_type, doc_id, title, author, \
-participants, timestamp, thread_id, url, metadata, chunk_index. \
-Great for: counting, ranking, time filtering, frequency analysis, \
-recency analysis, GROUP BY aggregation.
+- **knowledge_sql**: trusted read-only SQL against knowledge_chunks. \
+The tool automatically excludes quarantined/unknown-trust and deleted rows; \
+do not schema-qualify the table. Schema: id, content, source, doc_type, \
+doc_id, title, author, participants, timestamp, thread_id, url, metadata, \
+chunk_index. Great for: counting, ranking, time filtering, frequency \
+analysis, recency analysis, GROUP BY aggregation. SQL results are derived \
+from the local knowledge snapshot and do not prove that the data is current.
 
 - **scan_chunks**: Semantic search — an LM reads chunks looking for \
 information that keyword search misses. Use for abstract queries, \
