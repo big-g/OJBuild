@@ -84,6 +84,42 @@ class TestAskDirectEngineMode:
         assert result["metadata"]["evidence_status"] == "required_not_obtained"
         assert engine.calls == []
 
+    def test_current_direct_query_records_evidence_trace(
+        self,
+        tmp_path,
+    ):
+        from openjarvis.traces.store import TraceStore
+
+        engine = _FakeEngine(
+            {
+                "content": "Unsupported current answer.",
+            }
+        )
+        store = TraceStore(tmp_path / "system-direct-evidence.db")
+        system = _FakeSystem(
+            engine=engine,
+            trace_store=store,
+        )
+        orchestrator = QueryOrchestrator(system)
+
+        result = orchestrator.ask(
+            "What's the weather forecast for tomorrow?",
+            context=False,
+        )
+
+        assert result["content"] == "I couldn't retrieve the required data."
+        assert engine.calls == []
+        traces = store.list_traces()
+        assert len(traces) == 1
+        assert traces[0].metadata["evidence"] == {
+            "required": True,
+            "kind": "current",
+            "status": "required_not_obtained",
+            "reason": "Required evidence was not obtained.",
+            "records": 0,
+        }
+        store.close()
+
     def test_forwards_temperature_and_max_tokens(self):
         engine = _FakeEngine({"content": ""})
         system = _FakeSystem(engine=engine)
