@@ -157,4 +157,50 @@ try:
 except ImportError:
     pass
 
-__all__ = ["BaseTool", "ToolExecutor", "ToolSpec"]
+# Canonical modules that define the global built-in tool catalog.
+#
+# Registry restoration must use this explicit list rather than reloading every
+# openjarvis.tools.* module that happens to be present in sys.modules. Some
+# specialized tools (for example knowledge_search) are imported only by
+# particular agent/runtime paths and must not leak into the global built-in
+# catalog merely because another test or feature imported them earlier.
+BUILTIN_TOOL_MODULES = (
+    "openjarvis.tools.calculator",
+    "openjarvis.tools.think",
+    "openjarvis.tools.retrieval",
+    "openjarvis.tools.llm_tool",
+    "openjarvis.tools.file_read",
+    "openjarvis.tools.web_search",
+    "openjarvis.tools.code_interpreter",
+    "openjarvis.tools.code_interpreter_docker",
+    "openjarvis.tools.repl",
+    "openjarvis.tools.storage_tools",
+    "openjarvis.tools.mcp_adapter",
+    "openjarvis.tools.channel_tools",
+    "openjarvis.tools.http_request",
+    "openjarvis.tools.docker_shell_exec",
+    "openjarvis.tools.shell_exec",
+    "openjarvis.tools.memory_manage",
+    "openjarvis.tools.user_profile_manage",
+    "openjarvis.tools.skill_manage",
+    "openjarvis.tools.file_write",
+    "openjarvis.tools.apply_patch",
+    "openjarvis.tools.git_tool",
+    "openjarvis.tools.db_query",
+    "openjarvis.tools.pdf_tool",
+    "openjarvis.tools.image_tool",
+    "openjarvis.tools.audio_tool",
+    "openjarvis.tools.knowledge_tools",
+    "openjarvis.tools.text_to_speech",
+    "openjarvis.tools.digest_collect",
+    "openjarvis.tools.scan_chunks",
+    "openjarvis.tools.knowledge_sql",
+    "openjarvis.tools.apple_calendar",
+)
+
+__all__ = [
+    "BUILTIN_TOOL_MODULES",
+    "BaseTool",
+    "ToolExecutor",
+    "ToolSpec",
+]
