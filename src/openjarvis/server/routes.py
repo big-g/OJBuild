@@ -14,12 +14,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from openjarvis.core.evidence import (
+    apply_tool_evidence_to_result,
     assess_evidence,
-    assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
     evidence_audit_metadata,
-    evidence_result_metadata,
 )
 from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message, Role, ToolCall
@@ -838,6 +837,16 @@ def _handle_agent(
 
     # Last message is the input
     input_text = req.messages[-1].content if req.messages else ""
+    requirement = detect_evidence_requirement(input_text)
+
+    def _finalize_result(result):
+        if requirement.required:
+            apply_tool_evidence_to_result(
+                requirement,
+                getattr(agent, "_tools", []) or [],
+                result,
+            )
+        return result
 
     collector = None
 
@@ -853,34 +862,22 @@ def _handle_agent(
             if trace_store is not None:
                 from openjarvis.traces.collector import TraceCollector
 
-                collector = TraceCollector(agent, store=trace_store, bus=bus)
+                collector = TraceCollector(
+                    agent,
+                    store=trace_store,
+                    bus=bus,
+                    result_processor=(
+                        _finalize_result
+                        if requirement.required
+                        else None
+                    ),
+                )
                 result = collector.run(input_text, context=ctx)
             else:
                 result = agent.run(input_text, context=ctx)
+                result = _finalize_result(result)
         finally:
             agent._model = original_model
-
-    requirement = detect_evidence_requirement(input_text)
-    if requirement.required:
-        assessment = assess_tool_results(
-            requirement,
-            getattr(agent, "_tools", []) or [],
-            getattr(result, "tool_results", []) or [],
-        )
-        result.metadata.update(
-            evidence_result_metadata(
-                requirement,
-                assessment,
-            )
-        )
-        if assessment.blocked:
-            result.content = blocked_response(assessment)
-        if collector is not None:
-            collector.annotate_evidence(
-                requirement,
-                assessment,
-                final_content=result.content,
-            )
 
     usage = UsageInfo(
         prompt_tokens=result.metadata.get("prompt_tokens", 0),
