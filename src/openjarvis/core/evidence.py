@@ -317,6 +317,40 @@ def assessment_from_tool_result(
     return assess_evidence(requirement, [record])
 
 
+def evidence_audit_metadata(
+    requirement: EvidenceRequirement,
+    assessment: EvidenceAssessment,
+) -> dict[str, Any]:
+    """Return the normalized trace/audit representation of an assessment."""
+    return {
+        "required": bool(requirement.required),
+        "kind": requirement.kind.value,
+        "status": assessment.status.value,
+        "reason": assessment.reason or requirement.reason,
+        "records": len(assessment.records),
+    }
+
+
+def evidence_audit_from_result_metadata(
+    metadata: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    """Normalize legacy flat AgentResult evidence fields for trace storage."""
+    if not metadata.get("evidence_required"):
+        return None
+
+    status = str(metadata.get("evidence_status", "")).strip()
+    if not status:
+        return None
+
+    return {
+        "required": True,
+        "kind": str(metadata.get("evidence_kind", "")),
+        "status": status,
+        "reason": str(metadata.get("evidence_reason", "")),
+        "records": int(metadata.get("evidence_records", 0) or 0),
+    }
+
+
 def blocked_response(assessment: EvidenceAssessment) -> str:
     """Return the canonical user-facing response for a blocked assessment."""
     if assessment.status == EvidenceStatus.CONFLICTING:
