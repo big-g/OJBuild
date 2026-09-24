@@ -256,6 +256,41 @@ class TraceStore:
         self._conn.commit()
         return cursor.rowcount > 0
 
+    def update_final_response(
+        self,
+        trace_id: str,
+        result: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        """Update the delivered result, audit metadata, and final RESPOND step."""
+        cursor = self._conn.execute(
+            "UPDATE traces SET result = ?, metadata = ? WHERE trace_id = ?",
+            (result, json.dumps(metadata), trace_id),
+        )
+        if cursor.rowcount <= 0:
+            self._conn.commit()
+            return False
+
+        row = self._conn.execute(
+            "SELECT id, output FROM trace_steps "
+            "WHERE trace_id = ? AND step_type = ? "
+            "ORDER BY step_index DESC LIMIT 1",
+            (trace_id, StepType.RESPOND.value),
+        ).fetchone()
+        if row is not None:
+            try:
+                output = json.loads(row[1]) if row[1] else {}
+            except (TypeError, ValueError, json.JSONDecodeError):
+                output = {}
+            output["content"] = result
+            self._conn.execute(
+                "UPDATE trace_steps SET output = ? WHERE id = ?",
+                (json.dumps(output), row[0]),
+            )
+
+        self._conn.commit()
+        return True
+
     def update_feedback(self, trace_id: str, score: float) -> bool:
         """Update the feedback score for a trace.
 
