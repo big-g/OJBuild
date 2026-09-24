@@ -107,6 +107,15 @@ class ChannelAgent:
 
         try:
             result = self._agent.run(msg.content)
+            from openjarvis.core.evidence import (
+                finalize_agent_result_with_evidence,
+            )
+
+            result = finalize_agent_result_with_evidence(
+                self._agent,
+                msg.content,
+                result,
+            )
             response_text: str = getattr(result, "content", str(result))
         except Exception as exc:  # noqa: BLE001
             friendly = (
