@@ -1,3 +1,5 @@
+import importlib
+
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.security.capability_registry import ResourceStatus
 from openjarvis.security.tool_management_bootstrap import (
@@ -16,6 +18,21 @@ def test_all_static_registry_tools_are_managed():
 
     expected = {f"builtin:{name}" for name in ToolRegistry.keys()}
     assert set(managed.keys()) == expected
+
+
+def test_specialized_tool_import_does_not_expand_builtin_inventory():
+    import openjarvis.tools.knowledge_search as knowledge_search
+
+    # Simulate the combined-suite condition that originally caused the
+    # bootstrap count to become order-dependent.
+    importlib.reload(knowledge_search)
+    ToolRegistry.clear()
+
+    managed = build_builtin_tool_management_registry()
+
+    assert len(tuple(managed.keys())) == 48
+    assert "builtin:knowledge_search" not in managed.keys()
+    assert "knowledge_search" not in ToolRegistry.keys()
 
 
 def test_builtin_identity_and_provenance_are_stable():
