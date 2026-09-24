@@ -221,7 +221,15 @@ class TestTraceCollector:
             reason="Required evidence was not obtained.",
         )
 
-        assert collector.annotate_evidence(requirement, assessment) is True
+        blocked = "I couldn't retrieve the required data."
+        assert (
+            collector.annotate_evidence(
+                requirement,
+                assessment,
+                final_content=blocked,
+            )
+            is True
+        )
 
         trace = store.list_traces()[0]
         assert trace.metadata["evidence"] == {
@@ -231,6 +239,13 @@ class TestTraceCollector:
             "reason": "Required evidence was not obtained.",
             "records": 0,
         }
+        assert trace.result == blocked
+        respond_steps = [
+            step
+            for step in trace.steps
+            if step.step_type == StepType.RESPOND
+        ]
+        assert respond_steps[-1].output["content"] == blocked
         store.close()
 
     def test_tool_step_preserves_evidence_provenance(
