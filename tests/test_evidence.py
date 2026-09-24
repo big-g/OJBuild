@@ -272,6 +272,8 @@ def test_static_concepts_do_not_require_current_evidence(query):
         "Who is the current president?",
         "What's the price of Bitcoin?",
         "What's the weather in Charlotte?",
+        "What is the temperature?",
+        "What's the temperature?",
         "What is the exchange rate from USD to GBP?",
     ],
 )
