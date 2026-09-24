@@ -11,6 +11,7 @@ from openjarvis.core.evidence import (
     EvidenceRequirement,
     evidence_audit_from_result_metadata,
     evidence_audit_metadata,
+    grounding_audit_from_result_metadata,
 )
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import StepType, Trace, TraceStep
@@ -97,6 +98,10 @@ class TraceCollector:
         evidence_audit = evidence_audit_from_result_metadata(result.metadata)
         if evidence_audit is not None:
             trace_metadata["evidence"] = evidence_audit
+
+        grounding_audit = grounding_audit_from_result_metadata(result.metadata)
+        if grounding_audit is not None:
+            trace_metadata["grounding"] = grounding_audit
 
         # Build and persist the trace
         trace = Trace(
