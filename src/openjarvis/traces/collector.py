@@ -6,6 +6,12 @@ import time
 from typing import Any, Dict, List, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
+from openjarvis.core.evidence import (
+    EvidenceAssessment,
+    EvidenceRequirement,
+    evidence_audit_from_result_metadata,
+    evidence_audit_metadata,
+)
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import StepType, Trace, TraceStep
 from openjarvis.traces.store import TraceStore
@@ -80,6 +86,11 @@ class TraceCollector:
         # Extract messages from agent result metadata
         messages: List[Dict[str, Any]] = result.metadata.get("messages", [])
 
+        trace_metadata: Dict[str, Any] = {}
+        evidence_audit = evidence_audit_from_result_metadata(result.metadata)
+        if evidence_audit is not None:
+            trace_metadata["evidence"] = evidence_audit
+
         # Build and persist the trace
         trace = Trace(
             query=input,
@@ -88,6 +99,7 @@ class TraceCollector:
             engine=self._current_engine,
             steps=list(self._current_steps),
             result=result.content,
+            metadata=trace_metadata,
             messages=messages,
             started_at=started_at,
             ended_at=ended_at,
@@ -106,6 +118,26 @@ class TraceCollector:
             self._bus.publish(EventType.TRACE_COMPLETE, {"trace": trace})
 
         return result
+
+    def annotate_evidence(
+        self,
+        requirement: EvidenceRequirement,
+        assessment: EvidenceAssessment,
+    ) -> bool:
+        """Attach a final evidence verdict to the most recent trace."""
+        if self._last_trace is None:
+            return False
+
+        self._last_trace.metadata["evidence"] = evidence_audit_metadata(
+            requirement,
+            assessment,
+        )
+        if self._store is not None:
+            return self._store.update_metadata(
+                self._last_trace.trace_id,
+                self._last_trace.metadata,
+            )
+        return True
 
     @property
     def last_trace(self) -> Optional[Trace]:
@@ -235,6 +267,7 @@ def record_response_trace(
     agent: str = "server",
     started_at: float,
     ended_at: float,
+    metadata: Optional[Dict[str, Any]] = None,
 ) -> Optional[Trace]:
     """Persist a minimal single-step ``Trace`` for a non-agent response.
 
@@ -257,6 +290,7 @@ def record_response_trace(
             model=model,
             engine=engine,
             result=result,
+            metadata=dict(metadata or {}),
             started_at=started_at,
             ended_at=ended_at,
             steps=[
