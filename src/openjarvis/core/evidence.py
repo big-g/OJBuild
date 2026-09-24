@@ -187,9 +187,10 @@ def evidence_records_from_tool_result(
             if not isinstance(item, Mapping):
                 continue
 
-            item_content = str(item.get("content", "")).strip()
-            if not item_content:
+            raw_content = item.get("content")
+            if not isinstance(raw_content, str) or not raw_content.strip():
                 continue
+            item_content = raw_content.strip()
 
             item_metadata = item.get("metadata")
             if not isinstance(item_metadata, Mapping):
@@ -215,6 +216,8 @@ def evidence_records_from_tool_result(
     if evidence.get("use_result_content") is not True:
         return []
 
+    if not isinstance(fallback_content, str):
+        return []
     content = fallback_content.strip()
     if not content:
         return []
@@ -292,7 +295,7 @@ def assess_tool_results(
             evidence_records_from_tool_result(
                 tool_name=tool_name,
                 metadata=metadata,
-                fallback_content=str(getattr(tool_result, "content", "")),
+                fallback_content=getattr(tool_result, "content", ""),
             )
         )
         conflicting = (

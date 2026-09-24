@@ -28,6 +28,44 @@ def required_current():
     )
 
 
+@pytest.mark.parametrize("content", [None, 42, False, [], {"answer": "approved"}])
+@pytest.mark.parametrize("use_result_content", [False, True])
+def test_finalizer_rejects_non_text_evidence(content, use_result_content):
+    from types import SimpleNamespace
+
+    from openjarvis.tools._stubs import ToolSpec
+
+    tool = SimpleNamespace(spec=ToolSpec(
+        name="test_evidence", description="test", evidence_kinds=["current"],
+    ))
+    evidence = (
+        {"use_result_content": True}
+        if use_result_content
+        else {"records": [{"content": content}]}
+    )
+    result = SimpleNamespace(
+        content="The launch is approved.",
+        metadata={},
+        tool_results=[SimpleNamespace(
+            tool_name="test_evidence", success=True, content=content,
+            metadata={"evidence": evidence},
+        )],
+    )
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "unused"}'
+    )
+
+    assessment = apply_tool_evidence_to_result(
+        required_current(), [tool], result,
+        query="What is the latest launch status?", engine=engine,
+        model="test-model", validate_conflicts=True, validate_grounding=True,
+    )
+
+    assert assessment.status == EvidenceStatus.REQUIRED_NOT_OBTAINED
+    assert result.content == "I couldn't retrieve the required data."
+    assert engine.calls == []
+
+
 def test_required_evidence_without_records_is_blocked():
     assessment = assess_evidence(required_current())
 
