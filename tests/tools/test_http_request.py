@@ -40,6 +40,10 @@ class TestHttpRequestTool:
         tool = HttpRequestTool()
         assert "network:fetch" in tool.spec.required_capabilities
 
+    def test_spec_declares_current_and_external_evidence(self):
+        tool = HttpRequestTool()
+        assert set(tool.spec.evidence_kinds) == {"current", "external"}
+
     def test_spec_parameters_require_url(self):
         tool = HttpRequestTool()
         assert "url" in tool.spec.parameters["properties"]
@@ -108,6 +112,10 @@ class TestHttpRequestTool:
         assert result.metadata["status_code"] == 200
         assert "application/json" in result.metadata["content_type"]
         assert "elapsed_ms" in result.metadata
+        assert result.metadata["evidence"]["provider"] == "http"
+        assert result.metadata["evidence"]["records"][0]["url"] == (
+            "https://api.example.com/data"
+        )
 
     @respx.mock
     def test_post_with_body(self):
