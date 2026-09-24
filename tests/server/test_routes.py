@@ -792,7 +792,7 @@ class TestChatCompletions:
             json={
                 "model": "test-model",
                 "messages": [
-                    {"role": "user", "content": "Weather in Paris? Use get_weather."}
+                    {"role": "user", "content": "Use get_weather for Paris."}
                 ],
                 "tools": [
                     {
@@ -1810,6 +1810,7 @@ def test_current_request_is_allowed_with_web_evidence(tmp_path):
     from openjarvis.agents.orchestrator import OrchestratorAgent
     from openjarvis.core.types import ToolResult
     from openjarvis.server.auth_store import AuthStore
+    from openjarvis.tools.web_search import WebSearchTool
 
     engine = _make_engine(
         content="Tomorrow's forecast is a high of 82°F."
@@ -1818,7 +1819,7 @@ def test_current_request_is_allowed_with_web_evidence(tmp_path):
     agent = OrchestratorAgent(
         engine,
         "test-model",
-        tools=[],
+        tools=[WebSearchTool(api_key="test-key")],
         bus=EventBus(),
         max_turns=3,
         temperature=0.7,
@@ -1835,8 +1836,20 @@ def test_current_request_is_allowed_with_web_evidence(tmp_path):
                     content="Weather forecast: Tomorrow, high 82°F, low 68°F.",
                     success=True,
                     metadata={
-                        "engine": "test",
-                        "url": "https://example.test/weather",
+                        "evidence": {
+                            "provider": "test-search",
+                            "retrieved_at": "2026-09-24T10:00:00+00:00",
+                            "records": [
+                                {
+                                    "title": "Weather",
+                                    "url": "https://example.test/weather",
+                                    "content": (
+                                        "Weather forecast: Tomorrow, "
+                                        "high 82°F, low 68°F."
+                                    ),
+                                }
+                            ],
+                        }
                     },
                 )
             ],
