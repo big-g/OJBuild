@@ -356,12 +356,17 @@ def evidence_audit_from_result_metadata(
     if not status:
         return None
 
+    try:
+        records = int(metadata.get("evidence_records", 0) or 0)
+    except (TypeError, ValueError):
+        records = 0
+
     return {
         "required": True,
         "kind": str(metadata.get("evidence_kind", "")),
         "status": status,
         "reason": str(metadata.get("evidence_reason", "")),
-        "records": int(metadata.get("evidence_records", 0) or 0),
+        "records": max(records, 0),
     }
 
 
