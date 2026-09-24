@@ -16,7 +16,7 @@ from openjarvis.core.evidence import (
     apply_tool_evidence_to_result,
 )
 from openjarvis.core.events import EventBus, EventType
-from openjarvis.core.types import StepType
+from openjarvis.core.types import StepType, ToolResult
 from openjarvis.traces.collector import TraceCollector
 from openjarvis.traces.store import TraceStore
 
@@ -166,6 +166,59 @@ class _EvidenceToolEventAgent(BaseAgent):
             },
         )
         return AgentResult(content="Launch is Friday.", turns=1)
+
+
+class _GroundingTraceTool:
+    tool_id = "grounding_trace"
+
+    @property
+    def spec(self):
+        from openjarvis.tools._stubs import ToolSpec
+
+        return ToolSpec(
+            name="grounding_trace",
+            description="Grounding trace test tool.",
+            evidence_kinds=["current"],
+        )
+
+
+class _GroundingTraceAgent:
+    agent_id = "grounding_trace_agent"
+
+    def run(self, input, context=None, **kwargs):
+        return AgentResult(
+            content="Tomorrow's high will be 82°F and it will be sunny.",
+            turns=1,
+            tool_results=[
+                ToolResult(
+                    tool_name="grounding_trace",
+                    content="Forecast: tomorrow high 82°F.",
+                    success=True,
+                    metadata={
+                        "evidence": {
+                            "provider": "test",
+                            "records": [
+                                {
+                                    "source": "weather",
+                                    "content": "Forecast: tomorrow high 82°F.",
+                                }
+                            ],
+                        }
+                    },
+                )
+            ],
+        )
+
+
+class _GroundingTraceEngine:
+    def generate(self, messages, *, model, temperature, max_tokens, **kwargs):
+        return {
+            "content": (
+                '{"supported": false, '
+                '"unsupported_claims": ["Sunny conditions are not in evidence."], '
+                '"reason": "The condition is unsupported."}'
+            )
+        }
 
 
 class TestTraceCollector:
@@ -322,6 +375,55 @@ class TestTraceCollector:
             trace_events[0].data["trace"].metadata["evidence"]["status"]
             == "required_not_obtained"
         )
+        store.close()
+
+    def test_trace_records_semantic_grounding_verdict(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        from openjarvis.core.evidence import apply_tool_evidence_to_result
+
+        store = TraceStore(tmp_path / "grounding.db")
+        requirement = EvidenceRequirement(
+            required=True,
+            kind=EvidenceKind.CURRENT,
+            reason="Current data required.",
+        )
+        tool = _GroundingTraceTool()
+
+        def finalize(result: AgentResult) -> AgentResult:
+            apply_tool_evidence_to_result(
+                requirement,
+                [tool],
+                result,
+                query="What's the weather tomorrow?",
+                engine=_GroundingTraceEngine(),
+                model="test-model",
+                validate_grounding=True,
+            )
+            return result
+
+        collector = TraceCollector(
+            _GroundingTraceAgent(),
+            store=store,
+            result_processor=finalize,
+        )
+
+        result = collector.run("What's the weather tomorrow?")
+
+        blocked = "I couldn't verify the response against the retrieved evidence."
+        assert result.content == blocked
+        trace = store.list_traces()[0]
+        assert trace.result == blocked
+        assert trace.metadata["evidence"]["status"] == "obtained"
+        assert trace.metadata["evidence"]["grounding"] == {
+            "status": "unsupported",
+            "reason": "The condition is unsupported.",
+            "method": "llm_judge",
+            "unsupported_claims": [
+                "Sunny conditions are not in evidence."
+            ],
+        }
         store.close()
 
     def test_records_generate_steps(self, tmp_path: Path) -> None:
