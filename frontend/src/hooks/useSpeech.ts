@@ -3,7 +3,11 @@ import { transcribeAudio, fetchSpeechHealth } from '../lib/api';
 
 export type SpeechState = 'idle' | 'recording' | 'transcribing';
 
-const SILENCE_DURATION_MS = 1500;
+// Give the user time to begin speaking after Conversation Mode automatically
+// reopens the microphone. Audio is captured immediately; this grace period
+// only prevents silence detection from ending the turn too early.
+const INITIAL_LISTEN_GRACE_MS = 4000;
+const SILENCE_DURATION_MS = 2200;
 const VOLUME_THRESHOLD = 0.025;
 const CHECK_INTERVAL_MS = 50;
 
@@ -33,6 +37,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
   const silenceStartedRef = useRef<number | null>(null);
   const discardRecordingRef = useRef(false);
   const startingRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
 
   useEffect(() => {
     fetchSpeechHealth()
@@ -82,6 +87,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
 
         silenceStartedRef.current = null;
         speechDetectedRef.current = false;
+        recordingStartedAtRef.current = null;
 
         recorder.onstop = async () => {
           setState(options.discard ? 'idle' : 'transcribing');
@@ -177,6 +183,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
 
       recorder.start();
       mediaRecorderRef.current = recorder;
+      recordingStartedAtRef.current = Date.now();
       setState('recording');
 
       const data = new Uint8Array(analyser.fftSize);
@@ -210,13 +217,27 @@ export function useSpeech(onTranscription?: (text: string) => void) {
           return;
         }
 
+        const now = Date.now();
+        const recordingStartedAt = recordingStartedAtRef.current;
+
+        // Ambient noise can briefly cross the speech threshold as the
+        // microphone opens. Even if that happens, do not arm auto-stop until
+        // the startup grace period has elapsed.
+        if (
+          recordingStartedAt !== null &&
+          now - recordingStartedAt < INITIAL_LISTEN_GRACE_MS
+        ) {
+          silenceStartedRef.current = null;
+          return;
+        }
+
         if (silenceStartedRef.current === null) {
-          silenceStartedRef.current = Date.now();
+          silenceStartedRef.current = now;
           return;
         }
 
         const silenceDuration =
-          Date.now() - silenceStartedRef.current;
+          now - silenceStartedRef.current;
 
         if (silenceDuration >= SILENCE_DURATION_MS) {
           if (silenceTimerRef.current !== null) {
@@ -233,6 +254,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       mediaRecorderRef.current = null;
+      recordingStartedAtRef.current = null;
       setError('Microphone access denied');
       setState('idle');
     } finally {
