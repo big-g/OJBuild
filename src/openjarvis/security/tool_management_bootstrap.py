@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from openjarvis.core.evidence import EvidenceKind
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.security.capabilities import (
     CapabilityResolutionError,
@@ -77,6 +78,26 @@ def _validate_builtin_record(
                 ""
                 if tool_id_valid
                 else f"tool_id '{tool_id}' != ToolSpec.name '{spec_name}'"
+            ),
+        )
+    )
+
+    evidence_values = {
+        str(value)
+        for value in (getattr(tool.spec, "evidence_kinds", []) or [])
+    }
+    allowed_evidence_values = {kind.value for kind in EvidenceKind}
+    invalid_evidence_values = sorted(evidence_values - allowed_evidence_values)
+    checks.append(
+        ValidationCheck(
+            name="evidence_kinds",
+            passed=not invalid_evidence_values,
+            severity="error",
+            message=(
+                ""
+                if not invalid_evidence_values
+                else "Unknown evidence kinds: "
+                + ", ".join(invalid_evidence_values)
             ),
         )
     )
@@ -160,25 +181,49 @@ def sync_managed_tool(
         )
         managed.register(record)
 
+    checks_list: list[ValidationCheck] = []
+
+    evidence_values = {
+        str(value)
+        for value in (getattr(spec, "evidence_kinds", []) or [])
+    }
+    allowed_evidence_values = {kind.value for kind in EvidenceKind}
+    invalid_evidence_values = sorted(evidence_values - allowed_evidence_values)
+    checks_list.append(
+        ValidationCheck(
+            name="evidence_kinds",
+            passed=not invalid_evidence_values,
+            severity="error",
+            message=(
+                ""
+                if not invalid_evidence_values
+                else "Unknown evidence kinds: "
+                + ", ".join(invalid_evidence_values)
+            ),
+        )
+    )
+
     try:
         resolve_declared_tool_capabilities(spec, capability_registry)
     except CapabilityResolutionError as exc:
-        checks = (
+        checks_list.append(
             ValidationCheck(
                 name="capability_resolution",
                 passed=False,
                 severity="error",
                 message=str(exc),
-            ),
+            )
         )
     else:
-        checks = (
+        checks_list.append(
             ValidationCheck(
                 name="capability_resolution",
                 passed=True,
                 severity="error",
-            ),
+            )
         )
+
+    checks = tuple(checks_list)
 
     managed.validate(
         identity,
