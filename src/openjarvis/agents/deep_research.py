@@ -179,6 +179,15 @@ class DeepResearchAgent(ToolUsingAgent):
         system_prompt: Optional[str] = None,
         **kwargs: Any,
     ) -> None:
+        capability_policy = kwargs.pop("capability_policy", None)
+        tool_management_registry = kwargs.pop(
+            "tool_management_registry",
+            None,
+        )
+        skill_few_shot_examples = kwargs.pop(
+            "skill_few_shot_examples",
+            None,
+        )
         super().__init__(
             engine,
             model,
@@ -189,6 +198,9 @@ class DeepResearchAgent(ToolUsingAgent):
             max_tokens=max_tokens,
             interactive=interactive,
             confirm_callback=confirm_callback,
+            capability_policy=capability_policy,
+            tool_management_registry=tool_management_registry,
+            skill_few_shot_examples=skill_few_shot_examples,
         )
 
     @staticmethod
