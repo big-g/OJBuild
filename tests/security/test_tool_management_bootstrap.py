@@ -1,5 +1,3 @@
-import importlib
-
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.security.capability_registry import ResourceStatus
 from openjarvis.security.tool_management_bootstrap import (
@@ -21,11 +19,11 @@ def test_all_static_registry_tools_are_managed():
 
 
 def test_specialized_tool_import_does_not_expand_builtin_inventory():
-    import openjarvis.tools.knowledge_search as knowledge_search
+    import openjarvis.tools.knowledge_search  # noqa: F401
 
     # Simulate the combined-suite condition that originally caused the
-    # bootstrap count to become order-dependent.
-    importlib.reload(knowledge_search)
+    # bootstrap count to become order-dependent: the specialized module is
+    # already imported and cached, then the test/runtime clears ToolRegistry.
     ToolRegistry.clear()
 
     managed = build_builtin_tool_management_registry()
