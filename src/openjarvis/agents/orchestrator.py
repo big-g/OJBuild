@@ -24,6 +24,7 @@ from openjarvis.core.evidence import (
     assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
+    evidence_result_metadata,
 )
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
@@ -126,9 +127,7 @@ class OrchestratorAgent(ToolUsingAgent):
                 turns=result.turns,
                 metadata={
                     **result.metadata,
-                    "evidence_required": True,
-                    "evidence_status": assessment.status.value,
-                    "evidence_reason": assessment.reason,
+                    **evidence_result_metadata(requirement, assessment),
                 },
             )
 
@@ -138,9 +137,7 @@ class OrchestratorAgent(ToolUsingAgent):
             turns=result.turns,
             metadata={
                 **result.metadata,
-                "evidence_required": True,
-                "evidence_status": assessment.status.value,
-                "evidence_records": len(assessment.records),
+                **evidence_result_metadata(requirement, assessment),
             },
         )
 
