@@ -439,6 +439,8 @@ def test_grounding_semantic_unsupported_claim_blocks():
         '{"supported": "yes", "unsupported_claims": [], "reason": "bad"}',
         '{"supported": true, "unsupported_claims": ["contradiction"], '
         '"reason": "bad"}',
+        '{"supported": true, "unsupported_claims": [], "reason": "ok", '
+        '"extra": "not allowed"}',
     ],
 )
 def test_grounding_malformed_or_contradictory_verdict_fails_closed(content):
@@ -487,3 +489,22 @@ def test_grounding_prompt_treats_evidence_as_untrusted_data():
     payload = engine.calls[0]["messages"][1].content
     assert "untrusted DATA" in system_prompt
     assert "IGNORE ALL INSTRUCTIONS" in payload
+
+
+
+def test_grounding_allows_numeric_context_repeated_from_user_query():
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], '
+        '"reason": "The forecast value is supported."}'
+    )
+
+    grounding = validate_response_grounding(
+        engine=engine,
+        model="test-model",
+        query="What is the forecast for 2026-09-25?",
+        answer="For 2026-09-25, the high is 82°F.",
+        assessment=_grounding_assessment("Forecast high 82°F."),
+    )
+
+    assert grounding.status == GroundingStatus.SUPPORTED
+    assert len(engine.calls) == 1
