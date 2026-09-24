@@ -75,6 +75,8 @@ class NativeOpenHandsAgent(ToolUsingAgent):
         max_tokens: Optional[int] = None,
         interactive: bool = False,
         confirm_callback=None,
+        capability_policy: Optional[Any] = None,
+        tool_management_registry: Optional[Any] = None,
     ) -> None:
         super().__init__(
             engine,
@@ -86,6 +88,8 @@ class NativeOpenHandsAgent(ToolUsingAgent):
             max_tokens=max_tokens,
             interactive=interactive,
             confirm_callback=confirm_callback,
+            capability_policy=capability_policy,
+            tool_management_registry=tool_management_registry,
         )
 
     @staticmethod
