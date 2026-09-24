@@ -180,15 +180,30 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         if tools:
             payload["tools"] = tools
 
-        # Apply structured output / JSON mode
+        # Apply structured output / JSON mode. Ollama accepts either
+        # the string "json" or a JSON Schema object in the format field.
         response_format = kwargs.get("response_format")
         if response_format is not None:
             from openjarvis.engine._stubs import ResponseFormat
 
             if isinstance(response_format, ResponseFormat):
-                payload["format"] = "json"
+                if (
+                    response_format.type == "json_schema"
+                    and isinstance(response_format.schema, dict)
+                    and response_format.schema
+                ):
+                    payload["format"] = response_format.schema
+                else:
+                    payload["format"] = "json"
             elif isinstance(response_format, dict):
-                payload["format"] = "json"
+                if (
+                    response_format.get("type") == "json_schema"
+                    and isinstance(response_format.get("schema"), dict)
+                    and response_format.get("schema")
+                ):
+                    payload["format"] = response_format["schema"]
+                else:
+                    payload["format"] = "json"
         try:
             resp = self._client.post("/api/chat", json=payload)
             if resp.status_code == 400 and tools and not kwargs.get("require_tools", False):
