@@ -332,7 +332,6 @@ def blocked_response(assessment: EvidenceAssessment) -> str:
 
 
 _CURRENT_TERMS = (
-    "current",
     "currently",
     "right now",
     "today",
@@ -342,19 +341,32 @@ _CURRENT_TERMS = (
     "latest",
     "recent",
     "recently",
-    "forecast",
-    "weather",
-    "temperature",
-    "price",
-    "stock price",
-    "exchange rate",
-    "news",
     "breaking",
-    "traffic",
-    "score",
-    "schedule",
-    "availability",
     "open now",
+)
+
+_CURRENT_PATTERNS = (
+    r"\b(?:what(?:'s| is)|how is)\s+(?:the\s+)?weather\b",
+    r"\bweather\s+(?:forecast|in|for|near)\b",
+    r"\bforecast\s+(?:for|in|near)\b",
+    r"\b(?:what(?:'s| is)|how hot is|how cold is)\s+"
+    r"(?:the\s+)?temperature\b",
+    r"\btemperature\s+(?:in|at|for|near)\b",
+    r"\b(?:current|stock)\s+price\b",
+    r"\bprice\s+(?:of|for)\b",
+    r"\bhow much (?:is|does)\b",
+    r"\bexchange\s+rate\s+(?:for|between|from|to)\b",
+    r"\b(?:latest|today(?:'s)?)\s+news\b",
+    r"\bnews\s+(?:about|on|from)\b",
+    r"\btraffic\s+(?:in|on|near|around)\b",
+    r"\b(?:what(?:'s| is)|final)\s+(?:the\s+)?score\b",
+    r"\bscore\s+(?:of|for|in)\b",
+    r"\b(?:what(?:'s| is)|show me)\s+(?:the\s+)?schedule\b",
+    r"\bschedule\s+(?:for|of)\b",
+    r"\b(?:is|are)\s+.+?\s+available\b",
+    r"\bavailability\s+(?:for|of|at)\b",
+    r"\bcurrent\s+(?:weather|temperature|price|exchange\s+rate|news|traffic|"
+    r"score|schedule|availability|status|president|prime\s+minister|ceo)\b",
 )
 
 _EXTERNAL_TERMS = (
@@ -386,7 +398,10 @@ def detect_evidence_requirement(text: str) -> EvidenceRequirement:
             for term in terms
         )
 
-    current_match = contains_term(_CURRENT_TERMS)
+    current_match = contains_term(_CURRENT_TERMS) or any(
+        re.search(pattern, normalized) is not None
+        for pattern in _CURRENT_PATTERNS
+    )
     external_match = contains_term(_EXTERNAL_TERMS)
 
     if current_match:
