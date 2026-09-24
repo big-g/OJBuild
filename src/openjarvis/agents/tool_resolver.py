@@ -191,9 +191,9 @@ def ensure_registries_populated() -> None:
         pass
 
     try:
-        import openjarvis.tools  # noqa: F401
+        import openjarvis.tools as builtin_tools
     except Exception:
-        pass
+        builtin_tools = None
 
     if not ChannelRegistry.keys():
         for module_name in list(sys.modules):
@@ -212,16 +212,18 @@ def ensure_registries_populated() -> None:
     # registry non-empty and incorrectly suppress restoration of every other
     # built-in tool.
     if not ToolRegistry.keys():
-        for module_name in list(sys.modules):
-            if (
-                module_name.startswith("openjarvis.tools.")
-                and not module_name.endswith("_stubs")
-                and not module_name.endswith("agent_tools")
-            ):
-                try:
-                    importlib.reload(sys.modules[module_name])
-                except Exception:
-                    pass
+        module_names = tuple(
+            getattr(builtin_tools, "BUILTIN_TOOL_MODULES", ())
+        )
+        for module_name in module_names:
+            try:
+                module = sys.modules.get(module_name)
+                if module is None:
+                    importlib.import_module(module_name)
+                else:
+                    importlib.reload(module)
+            except Exception:
+                pass
 
     browser_modules = (
         "openjarvis.tools.browser",
