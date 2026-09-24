@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
 from openjarvis.core.evidence import (
@@ -42,10 +42,14 @@ class TraceCollector:
         *,
         store: Optional[TraceStore] = None,
         bus: Optional[EventBus] = None,
+        result_processor: Optional[
+            Callable[[AgentResult], AgentResult]
+        ] = None,
     ) -> None:
         self._agent = agent
         self._store = store
         self._bus = bus
+        self._result_processor = result_processor
         self._current_steps: list[TraceStep] = []
         self._current_model: str = ""
         self._current_engine: str = ""
@@ -70,6 +74,9 @@ class TraceCollector:
             result = self._agent.run(input, context=context, **kwargs)
         finally:
             self._unsubscribe(unsubs)
+
+        if self._result_processor is not None:
+            result = self._result_processor(result)
 
         ended_at = time.time()
 
