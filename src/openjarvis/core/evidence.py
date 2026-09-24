@@ -382,9 +382,15 @@ Return JSON only, matching the requested schema."""
 
 
 def _normalized_numeric_anchors(text: str) -> set[str]:
-    """Extract hard numeric anchors while ignoring list/citation numbering."""
+    """Extract hard numeric anchors while ignoring structural/date numbers."""
     scrubbed = re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
     scrubbed = re.sub(r"\[(?:\d+|\d+(?:\s*,\s*\d+)+)\]", "", scrubbed)
+
+    # Dates have their own grounding anchor semantics. Remove complete date
+    # spans here so day/year components are not misclassified as unrelated
+    # numeric claims before the date-specific validation runs.
+    scrubbed = _DATE_ANCHOR_RE.sub("", scrubbed)
+
     anchors: set[str] = set()
     for match in re.finditer(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", scrubbed):
         value = match.group(0).replace(",", "")
