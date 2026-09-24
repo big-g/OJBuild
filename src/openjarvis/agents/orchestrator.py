@@ -21,13 +21,9 @@ from typing import Any, Callable, List, Optional
 from openjarvis.agents._stubs import AgentContext, AgentResult, ToolUsingAgent
 from openjarvis.core.events import EventBus
 from openjarvis.core.evidence import (
-    EvidenceRecord,
-    assess_evidence,
+    assess_tool_results,
     blocked_response,
     detect_evidence_requirement,
-    evidence_conflict_from_tool_result,
-    evidence_records_from_tool_result,
-    tool_supports_evidence,
 )
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
@@ -117,41 +113,10 @@ class OrchestratorAgent(ToolUsingAgent):
         if not requirement.required:
             return result
 
-        evidence_records: list[EvidenceRecord] = []
-        conflicting = False
-        tool_specs = {
-            tool.spec.name: tool.spec
-            for tool in self._tools
-        }
-
-        for tool_result in result.tool_results:
-            if not tool_result.success:
-                continue
-
-            tool_spec = tool_specs.get(tool_result.tool_name)
-            if tool_spec is None or not tool_supports_evidence(
-                tool_spec,
-                requirement,
-            ):
-                continue
-
-            metadata = tool_result.metadata or {}
-            evidence_records.extend(
-                evidence_records_from_tool_result(
-                    tool_name=tool_result.tool_name,
-                    metadata=metadata,
-                    fallback_content=tool_result.content,
-                )
-            )
-            conflicting = (
-                conflicting
-                or evidence_conflict_from_tool_result(metadata)
-            )
-
-        assessment = assess_evidence(
+        assessment = assess_tool_results(
             requirement,
-            evidence_records,
-            conflicting=conflicting,
+            self._tools,
+            result.tool_results,
         )
 
         if assessment.blocked:
@@ -175,7 +140,7 @@ class OrchestratorAgent(ToolUsingAgent):
                 **result.metadata,
                 "evidence_required": True,
                 "evidence_status": assessment.status.value,
-                "evidence_records": len(evidence_records),
+                "evidence_records": len(assessment.records),
             },
         )
 
