@@ -340,6 +340,52 @@ def test_result_content_fallback_remains_available_without_explicit_records():
     assert records[0].content == "The launch is approved."
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("title", [60000, [60000], {"price": 60000}])
+def test_non_text_title_cannot_ground_numeric_claim(title, fallback):
+    fields = {"title": title, "content": "The market report is available."}
+    evidence = (
+        {**fields, "use_result_content": True}
+        if fallback else {"records": [fields]}
+    )
+    records = evidence_records_from_tool_result(
+        tool_name="test_evidence", metadata={"evidence": evidence},
+        fallback_content=fields["content"],
+    )
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "unused"}'
+    )
+    grounding = validate_response_grounding(
+        engine=engine, model="test-model", query="What is the price?",
+        answer="The price is 60000.",
+        assessment=assess_evidence(required_current(), records),
+    )
+
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "numeric_anchor"
+    assert engine.calls == []
+
+
+@pytest.mark.parametrize("fallback", [False, True])
+def test_null_provenance_fields_remain_empty(fallback):
+    fields = dict.fromkeys(["source", "title", "url", "source_id", "retrieved_at"])
+    evidence = (
+        {**fields, "use_result_content": True}
+        if fallback else {"records": [{**fields, "content": "Valid text."}]}
+    )
+    records = evidence_records_from_tool_result(
+        tool_name="test_evidence", metadata={"evidence": evidence},
+        fallback_content="Valid text.",
+    )
+
+    assert len(records) == 1
+    assert records[0].source == "test_evidence"
+    assert records[0].source_id == ""
+    assert records[0].url == ""
+    assert records[0].title == ""
+    assert records[0].retrieved_at == ""
+
+
 def test_tool_spec_must_declare_matching_evidence_kind():
     class _Spec:
         evidence_kinds = ["external"]

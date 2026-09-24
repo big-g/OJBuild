@@ -161,6 +161,11 @@ def tool_supports_evidence(
     return requirement.kind.value in values
 
 
+def _evidence_text_field(value: Any) -> str:
+    """Keep textual evidence labels without inventing text from other types."""
+    return value.strip() if isinstance(value, str) else ""
+
+
 def evidence_records_from_tool_result(
     *,
     tool_name: str,
@@ -176,8 +181,8 @@ def evidence_records_from_tool_result(
     if not isinstance(evidence, Mapping):
         return []
 
-    provider = str(evidence.get("provider", "") or tool_name).strip()
-    retrieved_at = str(evidence.get("retrieved_at", ""))
+    provider = _evidence_text_field(evidence.get("provider")) or tool_name
+    retrieved_at = _evidence_text_field(evidence.get("retrieved_at"))
     provenance_results = evidence.get("records")
 
     # Explicit records take precedence over the opt-in content fallback.
@@ -203,12 +208,14 @@ def evidence_records_from_tool_result(
 
             records.append(
                 EvidenceRecord(
-                    source=str(item.get("source", "") or provider or tool_name),
+                    source=_evidence_text_field(item.get("source")) or provider,
                     content=item_content,
-                    title=str(item.get("title", "")),
-                    url=str(item.get("url", "")),
-                    source_id=str(item.get("source_id", "")),
-                    retrieved_at=str(item.get("retrieved_at", "") or retrieved_at),
+                    title=_evidence_text_field(item.get("title")),
+                    url=_evidence_text_field(item.get("url")),
+                    source_id=_evidence_text_field(item.get("source_id")),
+                    retrieved_at=(
+                        _evidence_text_field(item.get("retrieved_at")) or retrieved_at
+                    ),
                     metadata={
                         "provider": provider,
                         **dict(item_metadata),
@@ -229,11 +236,11 @@ def evidence_records_from_tool_result(
 
     return [
         EvidenceRecord(
-            source=str(evidence.get("source", "") or provider or tool_name),
+            source=_evidence_text_field(evidence.get("source")) or provider,
             content=content,
-            title=str(evidence.get("title", "")),
-            url=str(evidence.get("url", "")),
-            source_id=str(evidence.get("source_id", "")),
+            title=_evidence_text_field(evidence.get("title")),
+            url=_evidence_text_field(evidence.get("url")),
+            source_id=_evidence_text_field(evidence.get("source_id")),
             retrieved_at=retrieved_at,
             metadata={
                 key: value
