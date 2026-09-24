@@ -406,16 +406,20 @@ _CONFLICT_SCHEMA: dict[str, Any] = {
         "conflicting": {"type": "boolean"},
         "conflicts": {
             "type": "array",
+            "maxItems": 10,
             "items": {
                 "type": "object",
                 "properties": {
                     "claim": {"type": "string"},
                     "source_ids": {
                         "type": "array",
+                        "minItems": 2,
+                        "uniqueItems": True,
                         "items": {"type": "string"},
                     },
                     "values": {
                         "type": "array",
+                        "minItems": 2,
                         "items": {"type": "string"},
                     },
                 },
@@ -445,9 +449,15 @@ fact another source includes. A conflict requires incompatible claims about the
 same material fact, relationship, status, date, quantity, identity, ranking, or
 outcome.
 
-When conflicting=true, include one or more concrete conflicts. Every conflict
-must name at least two supplied source_ids and summarize the incompatible
-values. Return JSON only, matching the requested schema."""
+When conflicting=true, include one to ten concrete conflicts. Every conflict
+must name at least two distinct supplied source_ids (such as E1 and E2).
+Provide exactly one value per source_id, in the same order. Each value must be
+a short, contiguous excerpt copied from that source's title or content; do not
+paraphrase it or take it from a URL, record_id, or other provenance field.
+Choose excerpts that express the incompatible claims and are not identical
+after ignoring case and whitespace. Summarize the disagreement in claim.
+When conflicting=false, return an empty conflicts array.
+Return JSON only, matching the requested schema."""
 
 
 _GROUNDING_SCHEMA: dict[str, Any] = {
@@ -981,6 +991,7 @@ def validate_evidence_conflicts(
             or not isinstance(source_ids, list)
             or not all(isinstance(source_id, str) for source_id in source_ids)
             or len(set(source_ids)) < 2
+            or len(set(source_ids)) != len(source_ids)
             or not set(source_ids).issubset(source_map)
             or not isinstance(values, list)
             or len(values) != len(source_ids)

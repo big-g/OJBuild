@@ -646,6 +646,27 @@ def test_consistent_independent_sources_pass_conflict_validation():
     assert len(engine.calls) == 1
 
 
+def test_conflict_validator_rejects_repeated_source_ids():
+    engine = _GroundingEngine(
+        '{"conflicting": true, "conflicts": ['
+        '{"claim": "Launch status", "source_ids": ["E1", "E1", "E2"], '
+        '"values": ["approved", "canceled", "approved"]}], '
+        '"reason": "The sources disagree."}'
+    )
+    conflict = validate_evidence_conflicts(
+        engine=engine,
+        model="test-model",
+        query="What is the launch status?",
+        records=_conflict_records(
+            "The launch was approved before it was canceled.",
+            "The launch was approved.",
+        ),
+    )
+
+    assert conflict.status == ConflictStatus.VALIDATION_FAILED
+    assert conflict.blocked
+
+
 def test_same_web_domain_is_not_treated_as_independent_sources():
     engine = _GroundingEngine(
         '{"conflicting": true, "conflicts": [], "reason": "should not run"}'
