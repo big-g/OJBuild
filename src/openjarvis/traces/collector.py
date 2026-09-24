@@ -123,6 +123,8 @@ class TraceCollector:
         self,
         requirement: EvidenceRequirement,
         assessment: EvidenceAssessment,
+        *,
+        final_content: Optional[str] = None,
     ) -> bool:
         """Attach a final evidence verdict to the most recent trace."""
         if self._last_trace is None:
@@ -132,7 +134,21 @@ class TraceCollector:
             requirement,
             assessment,
         )
+
+        if final_content is not None:
+            self._last_trace.result = final_content
+            for step in reversed(self._last_trace.steps):
+                if step.step_type == StepType.RESPOND:
+                    step.output["content"] = final_content
+                    break
+
         if self._store is not None:
+            if final_content is not None:
+                return self._store.update_final_response(
+                    self._last_trace.trace_id,
+                    final_content,
+                    self._last_trace.metadata,
+                )
             return self._store.update_metadata(
                 self._last_trace.trace_id,
                 self._last_trace.metadata,
