@@ -110,6 +110,7 @@ export function InputArea() {
   const modelLoading = useAppStore((s) => s.modelLoading);
   const deepResearch = useAppStore((s) => s.deepResearch);
   const setDeepResearch = useAppStore((s) => s.setDeepResearch);
+  const updateSettings = useAppStore((s) => s.updateSettings);
   const corpusSync = useResearchCorpusSync(deepResearch);
   const isCurrentChatStreaming = streamState.isStreaming && streamState.conversationId === activeId;
 
@@ -760,6 +761,34 @@ const sendMessage = useCallback(async (messageText?: string) => {
     <div className="px-4 pb-4 pt-2" style={{ maxWidth: 'var(--chat-max-width)', margin: '0 auto', width: '100%' }}>
       <div className="mb-2 flex flex-col gap-1">
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              updateSettings({ conversationMode: !conversationMode })
+            }
+            aria-pressed={conversationMode}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs transition-colors cursor-pointer"
+            style={{
+              background: conversationMode
+                ? 'var(--color-accent-subtle)'
+                : 'transparent',
+              border: `1px solid ${
+                conversationMode
+                  ? 'var(--color-accent)'
+                  : 'var(--color-border)'
+              }`,
+              color: conversationMode
+                ? 'var(--color-accent)'
+                : 'var(--color-text-tertiary)',
+            }}
+            title={
+              conversationMode
+                ? 'Conversation Mode: on'
+                : 'Conversation Mode: off'
+            }
+          >
+            Conversation
+          </button>
           <button
             type="button"
             onClick={() => setDeepResearch(!deepResearch)}
