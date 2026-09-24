@@ -128,10 +128,12 @@ class ToolSpec:
     timeout_seconds: float = 30.0
     # [] = not declared/not migrated; ["none"] = explicitly capability-free.
     required_capabilities: List[str] = field(default_factory=list)
+    metadata: Dict[str, Any] = field(default_factory=dict)
     # Evidence kinds this tool can produce when ToolResult.metadata carries the
     # standardized evidence contract. Values are EvidenceKind string values.
+    # Kept after all pre-existing fields so positional ToolSpec callers retain
+    # their historical argument meaning.
     evidence_kinds: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
