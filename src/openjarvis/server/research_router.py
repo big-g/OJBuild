@@ -382,6 +382,7 @@ async def _stream_research(
     active_engine_key: str = "",
     active_model: str = "",
     request_model: str = "",
+    active_agent: Any = None,
 ) -> AsyncGenerator[str, None]:
     """Drive ResearchAgent on a worker thread; yield SSE frames as they land.
 
@@ -421,12 +422,17 @@ async def _stream_research(
             )
             embedder = None
 
+        web_tool_spec, execute_web = _research_web_access(active_agent)
+        logger.info("research: governed web_search available=%s", web_tool_spec is not None)
         agent = ResearchAgent(
             engine=engine,
             search=HybridSearch(store, embedder),
             model=model,
             clarify_handler=lambda question: _WEB_CLARIFY_RESPONSE,
             on_event=on_event,
+            web_tool_spec=web_tool_spec,
+            execute_web=execute_web,
+            validate_evidence=True,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("research: setup failed before agent could run: %s", exc)
@@ -503,6 +509,7 @@ async def _stream_research(
     final_answer: Optional[str] = None
     final_usage: Dict[str, int] = {}
     final_sources: List[Dict[str, Any]] = []
+    final_evidence: Dict[str, Any] = {}
     try:
         while True:
             event = await queue.get()
@@ -524,6 +531,7 @@ async def _stream_research(
             if etype == "final_answer":
                 final_answer = event.get("text", "")
                 final_sources = list(event.get("sources") or [])
+                final_evidence = dict(event.get("evidence") or {})
                 for piece in _chunk_synthesis(final_answer or ""):
                     yield _sse({"type": "synthesis", "text": piece})
                 if final_sources:
@@ -536,7 +544,8 @@ async def _stream_research(
         # client still gets the error frame (emitted above) followed by done.
         # The done frame also carries the deduped sources so a client that
         # only listens for ``done`` still gets the canonical citation list.
-        yield _sse({"type": "done", "usage": final_usage, "sources": final_sources})
+        yield _sse({"type": "done", "usage": final_usage, "sources": final_sources,
+                    "evidence": final_evidence})
     except Exception as exc:  # noqa: BLE001
         # Consumer loop crashed unexpectedly (e.g. JSON serialization fault,
         # logic bug). Surface a clean error frame rather than letting the
@@ -566,6 +575,27 @@ async def _stream_research(
 # ---------------------------------------------------------------------------
 
 
+def _research_web_access(active_agent: Any):
+    """Reuse the active agent's tool policy, approval checks, and executor."""
+    executor = getattr(active_agent, "_executor", None)
+    if executor is None:
+        return None, None
+    for tool in getattr(active_agent, "_tools", ()):
+        if tool.spec.name != "web_search":
+            continue
+
+        def execute(call):
+            guard = getattr(active_agent, "_check_tool_allowed", None)
+            if guard is not None:
+                denied = guard(call)
+                if denied is not None:
+                    return denied
+            return executor.execute(call)
+
+        return tool.to_openai_function(), execute
+    return None, None
+
+
 @router.post("/research")
 async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
     """Run a research query and stream the agent's trace + synthesis via SSE.
@@ -587,6 +617,7 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
             active_engine_key=active_engine_key,
             active_model=active_model,
             request_model=req.model or "",
+            active_agent=getattr(request.app.state, "agent", None),
         ),
         media_type="text/event-stream",
         headers={
