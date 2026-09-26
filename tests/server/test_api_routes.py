@@ -308,12 +308,31 @@ class TestSessionRoutes:
         assert imported.status_code == 200
         assert imported.json() == {"imported": 1}
 
+        duplicate_import = client.put(
+            f"/v1/sessions/{session['session_id']}/messages",
+            headers={"X-OpenJarvis-Session": owner_token},
+            json={"messages": []},
+        )
+        assert duplicate_import.status_code == 409
+
+        metadata_update = client.patch(
+            f"/v1/sessions/{session['session_id']}/messages/metadata",
+            headers={"X-OpenJarvis-Session": owner_token},
+            json={
+                "content": "A preserved answer",
+                "metadata": {"toolCalls": [{"tool": "web_search"}]},
+            },
+        )
+        assert metadata_update.status_code == 200
+        assert metadata_update.json() == {"updated": True}
+
         detail = client.get(
             f"/v1/sessions/{session['session_id']}",
             headers={"X-OpenJarvis-Session": owner_token},
         )
         assert detail.json()["messages"][0]["metadata"] == {
-            "researchSources": [{"ref": 1}]
+            "researchSources": [{"ref": 1}],
+            "toolCalls": [{"tool": "web_search"}],
         }
         assert detail.json()["metadata"]["local_history_imported"] is True
 
@@ -323,6 +342,16 @@ class TestSessionRoutes:
             json={"messages": []},
         )
         assert denied_import.status_code == 404
+
+        denied_metadata = client.patch(
+            f"/v1/sessions/{session['session_id']}/messages/metadata",
+            headers={"X-OpenJarvis-Session": other_token},
+            json={
+                "content": "A preserved answer",
+                "metadata": {"usage": {"total_tokens": 1}},
+            },
+        )
+        assert denied_metadata.status_code == 404
 
         denied = client.delete(
             f"/v1/sessions/{session['session_id']}",

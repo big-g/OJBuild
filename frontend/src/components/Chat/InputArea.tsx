@@ -3,7 +3,11 @@ import { Send, Square, Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
-import { fetchSavings, apiFetch } from '../../lib/api';
+import {
+  fetchSavings,
+  apiFetch,
+  updateSessionMessageMetadata,
+} from '../../lib/api';
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
 import {
@@ -103,6 +107,7 @@ export function InputArea() {
   const temperature = useAppStore((s) => s.settings.temperature);
   const createConversation = useAppStore((s) => s.createConversation);
   const createServerConversation = useAppStore((s) => s.createServerConversation);
+  const ensureServerConversation = useAppStore((s) => s.ensureServerConversation);
   const addMessage = useAppStore((s) => s.addMessage);
   const updateLastAssistant = useAppStore((s) => s.updateLastAssistant);
   const setStreamState = useAppStore((s) => s.setStreamState);
@@ -304,7 +309,23 @@ const sendMessage = useCallback(async (messageText?: string) => {
       .getState()
       .conversations.find((c) => c.id === convId);
 
-    const sessionId = conversation?.sessionId;
+    let sessionId = conversation?.sessionId;
+    if (!sessionId) {
+      try {
+        sessionId = await ensureServerConversation(convId);
+      } catch (error) {
+        setInput(content);
+        const message = `Could not save this conversation to the server: ${String(error)}`;
+        toast.error(message, { duration: 8000 });
+        useAppStore.getState().addLogEntry({
+          timestamp: Date.now(),
+          level: 'error',
+          category: 'chat',
+          message,
+        });
+        return;
+      }
+    }
 
     const userMsg: ChatMessage = {
       id: generateId(),
@@ -402,6 +423,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
           content,
           selectedModel,
           controller.signal,
+          sessionId,
         )) {
           if (ev.type === 'search_call') {
             const trace: ResearchSearchTrace = {
@@ -471,6 +493,22 @@ const sendMessage = useCallback(async (messageText?: string) => {
               );
               lastFlush = now;
             }
+          } else if (ev.type === 'final_sources') {
+            for (const source of ev.sources ?? []) {
+              if (source && !researchSourcesByRef.has(source.ref)) {
+                researchSourcesByRef.set(source.ref, source);
+              }
+            }
+            updateLastAssistant(
+              convId,
+              accumulatedContent,
+              undefined,
+              undefined,
+              undefined,
+              undefined,
+              [...researchTraces],
+              flushSources(),
+            );
           } else if (ev.type === 'system_metrics') {
             // Live GPU sample — feed straight to the System panel so Power
             // (W) and Energy (kJ) tick up in real time as the agent runs.
@@ -673,6 +711,32 @@ const sendMessage = useCallback(async (messageText?: string) => {
         researchTraces.length > 0 ? researchTraces : undefined,
         researchSourcesByRef.size > 0 ? flushSources() : undefined,
       );
+
+      if (sessionId && accumulatedContent) {
+        const metadata: Record<string, unknown> = {
+          local_message_id: assistantMsg.id,
+          isResearch: deepResearch,
+        };
+        if (toolCalls.length > 0) metadata.toolCalls = toolCalls;
+        if (usage) metadata.usage = usage;
+        if (telemetry) metadata.telemetry = telemetry;
+        if (researchTraces.length > 0) metadata.researchTraces = researchTraces;
+        if (researchSourcesByRef.size > 0) {
+          metadata.researchSources = flushSources();
+        }
+        void updateSessionMessageMetadata(
+          sessionId,
+          accumulatedContent,
+          metadata,
+        ).catch((error) => {
+          useAppStore.getState().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warn',
+            category: 'chat',
+            message: `Could not sync conversation details: ${String(error)}`,
+          });
+        });
+      }
       
       if (
         conversationModeRef.current &&
@@ -709,6 +773,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
     selectedModel,
     streamState.isStreaming,
     createConversation,
+    ensureServerConversation,
     addMessage,
     updateLastAssistant,
     setStreamState,

@@ -27,7 +27,7 @@ import threading
 import time
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,7 @@ from openjarvis.core.config import DEFAULT_CONFIG_DIR, JarvisConfig, load_config
 from openjarvis.core.types import TelemetryRecord
 from openjarvis.engine._base import InferenceEngine
 from openjarvis.engine._discovery import get_engine
+from openjarvis.server.auth import get_authenticated_user_id
 from openjarvis.telemetry.store import TelemetryStore
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,9 @@ class ResearchRequest(BaseModel):
     model: Optional[str] = Field(
         default=None, description="Preferred planner model for this request."
     )
+    session_id: Optional[str] = Field(
+        default=None, description="Persistent conversation session to append to."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +427,9 @@ async def _stream_research(
             embedder = None
 
         web_tool_spec, execute_web = _research_web_access(active_agent)
-        logger.info("research: governed web_search available=%s", web_tool_spec is not None)
+        logger.info(
+            "research: governed web_search available=%s", web_tool_spec is not None
+        )
         agent = ResearchAgent(
             engine=engine,
             search=HybridSearch(store, embedder),
@@ -544,8 +550,14 @@ async def _stream_research(
         # client still gets the error frame (emitted above) followed by done.
         # The done frame also carries the deduped sources so a client that
         # only listens for ``done`` still gets the canonical citation list.
-        yield _sse({"type": "done", "usage": final_usage, "sources": final_sources,
-                    "evidence": final_evidence})
+        yield _sse(
+            {
+                "type": "done",
+                "usage": final_usage,
+                "sources": final_sources,
+                "evidence": final_evidence,
+            }
+        )
     except Exception as exc:  # noqa: BLE001
         # Consumer loop crashed unexpectedly (e.g. JSON serialization fault,
         # logic bug). Surface a clean error frame rather than letting the
@@ -605,20 +617,74 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
     terminates the stream so clients can detect end-of-response without
     parsing the underlying ``[DONE]`` sentinel used by OpenAI-style routes.
     """
+    session_store = None
+    user_id = ""
+    if req.session_id:
+        user_id = get_authenticated_user_id(request)
+        session_store = getattr(request.app.state, "session_store", None)
+        if session_store is None:
+            from openjarvis.sessions.session import SessionStore
+
+            session_store = SessionStore()
+            request.app.state.session_store = session_store
+
+        session = session_store.get_session(req.session_id)
+        if session is None or session.identity is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.identity.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        try:
+            session_store.save_message(
+                req.session_id,
+                "user",
+                req.query,
+                channel="web",
+            )
+        except Exception as exc:
+            logger.exception("research: failed to persist query in session")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to persist research conversation",
+            ) from exc
+
     active_engine = getattr(request.app.state, "engine", None)
     active_model = str(getattr(request.app.state, "model", "") or "")
     active_engine_key = str(getattr(request.app.state, "engine_name", "") or "")
     if active_engine is not None and not active_engine_key:
         active_engine_key = str(getattr(active_engine, "engine_id", "") or "")
+
+    research_stream = _stream_research(
+        req.query,
+        active_engine=active_engine,
+        active_engine_key=active_engine_key,
+        active_model=active_model,
+        request_model=req.model or "",
+        active_agent=getattr(request.app.state, "agent", None),
+    )
+
+    async def stream():
+        answer_parts: list[str] = []
+        async for frame in research_stream:
+            if session_store is not None and req.session_id:
+                try:
+                    raw = frame.removeprefix("data: ").strip()
+                    event = json.loads(raw)
+                    if event.get("type") == "synthesis":
+                        answer_parts.append(str(event.get("text", "")))
+                    elif event.get("type") == "done" and answer_parts:
+                        session_store.save_message(
+                            req.session_id,
+                            "assistant",
+                            "".join(answer_parts),
+                            channel="web",
+                            metadata={"isResearch": True},
+                        )
+                except Exception:
+                    logger.exception("research: failed to persist session answer")
+            yield frame
+
     return StreamingResponse(
-        _stream_research(
-            req.query,
-            active_engine=active_engine,
-            active_engine_key=active_engine_key,
-            active_model=active_model,
-            request_model=req.model or "",
-            active_agent=getattr(request.app.state, "agent", None),
-        ),
+        stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

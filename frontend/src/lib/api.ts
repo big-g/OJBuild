@@ -302,6 +302,23 @@ export async function importSessionMessages(
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
+export async function updateSessionMessageMetadata(
+  sessionId: string,
+  content: string,
+  metadata: Record<string, unknown>,
+): Promise<void> {
+  const res = await apiFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/messages/metadata`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: 'assistant', content, metadata }),
+    },
+  );
+
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+}
+
 // ---------------------------------------------------------------------------
 // Setup status (desktop only)
 // ---------------------------------------------------------------------------

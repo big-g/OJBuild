@@ -217,6 +217,70 @@ def test_browser_stream_wires_web_and_emits_only_validated_answer(monkeypatch, u
     )
 
 
+def test_research_route_persists_session_exchange(monkeypatch, tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from openjarvis.server import research_router
+    from openjarvis.server.auth_store import AuthStore
+    from openjarvis.sessions.session import SessionStore
+
+    app = FastAPI()
+    app.include_router(research_router.router)
+    auth_store = AuthStore(tmp_path / "auth.db")
+    auth_store.create_user(
+        user_id="research-user",
+        username="research-user",
+        password="test-password",
+    )
+    auth_store.create_user(
+        user_id="other-user",
+        username="other-user",
+        password="test-password",
+    )
+    token = auth_store.create_session("research-user")
+    other_token = auth_store.create_session("other-user")
+    session_store = SessionStore(db_path=tmp_path / "sessions.db")
+    project = session_store.create_project("research-user", "Default")
+    session = session_store.create_session(
+        "research-user",
+        project.project_id,
+        title="Research",
+    )
+    app.state.auth_store = auth_store
+    app.state.session_store = session_store
+
+    async def fake_stream(query, **kwargs):
+        yield 'data: {"type":"synthesis","text":"Verified "}\n\n'
+        yield 'data: {"type":"synthesis","text":"answer."}\n\n'
+        yield 'data: {"type":"done","sources":[]}\n\n'
+
+    monkeypatch.setattr(research_router, "_stream_research", fake_stream)
+    client = TestClient(app)
+    denied = client.post(
+        "/api/research",
+        headers={"X-OpenJarvis-Session": other_token},
+        json={"query": "Check this claim", "session_id": session.session_id},
+    )
+    assert denied.status_code == 404
+
+    response = client.post(
+        "/api/research",
+        headers={"X-OpenJarvis-Session": token},
+        json={"query": "Check this claim", "session_id": session.session_id},
+    )
+
+    assert response.status_code == 200
+    saved = session_store.get_session(session.session_id)
+    assert saved is not None
+    assert [(message.role, message.content) for message in saved.messages] == [
+        ("user", "Check this claim"),
+        ("assistant", "Verified answer."),
+    ]
+    assert saved.messages[1].metadata == {"isResearch": True}
+    session_store.close()
+
+
 def test_research_retries_premature_answer_before_emitting_it():
     active, tool = runtime()
     result, engine, events = research(active, [

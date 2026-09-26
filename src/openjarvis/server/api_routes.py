@@ -93,6 +93,12 @@ class ImportSessionMessagesRequest(BaseModel):
     messages: List[ImportedSessionMessage] = Field(max_length=5000)
 
 
+class UpdateSessionMessageMetadataRequest(BaseModel):
+    role: Literal["assistant"] = "assistant"
+    content: str = Field(max_length=1_000_000)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 # ---- Agent routes ----
 
 agents_router = APIRouter(prefix="/v1/agents", tags=["agents"])
@@ -838,6 +844,11 @@ async def import_session_messages(
                 status_code=409,
                 detail="Only local-migration sessions accept history imports",
             )
+        if session.metadata.get("local_history_imported"):
+            raise HTTPException(
+                status_code=409,
+                detail="Session history is already imported",
+            )
 
         imported = store.replace_messages(
             session_id,
@@ -850,6 +861,35 @@ async def import_session_messages(
         raise
     except Exception as exc:
         logger.exception("Failed to import messages for session %s", session_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@sessions_router.patch("/{session_id}/messages/metadata")
+async def update_session_message_metadata(
+    session_id: str,
+    req: UpdateSessionMessageMetadataRequest,
+    request: Request,
+):
+    """Attach client-rendered tool, research, and telemetry data."""
+    try:
+        store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
+        session = store.get_session(session_id)
+        if session is None or session.identity is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.identity.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        updated = store.update_latest_message_metadata(
+            session_id,
+            req.role,
+            req.content,
+            req.metadata,
+        )
+        return {"updated": updated}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to update message metadata for %s", session_id)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

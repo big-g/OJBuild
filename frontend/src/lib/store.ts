@@ -288,6 +288,7 @@ interface AppState {
   importOverlayConversation: () => Promise<void>;
   createConversation: (model?: string) => string;
   createServerConversation: (model?: string) => Promise<string>;
+  ensureServerConversation: (conversationId: string) => Promise<string>;
   selectConversation: (id: string) => void;
   deleteConversation: (id: string) => void;
   loadMessages: (conversationId: string | null) => void;
@@ -640,6 +641,50 @@ createServerConversation: async (model?: string) => {
       });
 
       return conv.id;
+    },
+
+    ensureServerConversation: async (conversationId: string) => {
+      const store = loadConversations();
+      const conversation = store.conversations[conversationId];
+      if (!conversation) throw new Error('Conversation not found');
+      if (conversation.sessionId) return conversation.sessionId;
+
+      const projects = await fetchProjects();
+      const project = projects[0] ?? (await createProject({ name: 'Default' }));
+      const session = await createSession({
+        project_id: project.project_id,
+        title: conversation.title || 'New chat',
+        channel: 'local-migration',
+        metadata: {
+          migrated_from_local: true,
+          local_conversation_id: conversation.id,
+          local_created_at: conversation.createdAt,
+          model: conversation.model,
+        },
+      });
+
+      try {
+        await importSessionMessages(
+          session.session_id,
+          conversation.messages.map(exportSessionMessage),
+        );
+      } catch (error) {
+        await deleteSession(session.session_id).catch(() => {});
+        throw error;
+      }
+
+      const updatedStore = loadConversations();
+      const updated = updatedStore.conversations[conversationId];
+      if (updated) {
+        updated.sessionId = session.session_id;
+        saveConversations(updatedStore);
+        set({
+          conversations: Object.values(updatedStore.conversations).sort(
+            (a, b) => b.updatedAt - a.updatedAt,
+          ),
+        });
+      }
+      return session.session_id;
     },
 
     createConversation: (model?: string) => {

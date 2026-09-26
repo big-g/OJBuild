@@ -419,6 +419,32 @@ class SessionStore:
             )
         return True
 
+    def update_latest_message_metadata(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        """Merge metadata into the latest matching message in a session."""
+        row = self._conn.execute(
+            "SELECT id, metadata FROM session_messages "
+            "WHERE session_id = ? AND role = ? AND content = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (session_id, role, content),
+        ).fetchone()
+        if row is None:
+            return False
+
+        merged = json.loads(row[1]) if row[1] else {}
+        merged.update(metadata)
+        self._conn.execute(
+            "UPDATE session_messages SET metadata = ? WHERE id = ?",
+            (json.dumps(merged), row[0]),
+        )
+        self._conn.commit()
+        return True
+
     def list_project_sessions(
         self,
         project_id: str,

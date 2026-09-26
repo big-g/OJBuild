@@ -100,6 +100,7 @@ export type ResearchEvent =
       sources?: ResearchSource[];
     }
   | { type: 'synthesis'; text: string }
+  | { type: 'final_sources'; sources: ResearchSource[] }
   | {
       type: 'system_metrics';
       power_w: number;

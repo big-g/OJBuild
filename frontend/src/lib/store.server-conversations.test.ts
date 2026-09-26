@@ -309,4 +309,33 @@ describe('server conversation continuity', () => {
       'pending-session',
     );
   });
+
+  it('creates a server session for an active local chat before its first send', async () => {
+    api.fetchProjects.mockResolvedValue([
+      { project_id: 'project-1', name: 'Default' },
+    ]);
+    api.createSession.mockResolvedValue({
+      session_id: 'new-server-session',
+      title: 'New chat',
+    });
+    api.importSessionMessages.mockResolvedValue(undefined);
+
+    const { useAppStore } = await import('./store');
+    const conversationId = useAppStore.getState().createConversation('test-model');
+    const sessionId = await useAppStore
+      .getState()
+      .ensureServerConversation(conversationId);
+
+    expect(sessionId).toBe('new-server-session');
+    expect(api.importSessionMessages).toHaveBeenCalledWith(
+      'new-server-session',
+      [],
+    );
+    expect(
+      useAppStore
+        .getState()
+        .conversations.find((conversation) => conversation.id === conversationId)
+        ?.sessionId,
+    ).toBe('new-server-session');
+  });
 });
