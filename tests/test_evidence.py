@@ -1273,6 +1273,42 @@ def test_grounding_unsupported_quote_blocks_without_llm_call():
     assert engine.calls == []
 
 
+@pytest.mark.parametrize("answer", [
+    "If you're asking about contractual non-circumvention obligations, "
+    "those depend on whether you've agreed to them.",
+    "The company's obligations depend on the owner's agreement.",
+    "The parties' obligations depend on the companies' agreements.",
+])
+def test_apostrophes_in_prose_still_require_semantic_validation(answer):
+    engine = _GroundingEngine(
+        '{"supported": false, "unsupported_claims": ["unsupported claim"], '
+        '"reason": "Insufficient evidence"}'
+    )
+    grounding = validate_response_grounding(
+        engine=engine, model="test-model", query="Explain the obligations.",
+        answer=answer, assessment=_grounding_assessment("A source was retrieved."),
+    )
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "llm_judge"
+    assert len(engine.calls) == 1
+
+
+@pytest.mark.parametrize("quote", ["ship it tomorrow", "don't ship it tomorrow"])
+def test_actual_single_quotes_still_require_evidence(quote):
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "unused"}'
+    )
+    grounding = validate_response_grounding(
+        engine=engine, model="test-model", query="What did the report say?",
+        answer=f"You're referring to the report's instruction: '{quote}'.",
+        assessment=_grounding_assessment("The report discusses shipping."),
+    )
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "quote_anchor"
+    assert grounding.unsupported_claims == (f"Unsupported quote detail: {quote}",)
+    assert engine.calls == []
+
+
 @pytest.mark.parametrize("field", ["content", "title", "query"])
 def test_quote_can_repeat_plain_text_but_still_requires_semantic_validation(field):
     values = {"content": "A source was retrieved.", "title": "", "query": "Explain the wording."}

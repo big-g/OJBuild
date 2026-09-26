@@ -551,7 +551,9 @@ _DATE_ANCHOR_RE = re.compile(
 _URL_ANCHOR_RE = re.compile(r"https?://[^\s)\]>]+", re.IGNORECASE)
 
 _QUOTED_ANCHOR_RE = re.compile(
-    r"""(?:"([^"\n]{2,120})"|'([^'\n]{2,120})')"""
+    # Word-internal apostrophes are prose, not quotation delimiters. Allow
+    # contractions inside genuine single-quoted passages as well.
+    r"""(?:"([^"\n]{2,120})"|(?<!\w)'((?:[^'\n]|(?<=\w)'(?=\w)){2,120})'(?!\w))"""
 )
 
 # Conservative proper-name heuristic. Require at least two capitalized words so
