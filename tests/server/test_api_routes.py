@@ -243,6 +243,46 @@ class TestSessionRoutes:
         resp = client.get("/v1/sessions")
         assert resp.status_code == 401
 
+    def test_delete_session_requires_authenticated_owner(self, tmp_path):
+        from openjarvis.server.auth_store import AuthStore
+
+        app = _make_app()
+        auth_store = AuthStore(tmp_path / "auth.db")
+        for user_id in ("owner", "other"):
+            auth_store.create_user(
+                user_id=user_id,
+                username=user_id,
+                password="test-password",
+            )
+        owner_token = auth_store.create_session("owner")
+        other_token = auth_store.create_session("other")
+        app.state.auth_store = auth_store
+        client = TestClient(app)
+
+        project = client.post(
+            "/v1/projects",
+            headers={"X-OpenJarvis-Session": owner_token},
+            json={"name": "Default"},
+        ).json()
+        session = client.post(
+            "/v1/sessions",
+            headers={"X-OpenJarvis-Session": owner_token},
+            json={"project_id": project["project_id"], "title": "Shared chat"},
+        ).json()
+
+        denied = client.delete(
+            f"/v1/sessions/{session['session_id']}",
+            headers={"X-OpenJarvis-Session": other_token},
+        )
+        assert denied.status_code == 404
+
+        deleted = client.delete(
+            f"/v1/sessions/{session['session_id']}",
+            headers={"X-OpenJarvis-Session": owner_token},
+        )
+        assert deleted.status_code == 200
+        assert deleted.json() == {"deleted": True}
+
 
 class TestTraceRoutes:
     def test_list_traces(self):

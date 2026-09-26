@@ -69,6 +69,27 @@ class TestSessionStore:
         assert reloaded.messages[1].content == "Hi there!"
         store.close()
 
+    def test_first_user_message_sets_shared_session_title(self, tmp_path):
+        store = self._make_store(tmp_path)
+        session = store.get_or_create("user1")
+        store.save_message(session.session_id, "user", "What is the weather?")
+        store.save_message(session.session_id, "user", "And tomorrow?")
+
+        reloaded = store.get_session(session.session_id)
+        assert reloaded is not None
+        assert reloaded.title == "What is the weather?"
+        store.close()
+
+    def test_delete_session_removes_its_messages(self, tmp_path):
+        store = self._make_store(tmp_path)
+        session = store.get_or_create("user1")
+        store.save_message(session.session_id, "user", "Hello")
+
+        assert store.delete_session(session.session_id) is True
+        assert store.get_session(session.session_id) is None
+        assert store.delete_session(session.session_id) is False
+        store.close()
+
     def test_link_channel(self, tmp_path):
         store = self._make_store(tmp_path)
         session = store.get_or_create("user1")

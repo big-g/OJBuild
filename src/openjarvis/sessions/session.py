@@ -160,8 +160,7 @@ class SessionStore:
                 pass
 
         self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_sessions_project "
-            "ON sessions(project_id)"
+            "CREATE INDEX IF NOT EXISTS idx_sessions_project ON sessions(project_id)"
         )
 
         self._conn.commit()
@@ -360,6 +359,19 @@ class SessionStore:
             metadata=json.loads(row[8]) if row[8] else {},
         )
 
+    def delete_session(self, session_id: str) -> bool:
+        """Delete one session and its messages. Returns whether it existed."""
+        self._conn.execute(
+            "DELETE FROM session_messages WHERE session_id = ?",
+            (session_id,),
+        )
+        cursor = self._conn.execute(
+            "DELETE FROM sessions WHERE session_id = ?",
+            (session_id,),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
     def list_project_sessions(
         self,
         project_id: str,
@@ -379,9 +391,7 @@ class SessionStore:
         ).fetchall()
 
         return [
-            session
-            for row in rows
-            if (session := self.get_session(row[0])) is not None
+            session for row in rows if (session := self.get_session(row[0])) is not None
         ]
 
     def get_or_create(
@@ -557,9 +567,12 @@ class SessionStore:
                 json.dumps(metadata or {}),
             ),
         )
+        title = content[:50] + ("..." if len(content) > 50 else "")
         self._conn.execute(
-            "UPDATE sessions SET last_activity = ? WHERE session_id = ?",
-            (time.time(), session_id),
+            "UPDATE sessions SET last_activity = ?, title = CASE "
+            "WHEN ? = 'user' AND (title = '' OR title = 'New chat') "
+            "THEN ? ELSE title END WHERE session_id = ?",
+            (time.time(), role, title, session_id),
         )
         self._conn.commit()
 
@@ -701,7 +714,6 @@ class SessionStore:
             )
 
         return sessions
-
 
     def _load_messages(self, session_id: str) -> List[SessionMessage]:
         rows = self._conn.execute(

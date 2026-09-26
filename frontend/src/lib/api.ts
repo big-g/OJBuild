@@ -181,7 +181,7 @@ export interface JarvisSession {
   project_id: string;
   project_name: string;
   title: string;
-  channel_ids: string[];
+  channel_ids: Record<string, string>;
   created_at: number;
   last_activity: number;
   metadata: Record<string, unknown>;
@@ -268,6 +268,15 @@ export async function fetchSession(
 
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
   return res.json();
+}
+
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await apiFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}`,
+    { method: 'DELETE' },
+  );
+
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
 }
 
 // ---------------------------------------------------------------------------

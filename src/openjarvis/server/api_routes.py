@@ -60,6 +60,7 @@ class OptimizeRunRequest(BaseModel):
     optimizer_model: str = "claude-sonnet-4-6"
     max_samples: int = 50
 
+
 class CreateProjectRequest(BaseModel):
     name: str
     description: str = ""
@@ -71,6 +72,7 @@ class CreateSessionRequest(BaseModel):
     title: str = ""
     channel: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
 
 # ---- Agent routes ----
 
@@ -546,6 +548,7 @@ async def remove_skill(skill_name: str, request: Request):
         "message": "Skill removal not yet supported via API",
     }
 
+
 # ---- Project routes ----
 
 projects_router = APIRouter(prefix="/v1/projects", tags=["projects"])
@@ -615,6 +618,7 @@ async def list_projects(
         logger.exception("Failed to list projects")
         raise HTTPException(status_code=500, detail=str(exc))
 
+
 # ---- Sessions routes ----
 
 sessions_router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -631,6 +635,7 @@ def _session_store(request: Request):
     store = SessionStore()
     request.app.state.session_store = store
     return store
+
 
 @sessions_router.post("")
 async def create_session(
@@ -669,6 +674,7 @@ async def create_session(
     except Exception as exc:
         logger.exception("Failed to create session")
         raise HTTPException(status_code=500, detail=str(exc))
+
 
 @sessions_router.get("")
 async def list_sessions(
@@ -770,6 +776,26 @@ async def get_session(session_id: str, request: Request):
             session_id,
         )
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@sessions_router.delete("/{session_id}")
+async def delete_session(session_id: str, request: Request):
+    """Delete a conversation owned by the authenticated user."""
+    try:
+        store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
+        session = store.get_session(session_id)
+        if session is None or session.identity is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.identity.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"deleted": store.delete_session(session_id)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to delete session %s", session_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
 
 # ---- Budget routes ----
 
@@ -913,7 +939,7 @@ async def websocket_chat_stream(websocket: WebSocket):
     # application user identity. Master API-key connections intentionally
     # have no user_id.
     if user_id is not None:
-        websocket.state.auth_user_id = user_id    
+        websocket.state.auth_user_id = user_id
     try:
         while True:
             raw = await websocket.receive_text()

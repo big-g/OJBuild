@@ -110,6 +110,21 @@ useEffect(() => {
     .finally(() => setModelsLoading(false));
 }, [authUser, setModels, setModelsLoading]);  
 
+// Restore server-owned conversations after authentication so the same
+// sessions and history appear on browser and desktop clients.
+useEffect(() => {
+  if (!authUser) return;
+
+  useAppStore.getState().syncServerConversations().catch((error) => {
+    useAppStore.getState().addLogEntry({
+      timestamp: Date.now(),
+      level: 'warn',
+      category: 'chat',
+      message: `Could not restore server conversations: ${String(error)}`,
+    });
+  });
+}, [authUser]);
+
 // Fetch server info after authentication
 useEffect(() => {
   if (!authUser) return;

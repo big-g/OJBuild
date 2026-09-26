@@ -14,10 +14,12 @@ import type {
   ToolCallInfo,
   TokenUsage,
 } from '../types';
-import type { ManagedAgent } from './api';
+import type { JarvisSession, ManagedAgent } from './api';
 import {
   createProject,
   createSession,
+  deleteSession,
+  fetchSession,
   fetchProjects,
   fetchSessions,
 } from './api';
@@ -95,6 +97,38 @@ function loadConversations(): ConversationStore {
 
 function saveConversations(store: ConversationStore): void {
   localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(store));
+}
+
+function mapSessionMessages(session: JarvisSession): ChatMessage[] {
+  return (session.messages ?? [])
+    .filter(
+      (message): message is typeof message & { role: 'user' | 'assistant' } =>
+        message.role === 'user' || message.role === 'assistant',
+    )
+    .map((message, index) => ({
+      id: `${session.session_id}-${index}`,
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp * 1000,
+    }));
+}
+
+function mergeServerSession(
+  session: JarvisSession,
+  existing?: Conversation,
+): Conversation {
+  return {
+    id: existing?.id ?? `session-${session.session_id}`,
+    sessionId: session.session_id,
+    title:
+      session.title && session.title !== 'New chat'
+        ? session.title
+        : existing?.title ?? session.title ?? 'New chat',
+    createdAt: session.created_at * 1000,
+    updatedAt: session.last_activity * 1000,
+    model: existing?.model ?? 'default',
+    messages: existing?.messages ?? [],
+  };
 }
 
 export type ThemeMode = 'light' | 'dark' | 'system';
@@ -188,6 +222,7 @@ interface AppState {
 
   // Actions: conversations
   loadConversations: () => void;
+  syncServerConversations: () => Promise<void>;
   importOverlayConversation: () => Promise<void>;
   createConversation: (model?: string) => string;
   createServerConversation: (model?: string) => Promise<string>;
@@ -316,6 +351,66 @@ export const useAppStore = create<AppState>((set, get) => {
       });
     },
 
+    syncServerConversations: async () => {
+      const serverSessions = await fetchSessions();
+      const store = loadConversations();
+      const existingBySession = new Map(
+        Object.values(store.conversations)
+          .filter((conversation) => conversation.sessionId)
+          .map((conversation) => [conversation.sessionId!, conversation]),
+      );
+      const mergedServerConversations: Conversation[] = [];
+
+      for (const session of serverSessions) {
+        const conversation = mergeServerSession(
+          session,
+          existingBySession.get(session.session_id),
+        );
+        store.conversations[conversation.id] = conversation;
+        mergedServerConversations.push(conversation);
+      }
+
+      if (!store.activeId || !store.conversations[store.activeId]) {
+        store.activeId = mergedServerConversations[0]?.id ?? null;
+      }
+
+      saveConversations(store);
+      set({
+        conversations: Object.values(store.conversations).sort(
+          (a, b) => b.updatedAt - a.updatedAt,
+        ),
+        activeId: store.activeId,
+      });
+
+      const active = store.activeId
+        ? store.conversations[store.activeId]
+        : undefined;
+      if (!active?.sessionId) return;
+
+      try {
+        const session = await fetchSession(active.sessionId);
+        const currentStore = loadConversations();
+        const current = currentStore.conversations[active.id];
+        if (!current || current.sessionId !== session.session_id) return;
+        current.messages = mapSessionMessages(session);
+        current.updatedAt = session.last_activity * 1000;
+        if (session.title && session.title !== 'New chat') {
+          current.title = session.title;
+        }
+        saveConversations(currentStore);
+        set({
+          conversations: Object.values(currentStore.conversations).sort(
+            (a, b) => b.updatedAt - a.updatedAt,
+          ),
+          messages:
+            get().activeId === active.id ? current.messages : get().messages,
+        });
+      } catch {
+        // Keep the local cache usable when the session detail endpoint is
+        // temporarily unavailable; a later selection retries the fetch.
+      }
+    },
+
     importOverlayConversation: async () => {
       try {
         const { invoke } = await import('@tauri-apps/api/core');
@@ -427,6 +522,35 @@ createServerConversation: async (model?: string) => {
         activeId: id,
         messages: conv ? conv.messages : [],
       });
+
+      if (!conv?.sessionId) return;
+      void fetchSession(conv.sessionId)
+        .then((session) => {
+          const currentStore = loadConversations();
+          const current = currentStore.conversations[id];
+          if (
+            get().activeId !== id ||
+            !current ||
+            current.sessionId !== session.session_id
+          ) {
+            return;
+          }
+          current.messages = mapSessionMessages(session);
+          current.updatedAt = session.last_activity * 1000;
+          if (session.title && session.title !== 'New chat') {
+            current.title = session.title;
+          }
+          saveConversations(currentStore);
+          set({
+            conversations: Object.values(currentStore.conversations).sort(
+              (a, b) => b.updatedAt - a.updatedAt,
+            ),
+            messages: current.messages,
+          });
+        })
+        .catch(() => {
+          // Keep cached history visible if the server cannot be reached.
+        });
     },
 
     deleteConversation: (id: string) => {
@@ -434,6 +558,7 @@ createServerConversation: async (model?: string) => {
       if (streamState.isStreaming && streamState.conversationId === id) return;
 
       const store = loadConversations();
+      const conversation = store.conversations[id];
       delete store.conversations[id];
       if (store.activeId === id) {
         const remaining = Object.keys(store.conversations);
@@ -451,6 +576,18 @@ createServerConversation: async (model?: string) => {
         activeId: store.activeId,
         messages: activeConv ? activeConv.messages : [],
       });
+
+      if (conversation?.sessionId) {
+        void deleteSession(conversation.sessionId).catch((error) => {
+          get().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warn',
+            category: 'chat',
+            message: `Could not delete server conversation: ${String(error)}`,
+          });
+          void get().syncServerConversations().catch(() => {});
+        });
+      }
     },
 
     loadMessages: (conversationId: string | null) => {
