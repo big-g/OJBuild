@@ -1182,6 +1182,22 @@ def validate_response_grounding(
             - evidence_text_anchors[kind]
             - query_text_anchors[kind]
         )
+        if kind == "quote":
+            # Quoted answer text may be copied from ordinary source prose.
+            # Check contiguous text within each field, not whether the source
+            # itself used quotation marks. Attribution still needs the judge.
+            quote_sources = [query]
+            for record in assessment.records:
+                quote_sources.extend((record.content, record.title))
+            normalized_sources = [
+                " ".join(_URL_ANCHOR_RE.sub(" ", value).lower().split())
+                for value in quote_sources
+            ]
+            missing = sorted(
+                quote for quote in answer_text_anchors["quote"]
+                if not any(re.search(rf"(?<!\w){re.escape(quote)}(?!\w)", source)
+                           for source in normalized_sources)
+            )
         if missing:
             return GroundingAssessment(
                 status=GroundingStatus.UNSUPPORTED,

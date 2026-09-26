@@ -1273,6 +1273,45 @@ def test_grounding_unsupported_quote_blocks_without_llm_call():
     assert engine.calls == []
 
 
+@pytest.mark.parametrize("field", ["content", "title", "query"])
+def test_quote_can_repeat_plain_text_but_still_requires_semantic_validation(field):
+    values = {"content": "A source was retrieved.", "title": "", "query": "Explain the wording."}
+    values[field] = "The report discusses nonprofit   entities."
+    engine = _GroundingEngine(
+        '{"supported": false, "unsupported_claims": ["wrong attribution"], "reason": "Wrong attribution"}'
+    )
+    grounding = validate_response_grounding(
+        engine=engine, model="test-model", query=values["query"],
+        answer='The report mentions "nonprofit entities".',
+        assessment=assess_evidence(required_current(), [EvidenceRecord(
+            source="test", content=values["content"], title=values["title"],
+        )]),
+    )
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "llm_judge"
+    assert len(engine.calls) == 1
+
+
+@pytest.mark.parametrize("content,title,source_id,url", [
+    ("The report discusses barcodes.", "", "", ""),
+    ("No terminology provided.", "", "codes", ""),
+    ("No terminology provided.", "", "", "https://example.test/codes"),
+    ("See https://example.test/codes for more.", "", "", ""),
+])
+def test_quote_requires_whole_text_outside_provenance(content, title, source_id, url):
+    engine = _GroundingEngine('{"supported": true, "unsupported_claims": [], "reason": "unused"}')
+    grounding = validate_response_grounding(
+        engine=engine, model="test-model", query="Explain the terminology.",
+        answer='The report uses "codes".',
+        assessment=assess_evidence(required_current(), [EvidenceRecord(
+            source="test", content=content, title=title, source_id=source_id, url=url,
+        )]),
+    )
+    assert grounding.status == GroundingStatus.UNSUPPORTED
+    assert grounding.method == "quote_anchor"
+    assert engine.calls == []
+
+
 def test_grounding_unsupported_name_blocks_without_llm_call():
     engine = _GroundingEngine(
         '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
