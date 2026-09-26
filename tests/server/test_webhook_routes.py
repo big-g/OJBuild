@@ -70,6 +70,33 @@ class TestTwilioWebhook:
             )
         assert resp.status_code == 403
 
+    def test_deep_research_fallback_applies_evidence_finalizer(self):
+        from types import SimpleNamespace
+
+        from openjarvis.server.webhook_routes import _run_deep_research_fallback
+
+        result = SimpleNamespace(content="raw answer")
+        agent = MagicMock()
+        agent.run.return_value = result
+        engine = SimpleNamespace(_model="test-model")
+
+        with (
+            patch("openjarvis.server.agent_manager_routes._build_deep_research_tools",
+                  return_value=["tool"]),
+            patch("openjarvis.agents.deep_research.DeepResearchAgent",
+                  return_value=agent) as agent_cls,
+            patch("openjarvis.core.evidence.finalize_agent_result_with_evidence",
+                  side_effect=lambda _agent, _query, value: value) as finalize,
+        ):
+            response = _run_deep_research_fallback(engine, "What is current?")
+
+        assert response == "raw answer"
+        agent_cls.assert_called_once_with(
+            engine=engine, model="test-model", tools=["tool"], max_turns=5,
+        )
+        agent.run.assert_called_once_with("What is current?")
+        finalize.assert_called_once_with(agent, "What is current?", result)
+
 
 class TestBlueBubblesWebhook:
     @pytest.fixture

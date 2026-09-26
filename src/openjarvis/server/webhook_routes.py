@@ -55,6 +55,24 @@ def _validate_twilio_signature(
         return False
 
 
+def _run_deep_research_fallback(engine: Any, body: str) -> str:
+    """Run the Twilio fallback agent through the shared evidence finalizer."""
+    from openjarvis.agents.deep_research import DeepResearchAgent
+    from openjarvis.core.evidence import finalize_agent_result_with_evidence
+    from openjarvis.server.agent_manager_routes import _build_deep_research_tools
+
+    tools = _build_deep_research_tools(engine=engine, model="")
+    agent = DeepResearchAgent(
+        engine=engine,
+        model=getattr(engine, "_model", ""),
+        tools=tools,
+        max_turns=5,
+    )
+    result = agent.run(body)
+    result = finalize_agent_result_with_evidence(agent, body, result)
+    return result.content or ""
+
+
 def _format_for_sms(text: str) -> str:
     """Strip markdown/LaTeX formatting for clean iMessage/SMS display."""
     import re
@@ -191,35 +209,13 @@ def create_webhook_router(
             else:
                 # Direct agent fallback
                 try:
-                    from openjarvis.agents.deep_research import (
-                        DeepResearchAgent,
-                    )
-                    from openjarvis.server.agent_manager_routes import (
-                        _build_deep_research_tools,
-                    )
-
                     engine = getattr(
                         request.app.state,
                         "engine",
                         None,
                     )
                     if engine:
-                        tools = _build_deep_research_tools(
-                            engine=engine,
-                            model="",
-                        )
-                        agent = DeepResearchAgent(
-                            engine=engine,
-                            model=getattr(
-                                engine,
-                                "_model",
-                                "",
-                            ),
-                            tools=tools,
-                            max_turns=5,
-                        )
-                        result = agent.run(body)
-                        response = result.content or ""
+                        response = _run_deep_research_fallback(engine, body)
                 except Exception as _exc:
                     response = f"Error: {_exc}"
 
