@@ -239,6 +239,33 @@ def test_research_retries_only_once_when_planner_refuses_to_search():
     assert [e["text"] for e in events if e["type"] == "final_answer"] == [result.answer]
 
 
+def test_empty_personal_search_can_recover_with_governed_web_search():
+    active, tool = runtime()
+    personal_call = {"tool_calls": [{"id": "personal", "name": "search",
+                                    "arguments": '{"query": "launch status"}'}]}
+    result, engine, events = research(active, [
+        personal_call, {"content": "No information is available."},
+        web_call(), {"content": "The launch is approved. [1]"}, verdict(),
+    ])
+    assert result.answer == "The launch is approved. [1]"
+    assert [i.tool_name for i in result.tool_calls] == ["search", "web_search"]
+    tool.execute.assert_called_once()
+    assert "An empty personal search" in engine.calls[2][0][-1].content
+    assert all(e.get("text") != "No information is available." for e in events)
+
+
+def test_empty_personal_search_recovery_remains_bounded():
+    active, tool = runtime()
+    personal_call = {"tool_calls": [{"id": "personal", "name": "search",
+                                    "arguments": '{"query": "launch status"}'}]}
+    result, engine, _ = research(active, [
+        personal_call, {"content": "No information."}, {"content": "No information."},
+    ])
+    assert len(engine.calls) == 3
+    assert result.answer == "I couldn't retrieve the required data."
+    tool.execute.assert_not_called()
+
+
 def test_unknown_tool_and_blocked_answer_have_diagnostics_without_query(caplog):
     active, tool = runtime()
     unknown = {"tool_calls": [{"id": "unknown", "name": "browse",

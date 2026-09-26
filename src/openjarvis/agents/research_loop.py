@@ -134,7 +134,7 @@ SEARCH_TOOL_SPEC: Dict[str, Any] = {
 }
 
 
-SYSTEM_PROMPT = """You are a research assistant with access to the user's personal knowledge corpus.
+SYSTEM_PROMPT = """You are a research assistant. Select from the tools provided for this request based on the information needed.
 
 The user's corpus contains data from these sources only:
 {available_sources}
@@ -664,6 +664,11 @@ class ResearchAgent:
             sys_msg.content += (
                 "\nYou also have web_search for public web information. Use it for "
                 "current external facts, public research, and explicit web requests. "
+                "The search tool searches personal records only; it cannot search "
+                "the internet. Public legal, regulatory, scientific, and technical "
+                "claims should be investigated with web_search, even when phrased "
+                "as statements. Use search when the user asks about their own "
+                "documents, messages, or connected personal sources. "
                 "The connected-sources list above applies only to personal search. "
                 "Web search does not require a personal-data connector. Use both "
                 "search and web_search when the question needs both. Never send "
@@ -701,11 +706,13 @@ class ResearchAgent:
                 if assessment.blocked:
                     logger.warning(
                         "research: evidence blocked status=%s model=%s web_available=%s "
-                        "completed_searches=%d records=%d",
+                        "completed_searches=%d records=%d search_tools=%s",
                         assessment.status.value, self._model,
                         self._web_tool_spec is not None,
                         sum(i.tool_name in {"search", "web_search"} for i in invocations),
                         len(evidence_records),
+                        [i.tool_name for i in invocations
+                         if i.tool_name in {"search", "web_search"}],
                     )
                     return blocked_response(assessment), []
                 conflict = validate_evidence_conflicts(
@@ -762,10 +769,15 @@ class ResearchAgent:
             if not tool_calls_raw:
                 if (
                     self._validate_evidence and tools_arg and not retrieval_retry_used
-                    and not any(i.tool_name in {"search", "web_search"} for i in invocations)
+                    and not evidence_records
+                    and (
+                        not any(i.tool_name in {"search", "web_search"} for i in invocations)
+                        or (self._web_tool_spec is not None
+                            and not any(i.tool_name == "web_search" for i in invocations))
+                    )
                 ):
                     retrieval_retry_used = True
-                    logger.warning("research: planner skipped retrieval; retrying once")
+                    logger.warning("research: no usable evidence before synthesis; retrying once")
                     messages.append(Message(
                         role=Role.USER,
                         content=(
@@ -774,7 +786,10 @@ class ResearchAgent:
                                if self._web_tool_spec is not None else
                                "search if this concerns the connected personal records. ")
                             + "Investigate the original statement or question; do not "
-                            "accept its premise as established fact. If the available "
+                            "accept its premise as established fact. An empty personal "
+                            "search does not establish that public web evidence is unavailable. "
+                            "Do not send private records or private identifiers to web search. "
+                            "If the available "
                             "tools cannot retrieve relevant evidence, say so."
                         ),
                     ))
