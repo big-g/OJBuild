@@ -51,6 +51,7 @@ def run_slack_daemon(
     from slack_bolt.adapter.socket_mode import SocketModeHandler
 
     from openjarvis.agents.deep_research import DeepResearchAgent
+    from openjarvis.core.evidence import finalize_agent_result_with_evidence
     from openjarvis.engine.ollama import OllamaEngine
     from openjarvis.server.agent_manager_routes import (
         _build_deep_research_tools,
@@ -107,6 +108,7 @@ def run_slack_daemon(
 
         try:
             result = agent.run(text)
+            result = finalize_agent_result_with_evidence(agent, text, result)
             reply = _to_slack_fmt(result.content or "No results found.")
         except Exception as exc:
             reply = f"Error: {exc}"

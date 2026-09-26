@@ -98,6 +98,7 @@ def imessage_start(
         from openjarvis.agents.deep_research import (
             DeepResearchAgent,
         )
+        from openjarvis.core.evidence import finalize_agent_result_with_evidence
         from openjarvis.connectors.retriever import (
             TwoStageRetriever,
         )
@@ -133,6 +134,7 @@ def imessage_start(
 
         def handler(text: str) -> str:
             result = agent.run(text)
+            result = finalize_agent_result_with_evidence(agent, text, result)
             return result.content or "No results found."
 
         run_daemon(

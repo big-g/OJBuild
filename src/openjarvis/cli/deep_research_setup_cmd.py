@@ -280,6 +280,7 @@ def _launch_chat(store: KnowledgeStore, console: Console) -> None:
     from openjarvis.agents.deep_research import DeepResearchAgent
     from openjarvis.connectors.retriever import TwoStageRetriever
     from openjarvis.engine.ollama import OllamaEngine
+    from openjarvis.core.evidence import finalize_agent_result_with_evidence
     from openjarvis.tools.knowledge_search import KnowledgeSearchTool
     from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
     from openjarvis.tools.scan_chunks import ScanChunksTool
@@ -343,6 +344,7 @@ def _launch_chat(store: KnowledgeStore, console: Console) -> None:
 
         try:
             result = agent.run(query)
+            result = finalize_agent_result_with_evidence(agent, query, result)
             console.print(f"\n{result.content}\n")
             if result.metadata and result.metadata.get("sources"):
                 console.print("[dim]Sources:[/dim]")
