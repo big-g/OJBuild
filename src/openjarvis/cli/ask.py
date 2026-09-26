@@ -179,6 +179,7 @@ def _run_research(
         search=HybridSearch(store, embedder),
         model=planner_model,
         on_event=on_event,
+        validate_evidence=True,
     )
 
     started = time.monotonic()
@@ -463,7 +464,10 @@ def _run_agent(
         except Exception as exc:
             logger.warning("Failed to inject memory context for agent: %s", exc)
 
-    return agent.run(query_text, context=ctx)
+    result = agent.run(query_text, context=ctx)
+    from openjarvis.core.evidence import finalize_agent_result_with_evidence
+
+    return finalize_agent_result_with_evidence(agent, query_text, result)
 
 
 def _print_profile(
@@ -1006,15 +1010,33 @@ def ask(
                 _m.images = image_b64
                 break
 
+    # A direct engine call has no retrieval path. Keep dynamic and explicitly
+    # external questions fail-closed instead of answering from model memory.
+    from openjarvis.core.evidence import (
+        assess_evidence,
+        blocked_response,
+        detect_evidence_requirement,
+        evidence_result_metadata,
+    )
+
+    requirement = detect_evidence_requirement(query_text)
+
     # Generate (InstrumentedEngine handles telemetry + energy recording)
     try:
-        with console.status("[bold green]Generating...[/bold green]"):
-            result = engine.generate(
-                messages,
-                model=model_name,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            )
+        if requirement.required:
+            assessment = assess_evidence(requirement)
+            result = {
+                "content": blocked_response(assessment),
+                "evidence": evidence_result_metadata(requirement, assessment),
+            }
+        else:
+            with console.status("[bold green]Generating...[/bold green]"):
+                result = engine.generate(
+                    messages,
+                    model=model_name,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
     except EngineContextLengthError as exc:
         # Not a reachability problem — pointing the user at server/host
         # config (hint_no_engine) would be misleading here.

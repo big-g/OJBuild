@@ -231,6 +231,34 @@ class TestAskAgentOption:
         assert result.exit_code == 0
         assert "Hello from engine" in result.output
 
+    def test_direct_dynamic_question_blocks_without_retrieval(
+        self, runner, agent_setup,
+    ):
+        result = runner.invoke(
+            cli,
+            [
+                "ask", "--agent", "", "--model", "test-model",
+                "What's the current stock price of XYZ?",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "I couldn't retrieve the required data." in result.output
+        agent_setup.engine.generate.assert_not_called()
+
+    def test_agent_dynamic_question_blocks_without_evidence(
+        self, runner, agent_setup,
+    ):
+        _register_agents()
+        result = runner.invoke(
+            cli,
+            [
+                "ask", "--agent", "simple", "--model", "test-model",
+                "What's the current stock price of XYZ?",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert "I couldn't retrieve the required data." in result.output
+
     def test_no_agent_with_blank_config_default_uses_direct_mode(
         self, runner, mock_setup, monkeypatch
     ):
