@@ -652,6 +652,14 @@ class ResearchAgent:
             ),
         )
         messages: List[Message] = [sys_msg, Message(role=Role.USER, content=query)]
+        if self._validate_evidence:
+            sys_msg.content += (
+                "\nThis is research mode. Retrieve evidence before evaluating factual "
+                "claims, including claims phrased as statements rather than questions. "
+                "A user's assertion is not evidence that the assertion is true. "
+                "For legal questions, establish the relevant jurisdiction and source; "
+                "do not assume that a rule applies or does not apply."
+            )
         if self._web_tool_spec is not None:
             sys_msg.content += (
                 "\nYou also have web_search for public web information. Use it for "
@@ -719,6 +727,7 @@ class ResearchAgent:
             return renumber_citations(text, ref_to_source)
 
         iterations = 0
+        retrieval_retry_used = False
         for _ in range(self._max_iterations + 1):
             iterations += 1
             tools_arg = (
@@ -734,6 +743,7 @@ class ResearchAgent:
                 max_tokens=self._max_tokens,
                 num_ctx=self._num_ctx,
                 tools=tools_arg,
+                require_tools=bool(self._validate_evidence and tools_arg),
             )
             for k in total_usage:
                 total_usage[k] += int(result.get("usage", {}).get(k, 0))
@@ -742,6 +752,25 @@ class ResearchAgent:
             tool_calls_raw = result.get("tool_calls", []) or []
 
             if not tool_calls_raw:
+                if (
+                    self._validate_evidence and tools_arg and not retrieval_retry_used
+                    and not any(i.tool_name in {"search", "web_search"} for i in invocations)
+                ):
+                    retrieval_retry_used = True
+                    logger.warning("research: planner skipped retrieval; retrying once")
+                    messages.append(Message(
+                        role=Role.USER,
+                        content=(
+                            "No evidence has been retrieved. Before answering, call "
+                            + ("web_search for public claims or search for personal records. "
+                               if self._web_tool_spec is not None else
+                               "search if this concerns the connected personal records. ")
+                            + "Investigate the original statement or question; do not "
+                            "accept its premise as established fact. If the available "
+                            "tools cannot retrieve relevant evidence, say so."
+                        ),
+                    ))
+                    continue
                 if content.strip():
                     answer, final_sources = _finalize(content.strip())
                     self._emit(

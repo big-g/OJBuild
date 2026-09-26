@@ -159,7 +159,7 @@ def test_web_research_honors_governance_hook():
 
 def test_web_tool_is_not_invented_when_runtime_lacks_it():
     assert _research_web_access(None) == (None, None)
-    result, engine, _ = research(None, [{"content": "The launch is approved."}])
+    result, engine, _ = research(None, [{"content": "The launch is approved."}] * 2)
     assert "web_search" not in [t["function"]["name"] for t in engine.calls[0][1]["tools"]]
     assert result.answer == "I couldn't retrieve the required data."
 
@@ -191,7 +191,7 @@ def test_browser_stream_wires_web_and_emits_only_validated_answer(monkeypatch, u
 
     active, _ = runtime()
     responses = ([web_call(), {"content": "The launch is approved. [1]"}, verdict()]
-                 if use_web else [{"content": "The launch is approved."}])
+                 if use_web else [{"content": "The launch is approved."}] * 2)
     engine = Engine(responses)
     monkeypatch.setattr(research_router, "load_config", lambda: None)
     monkeypatch.setattr(research_router, "_build_planner_engine",
@@ -215,3 +215,25 @@ def test_browser_stream_wires_web_and_emits_only_validated_answer(monkeypatch, u
     assert events[-1]["evidence"]["evidence_status"] == (
         "obtained" if use_web else "required_not_obtained"
     )
+
+
+def test_research_retries_premature_answer_before_emitting_it():
+    active, tool = runtime()
+    result, engine, events = research(active, [
+        {"content": "I cannot search the internet."}, web_call(),
+        {"content": "The launch is approved. [1]"}, verdict(),
+    ])
+    assert result.answer == "The launch is approved. [1]"
+    tool.execute.assert_called_once()
+    assert all(e.get("text") != "I cannot search the internet." for e in events)
+    assert engine.calls[0][1]["require_tools"] is True
+    assert "No evidence has been retrieved" in engine.calls[1][0][-1].content
+
+
+def test_research_retries_only_once_when_planner_refuses_to_search():
+    active, tool = runtime()
+    result, engine, events = research(active, [{"content": "The launch is approved."}] * 2)
+    assert len(engine.calls) == 2
+    assert result.answer == "I couldn't retrieve the required data."
+    tool.execute.assert_not_called()
+    assert [e["text"] for e in events if e["type"] == "final_answer"] == [result.answer]
