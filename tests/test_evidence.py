@@ -1328,6 +1328,21 @@ def test_quote_can_repeat_plain_text_but_still_requires_semantic_validation(fiel
     assert len(engine.calls) == 1
 
 
+@pytest.mark.parametrize("punctuation", [",", ".", ";", "!"])
+def test_quoted_query_phrase_allows_answer_added_punctuation(punctuation):
+    engine = _GroundingEngine(
+        '{"supported": true, "unsupported_claims": [], "reason": "ok"}'
+    )
+    query = "I am not an entity of commerce so these rules do not apply."
+    grounding = validate_response_grounding(
+        engine=engine, model="test-model", query=query,
+        answer=f'The phrase "not an entity of commerce{punctuation}" appears in your query.',
+        assessment=_grounding_assessment("Rules cover relevant conduct."),
+    )
+    assert grounding.status == GroundingStatus.SUPPORTED
+    assert len(engine.calls) == 1
+
+
 @pytest.mark.parametrize("content,title,source_id,url", [
     ("The report discusses barcodes.", "", "", ""),
     ("No terminology provided.", "", "codes", ""),

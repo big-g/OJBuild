@@ -578,7 +578,9 @@ def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
     }
     quotes: set[str] = set()
     for match in _QUOTED_ANCHOR_RE.finditer(text):
-        value = (match.group(1) or match.group(2) or "").strip()
+        value = (match.group(1) or match.group(2) or "").strip(
+            " \t\r\n.,;:!?"
+        )
         if value:
             quotes.add(" ".join(value.lower().split()))
     # Anchor classes must be mutually exclusive. Remove spans already
