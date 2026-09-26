@@ -699,6 +699,14 @@ class ResearchAgent:
                 )
                 evidence_metadata.update(evidence_result_metadata(requirement, assessment))
                 if assessment.blocked:
+                    logger.warning(
+                        "research: evidence blocked status=%s model=%s web_available=%s "
+                        "completed_searches=%d records=%d",
+                        assessment.status.value, self._model,
+                        self._web_tool_spec is not None,
+                        sum(i.tool_name in {"search", "web_search"} for i in invocations),
+                        len(evidence_records),
+                    )
                     return blocked_response(assessment), []
                 conflict = validate_evidence_conflicts(
                     engine=self._engine, model=self._model, query=query,
@@ -866,6 +874,11 @@ class ResearchAgent:
                         )
                         explicit_conflict |= evidence_conflict_from_tool_result(web_result.metadata)
                     evidence_records.extend(records)
+                    if not records:
+                        logger.warning(
+                            "research: web_search returned no evidence success=%s",
+                            web_result.success is True,
+                        )
                     web_sources = []
                     hits = []
                     for record in records:
@@ -941,6 +954,7 @@ class ResearchAgent:
                     # work. If the planner jumps to clarify with no searches
                     # behind it, return an error and let the loop try again.
                     if not any(i.tool_name in {"search", "web_search"} for i in invocations):
+                        logger.warning("research: rejected clarify before retrieval")
                         tool_output = json.dumps(
                             {
                                 "error": (
@@ -970,6 +984,10 @@ class ResearchAgent:
                             }
                         )
                 else:
+                    logger.warning(
+                        "research: unrecognized tool name=%r web_available=%s",
+                        str(name)[:80], self._web_tool_spec is not None,
+                    )
                     tool_output = json.dumps(
                         {
                             "error": (

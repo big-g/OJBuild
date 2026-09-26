@@ -237,3 +237,16 @@ def test_research_retries_only_once_when_planner_refuses_to_search():
     assert result.answer == "I couldn't retrieve the required data."
     tool.execute.assert_not_called()
     assert [e["text"] for e in events if e["type"] == "final_answer"] == [result.answer]
+
+
+def test_unknown_tool_and_blocked_answer_have_diagnostics_without_query(caplog):
+    active, tool = runtime()
+    unknown = {"tool_calls": [{"id": "unknown", "name": "browse",
+                               "arguments": '{"query": "PRIVATE_SENTINEL"}'}]}
+    result, _, _ = research(active, [unknown, unknown,
+                                    {"content": "The launch is approved."}], max_iterations=1)
+    assert result.answer == "I couldn't retrieve the required data."
+    tool.execute.assert_not_called()
+    assert "unrecognized tool name='browse'" in caplog.text
+    assert "web_available=True completed_searches=0 records=0" in caplog.text
+    assert "PRIVATE_SENTINEL" not in caplog.text
