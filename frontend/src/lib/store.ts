@@ -22,6 +22,7 @@ import {
   fetchSession,
   fetchProjects,
   fetchSessions,
+  importSessionMessages,
 } from './api';
 import { isEmbedOnlyModel } from './model-capabilities';
 import { serializeToolCallArguments } from './tool-call';
@@ -105,18 +106,74 @@ function mapSessionMessages(session: JarvisSession): ChatMessage[] {
       (message): message is typeof message & { role: 'user' | 'assistant' } =>
         message.role === 'user' || message.role === 'assistant',
     )
-    .map((message, index) => ({
-      id: `${session.session_id}-${index}`,
-      role: message.role,
-      content: message.content,
-      timestamp: message.timestamp * 1000,
-    }));
+    .map((message, index) => {
+      const metadata = message.metadata ?? {};
+      return {
+        id:
+          typeof metadata.local_message_id === 'string'
+            ? metadata.local_message_id
+            : `${session.session_id}-${index}`,
+        role: message.role,
+        content: message.content,
+        timestamp: message.timestamp * 1000,
+        ...(Array.isArray(metadata.toolCalls)
+          ? { toolCalls: metadata.toolCalls as ChatMessage['toolCalls'] }
+          : {}),
+        ...(Array.isArray(metadata.researchTraces)
+          ? {
+              researchTraces:
+                metadata.researchTraces as ChatMessage['researchTraces'],
+            }
+          : {}),
+        ...(Array.isArray(metadata.researchSources)
+          ? {
+              researchSources:
+                metadata.researchSources as ChatMessage['researchSources'],
+            }
+          : {}),
+        ...(typeof metadata.isResearch === 'boolean'
+          ? { isResearch: metadata.isResearch }
+          : {}),
+        ...(metadata.usage && typeof metadata.usage === 'object'
+          ? { usage: metadata.usage as ChatMessage['usage'] }
+          : {}),
+        ...(metadata.telemetry && typeof metadata.telemetry === 'object'
+          ? { telemetry: metadata.telemetry as ChatMessage['telemetry'] }
+          : {}),
+        ...(metadata.audio && typeof metadata.audio === 'object'
+          ? { audio: metadata.audio as ChatMessage['audio'] }
+          : {}),
+      };
+    });
+}
+
+function exportSessionMessage(message: ChatMessage) {
+  const metadata: Record<string, unknown> = { local_message_id: message.id };
+  for (const key of [
+    'toolCalls',
+    'researchTraces',
+    'researchSources',
+    'isResearch',
+    'usage',
+    'telemetry',
+    'audio',
+  ] as const) {
+    if (message[key] !== undefined) metadata[key] = message[key];
+  }
+  return {
+    role: message.role,
+    content: message.content,
+    timestamp: message.timestamp / 1000,
+    metadata,
+  };
 }
 
 function mergeServerSession(
   session: JarvisSession,
   existing?: Conversation,
 ): Conversation {
+  const localCreatedAt = session.metadata?.local_created_at;
+  const importedModel = session.metadata?.model;
   return {
     id: existing?.id ?? `session-${session.session_id}`,
     sessionId: session.session_id,
@@ -124,9 +181,14 @@ function mergeServerSession(
       session.title && session.title !== 'New chat'
         ? session.title
         : existing?.title ?? session.title ?? 'New chat',
-    createdAt: session.created_at * 1000,
+    createdAt:
+      typeof localCreatedAt === 'number'
+        ? localCreatedAt
+        : session.created_at * 1000,
     updatedAt: session.last_activity * 1000,
-    model: existing?.model ?? 'default',
+    model:
+      existing?.model ??
+      (typeof importedModel === 'string' ? importedModel : 'default'),
     messages: existing?.messages ?? [],
   };
 }
@@ -360,11 +422,25 @@ export const useAppStore = create<AppState>((set, get) => {
           .map((conversation) => [conversation.sessionId!, conversation]),
       );
       const mergedServerConversations: Conversation[] = [];
+      const pendingMigrations = new Map<string, JarvisSession>();
 
       for (const session of serverSessions) {
+        const localConversationId = session.metadata?.local_conversation_id;
+        if (
+          session.metadata?.migrated_from_local === true &&
+          session.metadata?.local_history_imported !== true
+        ) {
+          if (typeof localConversationId === 'string') {
+            pendingMigrations.set(localConversationId, session);
+          }
+          continue;
+        }
         const conversation = mergeServerSession(
           session,
-          existingBySession.get(session.session_id),
+          existingBySession.get(session.session_id) ??
+            (typeof localConversationId === 'string'
+              ? store.conversations[localConversationId]
+              : undefined),
         );
         store.conversations[conversation.id] = conversation;
         mergedServerConversations.push(conversation);
@@ -382,8 +458,84 @@ export const useAppStore = create<AppState>((set, get) => {
         activeId: store.activeId,
       });
 
-      const active = store.activeId
-        ? store.conversations[store.activeId]
+      const localOnlyIds = Object.values(store.conversations)
+        .filter(
+          (conversation) =>
+            !conversation.sessionId && conversation.messages.length > 0,
+        )
+        .map((conversation) => conversation.id);
+      if (localOnlyIds.length > 0) {
+        let project: Awaited<ReturnType<typeof createProject>> | undefined;
+        try {
+          const projects = await fetchProjects();
+          project = projects[0] ?? (await createProject({ name: 'Default' }));
+        } catch (error) {
+          get().addLogEntry({
+            timestamp: Date.now(),
+            level: 'warn',
+            category: 'chat',
+            message: `Could not prepare server storage for local conversations: ${String(error)}`,
+          });
+        }
+
+        for (const conversationId of project ? localOnlyIds : []) {
+          const currentStore = loadConversations();
+          const conversation = currentStore.conversations[conversationId];
+          if (!conversation || conversation.sessionId) continue;
+
+          let session = pendingMigrations.get(conversation.id);
+          const createdDuringThisAttempt = !session;
+
+          try {
+            session ??= await createSession({
+              project_id: project!.project_id,
+              title: conversation.title || 'Imported chat',
+              channel: 'local-migration',
+              metadata: {
+                migrated_from_local: true,
+                local_conversation_id: conversation.id,
+                local_created_at: conversation.createdAt,
+                model: conversation.model,
+              },
+            });
+            await importSessionMessages(
+              session.session_id,
+              conversation.messages.map(exportSessionMessage),
+            );
+          } catch (error) {
+            if (session && createdDuringThisAttempt) {
+              await deleteSession(session.session_id).catch(() => {});
+            }
+            get().addLogEntry({
+              timestamp: Date.now(),
+              level: 'warn',
+              category: 'chat',
+              message: `Could not migrate local conversation "${conversation.title}": ${String(error)}`,
+            });
+            continue;
+          }
+
+          if (!session) continue;
+
+          const updatedStore = loadConversations();
+          const updated = updatedStore.conversations[conversationId];
+          if (updated && !updated.sessionId) {
+            updated.sessionId = session.session_id;
+            updatedStore.activeId = updatedStore.activeId ?? updated.id;
+            saveConversations(updatedStore);
+            set({
+              conversations: Object.values(updatedStore.conversations).sort(
+                (a, b) => b.updatedAt - a.updatedAt,
+              ),
+              activeId: updatedStore.activeId,
+            });
+          }
+        }
+      }
+
+      const currentStore = loadConversations();
+      const active = currentStore.activeId
+        ? currentStore.conversations[currentStore.activeId]
         : undefined;
       if (!active?.sessionId) return;
 

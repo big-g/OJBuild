@@ -23,6 +23,7 @@ const api = vi.hoisted(() => ({
   fetchProjects: vi.fn(),
   fetchSessions: vi.fn(),
   fetchSession: vi.fn(),
+  importSessionMessages: vi.fn(),
 }));
 
 vi.mock('./api', () => api);
@@ -139,5 +140,173 @@ describe('server conversation continuity', () => {
 
     expect(api.deleteSession).toHaveBeenCalledWith('shared-3');
     expect(useAppStore.getState().conversations).toHaveLength(0);
+  });
+
+  it('migrates local conversations with their rich message metadata', async () => {
+    const localConversation = {
+      id: 'local-1',
+      title: 'Old research chat',
+      createdAt: 100_000,
+      updatedAt: 200_000,
+      model: 'test-model',
+      messages: [
+        {
+          id: 'message-1',
+          role: 'assistant',
+          content: 'Research result',
+          timestamp: 200_000,
+          isResearch: true,
+          toolCalls: [
+            {
+              id: 'tool-1',
+              tool: 'web_search',
+              arguments: '{}',
+              status: 'success',
+              result: 'Found sources',
+            },
+          ],
+          researchSources: [{ ref: 1, title: 'Source', url: 'https://example.org' }],
+        },
+      ],
+    };
+    localStorage.setItem(
+      'openjarvis-conversations',
+      JSON.stringify({
+        version: 1,
+        conversations: { 'local-1': localConversation },
+        activeId: 'local-1',
+      }),
+    );
+    api.fetchSessions.mockResolvedValue([]);
+    api.fetchProjects.mockResolvedValue([
+      { project_id: 'project-1', name: 'Default' },
+    ]);
+    api.createSession.mockResolvedValue({
+      session_id: 'migrated-1',
+      title: 'Old research chat',
+    });
+    api.importSessionMessages.mockResolvedValue(undefined);
+    api.fetchSession.mockResolvedValue({
+      session_id: 'migrated-1',
+      title: 'Old research chat',
+      last_activity: 200,
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Research result',
+          timestamp: 200,
+          metadata: {
+            local_message_id: 'message-1',
+            isResearch: true,
+            toolCalls: localConversation.messages[0].toolCalls,
+            researchSources: localConversation.messages[0].researchSources,
+          },
+        },
+      ],
+    });
+
+    const { useAppStore } = await import('./store');
+    await useAppStore.getState().syncServerConversations();
+
+    expect(api.importSessionMessages).toHaveBeenCalledWith(
+      'migrated-1',
+      [
+        expect.objectContaining({
+          role: 'assistant',
+          content: 'Research result',
+          metadata: expect.objectContaining({
+            local_message_id: 'message-1',
+            isResearch: true,
+            toolCalls: localConversation.messages[0].toolCalls,
+            researchSources: localConversation.messages[0].researchSources,
+          }),
+        }),
+      ],
+    );
+    expect(useAppStore.getState().conversations[0].sessionId).toBe('migrated-1');
+    expect(useAppStore.getState().messages[0].toolCalls?.[0].result).toBe(
+      'Found sources',
+    );
+    expect(useAppStore.getState().messages[0].researchSources?.[0].url).toBe(
+      'https://example.org',
+    );
+  });
+
+  it('retries an incomplete migration without creating a duplicate session', async () => {
+    localStorage.setItem(
+      'openjarvis-conversations',
+      JSON.stringify({
+        version: 1,
+        conversations: {
+          'local-pending': {
+            id: 'local-pending',
+            title: 'Pending import',
+            createdAt: 100_000,
+            updatedAt: 200_000,
+            model: 'test-model',
+            messages: [
+              {
+                id: 'user-1',
+                role: 'user',
+                content: 'Keep this message',
+                timestamp: 200_000,
+              },
+            ],
+          },
+        },
+        activeId: 'local-pending',
+      }),
+    );
+    const pendingSession = {
+      session_id: 'pending-session',
+      user_id: 'user-1',
+      project_id: 'project-1',
+      project_name: 'Default',
+      title: 'Pending import',
+      channel_ids: {},
+      created_at: 100,
+      last_activity: 200,
+      metadata: {
+        migrated_from_local: true,
+        local_history_imported: false,
+        local_conversation_id: 'local-pending',
+      },
+    };
+    api.fetchSessions
+      .mockResolvedValueOnce([pendingSession])
+      .mockResolvedValueOnce([
+        { ...pendingSession, metadata: { ...pendingSession.metadata, local_history_imported: true } },
+      ]);
+    api.fetchProjects.mockResolvedValue([
+      { project_id: 'project-1', name: 'Default' },
+    ]);
+    api.importSessionMessages
+      .mockRejectedValueOnce(new Error('temporary network error'))
+      .mockResolvedValueOnce(undefined);
+    api.fetchSession.mockResolvedValue({
+      session_id: 'pending-session',
+      title: 'Pending import',
+      last_activity: 200,
+      messages: [
+        {
+          role: 'user',
+          content: 'Keep this message',
+          timestamp: 200,
+          metadata: { local_message_id: 'user-1' },
+        },
+      ],
+    });
+
+    const { useAppStore } = await import('./store');
+    await useAppStore.getState().syncServerConversations();
+    expect(useAppStore.getState().conversations[0].sessionId).toBeUndefined();
+
+    await useAppStore.getState().syncServerConversations();
+
+    expect(api.createSession).not.toHaveBeenCalled();
+    expect(api.deleteSession).not.toHaveBeenCalled();
+    expect(useAppStore.getState().conversations[0].sessionId).toBe(
+      'pending-session',
+    );
   });
 });

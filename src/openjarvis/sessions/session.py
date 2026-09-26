@@ -372,6 +372,53 @@ class SessionStore:
         self._conn.commit()
         return cursor.rowcount > 0
 
+    def replace_messages(
+        self,
+        session_id: str,
+        messages: list[dict[str, Any]],
+    ) -> bool:
+        """Replace a session's history, preserving imported message metadata."""
+        session_row = self._conn.execute(
+            "SELECT metadata FROM sessions WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+        if session_row is None:
+            return False
+
+        session_metadata = json.loads(session_row[0]) if session_row[0] else {}
+        if session_metadata.get("migrated_from_local"):
+            session_metadata["local_history_imported"] = True
+
+        now = time.time()
+        rows = [
+            (
+                session_id,
+                message["role"],
+                message["content"],
+                message.get("channel", ""),
+                message.get("timestamp") or now,
+                json.dumps(message.get("metadata") or {}),
+            )
+            for message in messages
+        ]
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM session_messages WHERE session_id = ?",
+                (session_id,),
+            )
+            self._conn.executemany(
+                "INSERT INTO session_messages "
+                "(session_id, role, content, channel, timestamp, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            self._conn.execute(
+                "UPDATE sessions SET last_activity = ?, metadata = ? "
+                "WHERE session_id = ?",
+                (now, json.dumps(session_metadata), session_id),
+            )
+        return True
+
     def list_project_sessions(
         self,
         project_id: str,

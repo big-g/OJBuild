@@ -90,6 +90,25 @@ class TestSessionStore:
         assert store.delete_session(session.session_id) is False
         store.close()
 
+    def test_replace_messages_preserves_imported_metadata(self, tmp_path):
+        store = self._make_store(tmp_path)
+        session = store.get_or_create("user1")
+        imported = [
+            {
+                "role": "assistant",
+                "content": "Research result",
+                "timestamp": 123.5,
+                "metadata": {"researchSources": [{"ref": 1}]},
+            }
+        ]
+
+        assert store.replace_messages(session.session_id, imported) is True
+        reloaded = store.get_session(session.session_id)
+        assert reloaded is not None
+        assert reloaded.messages[0].timestamp == 123.5
+        assert reloaded.messages[0].metadata == {"researchSources": [{"ref": 1}]}
+        store.close()
+
     def test_link_channel(self, tmp_path):
         store = self._make_store(tmp_path)
         session = store.get_or_create("user1")

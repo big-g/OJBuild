@@ -245,9 +245,11 @@ class TestSessionRoutes:
 
     def test_delete_session_requires_authenticated_owner(self, tmp_path):
         from openjarvis.server.auth_store import AuthStore
+        from openjarvis.sessions.session import SessionStore
 
         app = _make_app()
         auth_store = AuthStore(tmp_path / "auth.db")
+        app.state.session_store = SessionStore(db_path=tmp_path / "sessions.db")
         for user_id in ("owner", "other"):
             auth_store.create_user(
                 user_id=user_id,
@@ -267,8 +269,60 @@ class TestSessionRoutes:
         session = client.post(
             "/v1/sessions",
             headers={"X-OpenJarvis-Session": owner_token},
-            json={"project_id": project["project_id"], "title": "Shared chat"},
+            json={
+                "project_id": project["project_id"],
+                "title": "Shared chat",
+                "metadata": {
+                    "migrated_from_local": True,
+                    "local_conversation_id": "local-123",
+                },
+            },
         ).json()
+        app.state.session_store._conn.execute(
+            "UPDATE sessions SET last_activity = 0 WHERE session_id = ?",
+            (session["session_id"],),
+        )
+        app.state.session_store._conn.commit()
+        listed = client.get(
+            "/v1/sessions",
+            headers={"X-OpenJarvis-Session": owner_token},
+        )
+        assert session["session_id"] in {
+            row["session_id"] for row in listed.json()["sessions"]
+        }
+
+        imported = client.put(
+            f"/v1/sessions/{session['session_id']}/messages",
+            headers={"X-OpenJarvis-Session": owner_token},
+            json={
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": "A preserved answer",
+                        "timestamp": 123.5,
+                        "metadata": {"researchSources": [{"ref": 1}]},
+                    }
+                ]
+            },
+        )
+        assert imported.status_code == 200
+        assert imported.json() == {"imported": 1}
+
+        detail = client.get(
+            f"/v1/sessions/{session['session_id']}",
+            headers={"X-OpenJarvis-Session": owner_token},
+        )
+        assert detail.json()["messages"][0]["metadata"] == {
+            "researchSources": [{"ref": 1}]
+        }
+        assert detail.json()["metadata"]["local_history_imported"] is True
+
+        denied_import = client.put(
+            f"/v1/sessions/{session['session_id']}/messages",
+            headers={"X-OpenJarvis-Session": other_token},
+            json={"messages": []},
+        )
+        assert denied_import.status_code == 404
 
         denied = client.delete(
             f"/v1/sessions/{session['session_id']}",
@@ -282,6 +336,7 @@ class TestSessionRoutes:
         )
         assert deleted.status_code == 200
         assert deleted.json() == {"deleted": True}
+        app.state.session_store.close()
 
 
 class TestTraceRoutes:

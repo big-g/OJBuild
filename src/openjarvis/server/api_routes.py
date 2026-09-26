@@ -7,9 +7,16 @@ import inspect
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
 from openjarvis.server.auth import get_authenticated_user_id
@@ -72,6 +79,18 @@ class CreateSessionRequest(BaseModel):
     title: str = ""
     channel: str = ""
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImportedSessionMessage(BaseModel):
+    role: Literal["user", "assistant", "system"]
+    content: str = Field(max_length=1_000_000)
+    channel: str = ""
+    timestamp: float = 0.0
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImportSessionMessagesRequest(BaseModel):
+    messages: List[ImportedSessionMessage] = Field(max_length=5000)
 
 
 # ---- Agent routes ----
@@ -680,7 +699,7 @@ async def create_session(
 async def list_sessions(
     request: Request,
     project_id: Optional[str] = None,
-    limit: int = 20,
+    limit: int = Query(default=500, ge=1, le=500),
 ):
     """List persistent sessions for a user or project."""
     try:
@@ -692,11 +711,13 @@ async def list_sessions(
                 user_id=user_id,
                 project_id=project_id,
                 limit=limit,
+                active_only=False,
             )
         else:
             sessions = store.list_sessions(
                 user_id=user_id,
                 limit=limit,
+                active_only=False,
             )
 
         return {
@@ -794,6 +815,41 @@ async def delete_session(session_id: str, request: Request):
         raise
     except Exception as exc:
         logger.exception("Failed to delete session %s", session_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@sessions_router.put("/{session_id}/messages")
+async def import_session_messages(
+    session_id: str,
+    req: ImportSessionMessagesRequest,
+    request: Request,
+):
+    """Import a device-local conversation into its server session."""
+    try:
+        store = _session_store(request)
+        user_id = get_authenticated_user_id(request)
+        session = store.get_session(session_id)
+        if session is None or session.identity is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if session.identity.user_id != user_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if not session.metadata.get("migrated_from_local"):
+            raise HTTPException(
+                status_code=409,
+                detail="Only local-migration sessions accept history imports",
+            )
+
+        imported = store.replace_messages(
+            session_id,
+            [message.model_dump() for message in req.messages],
+        )
+        if not imported:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return {"imported": len(req.messages)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to import messages for session %s", session_id)
         raise HTTPException(status_code=500, detail=str(exc))
 
 

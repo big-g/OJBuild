@@ -172,7 +172,7 @@ export interface JarvisSessionMessage {
   content: string;
   channel: string;
   timestamp: number;
-  metadata: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 }
 
 export interface JarvisSession {
@@ -222,6 +222,7 @@ export async function fetchSessions(
   projectId?: string,
 ): Promise<JarvisSession[]> {
   const params = new URLSearchParams();
+  params.set('limit', '500');
 
   if (projectId) {
     params.set('project_id', projectId);
@@ -274,6 +275,28 @@ export async function deleteSession(sessionId: string): Promise<void> {
   const res = await apiFetch(
     `/v1/sessions/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' },
+  );
+
+  if (!res.ok) throw new Error(`Failed: ${res.status}`);
+}
+
+export async function importSessionMessages(
+  sessionId: string,
+  messages: Array<{
+    role: 'user' | 'assistant' | 'system';
+    content: string;
+    channel?: string;
+    timestamp: number;
+    metadata: Record<string, unknown>;
+  }>,
+): Promise<void> {
+  const res = await apiFetch(
+    `/v1/sessions/${encodeURIComponent(sessionId)}/messages`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages }),
+    },
   );
 
   if (!res.ok) throw new Error(`Failed: ${res.status}`);
