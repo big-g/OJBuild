@@ -437,6 +437,13 @@ def chat(
 
         # Generate response even when optional memory context is unavailable.
         try:
+            from openjarvis.core.evidence import (
+                assess_evidence,
+                blocked_response,
+                detect_evidence_requirement,
+            )
+
+            requirement = detect_evidence_requirement(user_input)
             if agent is not None:
                 from openjarvis.agents._stubs import AgentContext
 
@@ -447,9 +454,30 @@ def chat(
                     if msg.role != Role.SYSTEM:
                         agent_context.conversation.add(msg)
                 response = agent.run(user_input, context=agent_context)
-                content = (
-                    response.content if hasattr(response, "content") else str(response)
-                )
+                if requirement.required:
+                    from openjarvis.core.evidence import (
+                        finalize_agent_result_with_evidence,
+                    )
+
+                    if hasattr(response, "tool_results") and hasattr(
+                        response, "content"
+                    ):
+                        response = finalize_agent_result_with_evidence(
+                            agent,
+                            user_input,
+                            response,
+                        )
+                        content = response.content or ""
+                    else:
+                        content = blocked_response(assess_evidence(requirement))
+                else:
+                    content = (
+                        response.content
+                        if hasattr(response, "content")
+                        else str(response)
+                    )
+            elif requirement.required:
+                content = blocked_response(assess_evidence(requirement))
             else:
                 result = engine.generate(
                     generation_history,

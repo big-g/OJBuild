@@ -313,6 +313,53 @@ class TestVoiceInput:
 
 
 class TestChatAgents:
+    def test_direct_chat_blocks_current_request_without_retrieval(self) -> None:
+        engine = MagicMock()
+        engine.engine_id = "mock"
+        engine.generate.return_value = {"content": "A fabricated current price."}
+        config = JarvisConfig()
+        config.intelligence.default_model = "test-model"
+        config.agent.default_agent = "none"
+
+        with (
+            patch("openjarvis.cli.chat_cmd.load_config", return_value=config),
+            patch("openjarvis.engine.get_engine", return_value=("mock", engine)),
+            patch("openjarvis.intelligence.register_builtin_models"),
+            patch("openjarvis.memory.build_memory_service", return_value=None),
+        ):
+            result = CliRunner().invoke(
+                chat,
+                ["--model", "test-model"],
+                input="What's the current stock price of XYZ?\n/quit\n",
+            )
+
+        assert result.exit_code == 0
+        assert "I couldn't retrieve the required data." in result.output
+        engine.generate.assert_not_called()
+
+    def test_agent_chat_blocks_current_request_without_evidence(self) -> None:
+        engine = MagicMock()
+        engine.engine_id = "mock"
+        config = JarvisConfig()
+        config.intelligence.default_model = "test-model"
+        config.agent.default_agent = "none"
+        AgentRegistry.register_value("simple_chat_agent", _SimpleChatAgent)
+
+        with (
+            patch("openjarvis.cli.chat_cmd.load_config", return_value=config),
+            patch("openjarvis.engine.get_engine", return_value=("mock", engine)),
+            patch("openjarvis.intelligence.register_builtin_models"),
+            patch("openjarvis.memory.build_memory_service", return_value=None),
+        ):
+            result = CliRunner().invoke(
+                chat,
+                ["--agent", "simple_chat_agent", "--model", "test-model"],
+                input="What's the current stock price of XYZ?\n/quit\n",
+            )
+
+        assert result.exit_code == 0
+        assert "I couldn't retrieve the required data." in result.output
+
     def test_direct_chat_injects_auto_memory_facts(self, tmp_path) -> None:
         facts_path = tmp_path / "facts.jsonl"
         LocalFactStore(facts_path).add(
