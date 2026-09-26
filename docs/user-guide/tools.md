@@ -188,6 +188,8 @@ All built-in tools are registered via `@ToolRegistry.register()` and are availab
 | **Code** | `code_interpreter_docker` | Execute Python code in a disposable Docker container |
 | **Code** | `repl` | Persistent Python REPL with state across calls |
 | **Search** | `web_search` | Web search returning result summaries |
+| **Search** | `web_crawl` | Bounded same-host HTML crawl with URL provenance (optional Scrapy extra) |
+| **Browser** | `browser_navigate`, `browser_click`, `browser_type`, `browser_extract`, `browser_screenshot`, `browser_axtree` | Playwright-based browser control and page inspection (optional browser extra) |
 | **File I/O** | `file_read` | Read file contents with safety validations |
 | **HTTP** | `http_request` | Make HTTP requests with SSRF protection |
 | **Memory** | `retrieval` | Search the memory backend for relevant context |
@@ -209,6 +211,20 @@ All built-in tools are registered via `@ToolRegistry.register()` and are availab
 ---
 
 ## Built-in Tool Details
+
+### Browser tools
+
+The browser tools use Playwright to navigate and interact with JavaScript-driven
+pages. Install the optional dependency and Chromium browser with:
+
+```bash
+uv sync --extra browser
+uv run playwright install chromium
+```
+
+They are available to agents granted the corresponding browser tools. Use
+`web_crawl` for small same-host static HTML crawls; use Playwright when page
+content requires JavaScript or user-like interaction.
 
 ### Calculator
 
@@ -382,6 +398,22 @@ Searches the web and returns a result summary. Useful for queries that need curr
 | Parameter | Type   | Required | Description                              |
 |-----------|--------|----------|------------------------------------------|
 | `query`   | string | Yes      | Search query string                      |
+
+### WebCrawl
+
+**Registry key:** `web_crawl` | **Category:** `search`
+
+Crawls a starting page and a bounded number of linked pages on the same host.
+It obeys `robots.txt`, rejects private or metadata network targets, and returns
+each page with its URL so research answers can retain evidence provenance.
+It reads static HTML; use the Playwright browser tools for pages that require
+JavaScript rendering. Crawling is opt-in and can be enabled in `tools.enabled`.
+
+Install Scrapy with `uv sync --extra tools-crawl`, then add `"web_crawl"` to
+`[tools].enabled` in `config.toml`. The tool caps each crawl at 8 pages, stays
+on the starting host, and applies request time, size, and pacing limits.
+
+**Parameters:** `url` (required) and `max_pages` (optional, 1–8; defaults to 3).
 
 ### CodeInterpreter
 

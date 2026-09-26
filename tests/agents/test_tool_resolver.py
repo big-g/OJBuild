@@ -284,7 +284,6 @@ def test_mcp_tools_can_be_disabled_per_agent() -> None:
     assert resolved.mcp_clients == []
 
 
-
 def test_resolved_agent_tools_are_registered_for_management() -> None:
     from openjarvis.security.capability_registry import (
         ResourceStatus,
@@ -328,7 +327,9 @@ def test_resolved_agent_tools_are_registered_for_management() -> None:
 
 
 def test_agent_specific_schema_gets_distinct_management_identity() -> None:
-    from openjarvis.security.capability_registry import create_builtin_capability_registry
+    from openjarvis.security.capability_registry import (
+        create_builtin_capability_registry,
+    )
     from openjarvis.security.tool_management_registry import ToolManagementRegistry
 
     class _ConfiguredTool(BaseTool):
@@ -376,3 +377,23 @@ def test_agent_specific_schema_gets_distinct_management_identity() -> None:
     assert configured.management_identity == "agent:agent-42:configured"
     assert managed.contains("agent:agent-42:configured")
     assert not managed.contains("builtin:configured")
+
+
+def test_configured_web_crawl_resolves_as_a_managed_agent_tool() -> None:
+    from openjarvis.tools.scrapy_crawl import ScrapyCrawlTool
+
+    ToolRegistry.register_value("web_crawl", ScrapyCrawlTool)
+    resolved = tool_resolver.resolve_agent_tools(
+        {
+            "id": "research-agent",
+            "agent_type": "simple",
+            "config": {"tools": ["web_crawl"]},
+        },
+        engine=object(),
+        model="test-model",
+    )
+
+    assert [tool.spec.name for tool in resolved.instances] == ["web_crawl"]
+    assert set(resolved.openai_specs[0]["function"]["parameters"]["required"]) == {
+        "url"
+    }

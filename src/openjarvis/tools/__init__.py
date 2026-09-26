@@ -38,6 +38,11 @@ except ImportError:
     pass
 
 try:
+    import openjarvis.tools.scrapy_crawl  # noqa: F401
+except ImportError:
+    pass
+
+try:
     import openjarvis.tools.code_interpreter  # noqa: F401
 except ImportError:
     pass
@@ -171,6 +176,7 @@ BUILTIN_TOOL_MODULES = (
     "openjarvis.tools.llm_tool",
     "openjarvis.tools.file_read",
     "openjarvis.tools.web_search",
+    "openjarvis.tools.scrapy_crawl",
     "openjarvis.tools.code_interpreter",
     "openjarvis.tools.code_interpreter_docker",
     "openjarvis.tools.repl",

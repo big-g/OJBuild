@@ -82,6 +82,7 @@ class TestAutoDiscovery:
         assert "memory_retrieve" in names
         assert "memory_search" in names
         assert "memory_index" in names
+        assert "web_crawl" in names
 
     def test_auto_discover_tool_count(self):
         """Auto-discovered server should have all built-in tools."""

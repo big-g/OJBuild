@@ -93,6 +93,12 @@ class MCPServer:
         except ImportError:
             pass
         try:
+            from openjarvis.tools.scrapy_crawl import ScrapyCrawlTool
+
+            _tool_classes.append(ScrapyCrawlTool)
+        except ImportError:
+            pass
+        try:
             from openjarvis.tools.code_interpreter import CodeInterpreterTool
 
             _tool_classes.append(CodeInterpreterTool)
