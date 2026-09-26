@@ -311,6 +311,20 @@ class Jarvis:
                 channel=channel,
             )
 
+        evidence_block = _direct_query_evidence_block(query)
+        if evidence_block is not None:
+            return {
+                "content": evidence_block,
+                "usage": {},
+                "model": model_name,
+                "engine": self._resolved_engine_key,
+                "evidence": {
+                    "evidence_required": True,
+                    "evidence_status": "required_not_obtained",
+                    "evidence_records": 0,
+                },
+            }
+
         # Direct engine mode
         messages = [Message(role=Role.USER, content=query)]
 
@@ -358,6 +372,11 @@ class Jarvis:
             models = self._engine.list_models()
             model_name = models[0] if models else "default"
 
+        evidence_block = _direct_query_evidence_block(query)
+        if evidence_block is not None:
+            yield evidence_block
+            return
+
         messages = [Message(role=Role.USER, content=query)]
 
         if context and self._config.agent.context_from_memory:
@@ -400,6 +419,22 @@ class Jarvis:
         if not model_name:
             models = self._engine.list_models()
             model_name = models[0] if models else "default"
+
+        evidence_block = _direct_query_evidence_block(query)
+        if evidence_block is not None:
+            yield {"token": evidence_block, "index": 0}
+            yield {
+                "done": True,
+                "content": evidence_block,
+                "model": model_name,
+                "engine": self._resolved_engine_key,
+                "evidence": {
+                    "evidence_required": True,
+                    "evidence_status": "required_not_obtained",
+                    "evidence_records": 0,
+                },
+            }
+            return
 
         messages = [Message(role=Role.USER, content=query)]
 
@@ -564,6 +599,14 @@ class Jarvis:
                 logger.warning("Failed to inject memory context for agent: %s", exc)
 
         result = agent_obj.run(query, context=ctx)
+        from openjarvis.core.evidence import finalize_agent_result_with_evidence
+
+        result = finalize_agent_result_with_evidence(agent_obj, query, result)
+        evidence_metadata = {
+            key: value
+            for key, value in (result.metadata or {}).items()
+            if key.startswith("evidence_") or key.startswith("grounding_")
+        }
         return {
             "content": result.content,
             "usage": {},
@@ -578,6 +621,7 @@ class Jarvis:
             "turns": result.turns,
             "model": model_name,
             "engine": self._resolved_engine_key,
+            "evidence": evidence_metadata,
         }
 
     def _inject_context(
@@ -648,6 +692,20 @@ class Jarvis:
 
     def __exit__(self, *exc: Any) -> None:
         self.close()
+
+
+def _direct_query_evidence_block(query: str) -> Optional[str]:
+    """Return the canonical block response when direct mode cannot retrieve."""
+    from openjarvis.core.evidence import (
+        assess_evidence,
+        blocked_response,
+        detect_evidence_requirement,
+    )
+
+    requirement = detect_evidence_requirement(query)
+    if not requirement.required:
+        return None
+    return blocked_response(assess_evidence(requirement))
 
 
 __all__ = ["Jarvis", "JarvisSystem", "MemoryHandle", "SystemBuilder"]

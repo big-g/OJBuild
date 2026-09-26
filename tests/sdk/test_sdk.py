@@ -137,6 +137,42 @@ class TestJarvisAsk:
             assert result["content"] == "Full response"
             j.close()
 
+    def test_direct_current_query_is_blocked_before_inference(self):
+        engine = _make_engine("A made up weather report.")
+        with patch("openjarvis.sdk.get_engine", return_value=("mock", engine)):
+            j = Jarvis(config=JarvisConfig(), model="test-model")
+            result = j.ask_full("What is the weather today?")
+            assert result["content"] == "I couldn't retrieve the required data."
+            assert result["evidence"]["evidence_status"] == "required_not_obtained"
+            engine.generate.assert_not_called()
+            j.close()
+
+    def test_agent_current_query_is_finalized(self):
+        from openjarvis.agents._stubs import AgentResult
+        from openjarvis.core.registry import AgentRegistry
+
+        engine = _make_engine()
+
+        class MockAgent:
+            agent_id = "mock-agent-evidence"
+
+            def __init__(self, eng, model, **kwargs):
+                pass
+
+            def run(self, input, context=None, **kwargs):
+                return AgentResult(content="It is sunny today.", turns=1)
+
+        AgentRegistry.register_value("mock-agent-evidence", MockAgent)
+        with patch("openjarvis.sdk.get_engine", return_value=("mock", engine)):
+            j = Jarvis(config=JarvisConfig(), model="test-model")
+            result = j.ask_full(
+                "What is the weather today?",
+                agent="mock-agent-evidence",
+            )
+            assert result["content"] == "I couldn't retrieve the required data."
+            assert result["evidence"]["evidence_status"] == "required_not_obtained"
+            j.close()
+
 
 class TestJarvisModels:
     def test_list_models(self):
@@ -256,6 +292,40 @@ class TestJarvisStreaming:
             async for token in j.ask_stream("Hi"):
                 tokens.append(token)
             assert tokens == ["Hello", " ", "world"]
+            j.close()
+
+    @pytest.mark.asyncio
+    async def test_ask_stream_blocks_current_query_before_inference(self):
+        engine = _make_engine()
+        stream_calls = []
+
+        async def mock_stream(*args, **kwargs):
+            stream_calls.append(args)
+            yield "unsupported answer"
+
+        engine.stream = mock_stream
+        with patch("openjarvis.sdk.get_engine", return_value=("mock", engine)):
+            j = Jarvis(config=JarvisConfig(), model="test-model")
+            tokens = [token async for token in j.ask_stream("What is happening today?")]
+            assert tokens == ["I couldn't retrieve the required data."]
+            assert stream_calls == []
+            j.close()
+
+    @pytest.mark.asyncio
+    async def test_ask_full_stream_blocks_current_query_before_inference(self):
+        engine = _make_engine()
+
+        async def mock_stream(*args, **kwargs):
+            yield "unsupported answer"
+
+        engine.stream = mock_stream
+        with patch("openjarvis.sdk.get_engine", return_value=("mock", engine)):
+            j = Jarvis(config=JarvisConfig(), model="test-model")
+            chunks = [
+                chunk async for chunk in j.ask_full_stream("What is happening today?")
+            ]
+            assert chunks[0]["token"] == "I couldn't retrieve the required data."
+            assert chunks[-1]["evidence"]["evidence_status"] == "required_not_obtained"
             j.close()
 
     @pytest.mark.asyncio

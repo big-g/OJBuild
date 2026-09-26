@@ -98,11 +98,11 @@ def imessage_start(
         from openjarvis.agents.deep_research import (
             DeepResearchAgent,
         )
-        from openjarvis.core.evidence import finalize_agent_result_with_evidence
         from openjarvis.connectors.retriever import (
             TwoStageRetriever,
         )
         from openjarvis.connectors.store import KnowledgeStore
+        from openjarvis.core.evidence import finalize_agent_result_with_evidence
         from openjarvis.engine.ollama import OllamaEngine
         from openjarvis.tools.knowledge_search import (
             KnowledgeSearchTool,

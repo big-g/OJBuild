@@ -279,8 +279,8 @@ def _launch_chat(store: KnowledgeStore, console: Console) -> None:
     """Start an interactive Deep Research chat session."""
     from openjarvis.agents.deep_research import DeepResearchAgent
     from openjarvis.connectors.retriever import TwoStageRetriever
-    from openjarvis.engine.ollama import OllamaEngine
     from openjarvis.core.evidence import finalize_agent_result_with_evidence
+    from openjarvis.engine.ollama import OllamaEngine
     from openjarvis.tools.knowledge_search import KnowledgeSearchTool
     from openjarvis.tools.knowledge_sql import KnowledgeSQLTool
     from openjarvis.tools.scan_chunks import ScanChunksTool
