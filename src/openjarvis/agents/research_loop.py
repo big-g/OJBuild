@@ -370,9 +370,14 @@ def renumber_citations(
         except ValueError:
             return match.group(0)
         new = old_to_new.get(old)
-        return f"[{new}]" if new is not None else match.group(0)
+        # Never expose a model-invented citation that has no corresponding
+        # retrieved source. Grounding validation handles the claim itself;
+        # citation normalization must keep the displayed provenance exact.
+        return f"[{new}]" if new is not None else ""
 
     new_text = _CITE_RE.sub(_replace, text)
+    # Removing an invalid reference can leave a space before punctuation.
+    new_text = re.sub(r"[ \t]+([,.;:!?])", r"\1", new_text)
     return new_text, ordered
 
 

@@ -543,17 +543,20 @@ def test_renumber_citations_drops_uncited_sources() -> None:
     assert sources[0]["title"] == "cited"
 
 
-def test_renumber_citations_unknown_ref_left_alone() -> None:
-    """A ``[N]`` whose ref isn't in the map is left as-is.
-
-    Defensive: a hallucinated citation shouldn't blow up renumbering or
-    silently disappear — the user sees the broken cite and can ask why.
-    """
+def test_renumber_citations_drops_unknown_refs() -> None:
+    """A hallucinated citation never appears without a matching source."""
     text = "Real [3], hallucinated [99]."
     ref_to_source = {3: {"ref": 3, "title": "Real"}}
     new_text, sources = renumber_citations(text, ref_to_source)
-    assert new_text == "Real [1], hallucinated [99]."
+    assert new_text == "Real [1], hallucinated."
     assert [s["title"] for s in sources] == ["Real"]
+
+
+def test_renumber_citations_drops_all_unknown_refs_cleanly() -> None:
+    text = "Unsupported reference [99]."
+    new_text, sources = renumber_citations(text, {})
+    assert new_text == "Unsupported reference."
+    assert sources == []
 
 
 # ---------------------------------------------------------------------------
