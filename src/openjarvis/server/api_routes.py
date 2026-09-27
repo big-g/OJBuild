@@ -18,6 +18,7 @@ from fastapi import (
     WebSocketDisconnect,
 )
 from pydantic import BaseModel, Field
+from starlette.datastructures import UploadFile
 
 from openjarvis.server.auth import get_authenticated_user_id
 
@@ -1271,6 +1272,7 @@ async def learning_policy(request: Request):
 # ---- Speech routes ----
 
 speech_router = APIRouter(prefix="/v1/speech", tags=["speech"])
+MAX_SPEECH_UPLOAD_BYTES = 25 * 1024 * 1024
 
 
 @speech_router.post("/transcribe")
@@ -1282,15 +1284,23 @@ async def transcribe_speech(request: Request):
 
     form = await request.form()
     audio_file = form.get("file")
-    if audio_file is None:
+    if not isinstance(audio_file, UploadFile):
         raise HTTPException(status_code=400, detail="Missing 'file' field")
 
-    audio_bytes = await audio_file.read()
     language = form.get("language")
 
-    # Detect format from filename
-    filename = getattr(audio_file, "filename", "audio.wav")
-    ext = filename.rsplit(".", 1)[-1] if "." in filename else "wav"
+    filename = audio_file.filename or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in backend.supported_formats():
+        raise HTTPException(status_code=415, detail="Unsupported audio format")
+
+    # Read at most one byte beyond the limit; never load an unbounded upload
+    # into memory before handing it to the speech backend.
+    audio_bytes = await audio_file.read(MAX_SPEECH_UPLOAD_BYTES + 1)
+    if len(audio_bytes) > MAX_SPEECH_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="Audio upload is too large")
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio upload is empty")
 
     try:
         result = await asyncio.to_thread(

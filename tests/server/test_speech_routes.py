@@ -16,6 +16,7 @@ def mock_speech_backend():
     backend = MagicMock()
     backend.backend_id = "mock"
     backend.health.return_value = True
+    backend.supported_formats.return_value = ["wav", "webm", "m4a"]
     backend.transcribe.return_value = TranscriptionResult(
         text="Hello world",
         language="en",
@@ -98,6 +99,37 @@ def test_transcribe_endpoint_surfaces_backend_error(client, mock_speech_backend)
 def test_transcribe_no_file(client):
     response = client.post("/v1/speech/transcribe")
     assert response.status_code == 400 or response.status_code == 422
+
+
+def test_transcribe_rejects_unsupported_format(client, mock_speech_backend):
+    response = client.post(
+        "/v1/speech/transcribe",
+        files={"file": ("recording.txt", b"not audio", "text/plain")},
+    )
+
+    assert response.status_code == 415
+    mock_speech_backend.transcribe.assert_not_called()
+
+
+def test_transcribe_rejects_empty_audio(client, mock_speech_backend):
+    response = client.post(
+        "/v1/speech/transcribe",
+        files={"file": ("recording.wav", b"", "audio/wav")},
+    )
+
+    assert response.status_code == 400
+    mock_speech_backend.transcribe.assert_not_called()
+
+
+def test_transcribe_bounds_upload_before_backend(client, mock_speech_backend):
+    with patch("openjarvis.server.api_routes.MAX_SPEECH_UPLOAD_BYTES", 8):
+        response = client.post(
+            "/v1/speech/transcribe",
+            files={"file": ("recording.wav", b"0123456789", "audio/wav")},
+        )
+
+    assert response.status_code == 413
+    mock_speech_backend.transcribe.assert_not_called()
 
 
 def test_health_endpoint(client):
