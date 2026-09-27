@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { transcribeAudio, fetchSpeechHealth } from '../lib/api';
+import { transcribeAudio, fetchSpeechHealth, isTauri } from '../lib/api';
+import { microphoneStartError, recordingFilename } from '../lib/speech-format';
 
 export type SpeechState = 'idle' | 'recording' | 'transcribing';
 
@@ -96,16 +97,21 @@ export function useSpeech(onTranscription?: (text: string) => void) {
           streamRef.current = null;
 
           if (audioContextRef.current) {
-            await audioContextRef.current.close();
+            try {
+              await audioContextRef.current.close();
+            } catch {
+              // A failed analyser shutdown must not strand the transcript.
+            }
             audioContextRef.current = null;
           }
 
           analyserRef.current = null;
           mediaRecorderRef.current = null;
 
-          const blob = new Blob(chunksRef.current, {
-            type: recorder.mimeType || 'audio/webm',
-          });
+          const mimeType =
+            recorder.mimeType ||
+            chunksRef.current.find((chunk) => chunk.type)?.type || '';
+          const blob = new Blob(chunksRef.current, { type: mimeType });
           chunksRef.current = [];
 
           if (discardRecordingRef.current) {
@@ -115,7 +121,11 @@ export function useSpeech(onTranscription?: (text: string) => void) {
           }
 
           try {
-            const result = await transcribeAudio(blob);
+            const filename = recordingFilename(mimeType);
+            if (!filename) {
+              throw new Error('Browser recorded an unsupported audio format.');
+            }
+            const result = await transcribeAudio(blob, filename);
             setState('idle');
 
             if (result.text) {
@@ -148,8 +158,13 @@ export function useSpeech(onTranscription?: (text: string) => void) {
       return;
     }
 
-    if (!navigator.mediaDevices?.getUserMedia) {
-      setError('Microphone not supported in this browser');
+    if (!isTauri() && window.isSecureContext === false) {
+      setError('Microphone requires a secure HTTPS connection on this device.');
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+      setError('Microphone recording is not supported in this browser.');
       return;
     }
 
@@ -251,11 +266,24 @@ export function useSpeech(onTranscription?: (text: string) => void) {
         }
       }, CHECK_INTERVAL_MS);
     } catch (err) {
+      if (silenceTimerRef.current !== null) {
+        window.clearInterval(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+      if (mediaRecorderRef.current?.state === 'recording') {
+        mediaRecorderRef.current.onstop = null;
+        mediaRecorderRef.current.stop();
+      }
+      if (audioContextRef.current) {
+        void audioContextRef.current.close().catch(() => {});
+        audioContextRef.current = null;
+      }
+      analyserRef.current = null;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       mediaRecorderRef.current = null;
       recordingStartedAtRef.current = null;
-      setError('Microphone access denied');
+      setError(microphoneStartError(err));
       setState('idle');
     } finally {
       startingRef.current = false;
