@@ -37,6 +37,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
   const speechDetectedRef = useRef(false);
   const silenceStartedRef = useRef<number | null>(null);
   const discardRecordingRef = useRef(false);
+  const stopPromiseRef = useRef<Promise<string> | null>(null);
   const startingRef = useRef(false);
   const recordingStartedAtRef = useRef<number | null>(null);
 
@@ -71,7 +72,14 @@ export function useSpeech(onTranscription?: (text: string) => void) {
 
   const stopRecording = useCallback(
     async (options: StopRecordingOptions = {}): Promise<string> => {
-      return new Promise((resolve, reject) => {
+      if (stopPromiseRef.current) {
+        // The recorder may take another event loop turn to fire onstop. Keep
+        // every caller attached to that turn, including a later cancellation.
+        discardRecordingRef.current ||= !!options.discard;
+        return stopPromiseRef.current;
+      }
+
+      const promise = new Promise<string>((resolve, reject) => {
         const recorder = mediaRecorderRef.current;
 
         if (!recorder || recorder.state !== 'recording') {
@@ -91,7 +99,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
         recordingStartedAtRef.current = null;
 
         recorder.onstop = async () => {
-          setState(options.discard ? 'idle' : 'transcribing');
+          setState(discardRecordingRef.current ? 'idle' : 'transcribing');
 
           streamRef.current?.getTracks().forEach((track) => track.stop());
           streamRef.current = null;
@@ -116,6 +124,7 @@ export function useSpeech(onTranscription?: (text: string) => void) {
 
           if (discardRecordingRef.current) {
             discardRecordingRef.current = false;
+            setState('idle');
             resolve('');
             return;
           }
@@ -144,6 +153,12 @@ export function useSpeech(onTranscription?: (text: string) => void) {
 
         recorder.stop();
       });
+      stopPromiseRef.current = promise;
+      try {
+        return await promise;
+      } finally {
+        stopPromiseRef.current = null;
+      }
     },
     [],
   );
