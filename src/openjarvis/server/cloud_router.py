@@ -104,7 +104,10 @@ def _to_openai_msgs(messages: Sequence[Message]) -> list[dict[str, Any]]:
     out = []
     for m in messages:
         role = m.role.value if hasattr(m.role, "value") else str(m.role)
-        out.append({"role": role, "content": m.content or ""})
+        item: dict[str, Any] = {"role": role, "content": m.content or ""}
+        if m.images:
+            item["images"] = list(m.images)
+        out.append(item)
     return out
 
 

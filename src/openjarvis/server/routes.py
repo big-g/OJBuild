@@ -72,6 +72,7 @@ def _to_messages(chat_messages) -> list[Message]:
                 ]
                 or None,
                 tool_call_id=m.tool_call_id,
+                images=m.images,
             )
         )
     return messages
@@ -189,6 +190,31 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     )
     model = request_body.model
 
+    # Images are decoded by Ollama. Keep them out of the session database and
+    # reject unsupported routes before a model or agent can silently drop them.
+    image_messages = [m for m in request_body.messages if m.images]
+    if image_messages:
+        import base64
+        import binascii
+
+        from openjarvis.server.cloud_router import get_provider
+
+        if get_provider(model) is not None or request_body.tools:
+            raise HTTPException(status_code=400, detail="Image input currently requires a local model without tools")
+        if len(image_messages) != 1 or image_messages[0].role != "user" or len(image_messages[0].images) > 4:
+            raise HTTPException(status_code=400, detail="Attach up to four images to one user message")
+        for encoded in image_messages[0].images:
+            try:
+                raw = base64.b64decode(encoded, validate=True)
+            except (ValueError, binascii.Error):
+                raise HTTPException(status_code=400, detail="Invalid image encoding") from None
+            if len(raw) > 10 * 1024 * 1024 or not (
+                raw.startswith(b"\x89PNG\r\n\x1a\n")
+                or raw.startswith(b"\xff\xd8\xff")
+                or raw.startswith(b"RIFF") and raw[8:12] == b"WEBP"
+            ):
+                raise HTTPException(status_code=400, detail="Images must be PNG, JPEG, or WebP under 10 MiB")
+
     # Load server-side conversation history when a persistent session is supplied.
     session_store = None
     session = None
@@ -254,6 +280,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
 
     use_server_agent = (
         agent is not None
+        and not image_messages
         and not request_body.tools
         and (not request_body.stream or bool(getattr(agent, "_tools", None)))
     )
@@ -264,6 +291,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     if (
         config is not None
         and config.agent.context_from_memory
+        and not image_messages
         and request_body.messages
     ):
         try:
@@ -426,6 +454,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             memory_service=getattr(request.app.state, "memory_service", None),
             session_store=session_store,
             session_id=request_body.session_id,
+            user_id=user_id,
         )
 
     # Non-streaming: use agent if available, otherwise direct engine call.
@@ -1251,6 +1280,7 @@ async def _handle_stream(
     memory_service=None,
     session_store=None,
     session_id=None,
+    user_id=None,
 ):
     """Stream response using SSE format.
 

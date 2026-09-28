@@ -3,7 +3,7 @@ import { getBase, authHeaders } from './api';
 
 export interface ChatRequest {
   model: string;
-  messages: Array<{ role: string; content: string }>;
+  messages: Array<{ role: string; content: string; images?: string[] }>;
   stream: true;
   temperature?: number;
   max_tokens?: number;
@@ -23,7 +23,8 @@ export async function* streamChat(
   });
 
   if (!response.ok) {
-    throw new Error(`Chat request failed: ${response.status}`);
+    const error = await response.json().catch(() => null);
+    throw new Error(error?.detail || `Chat request failed: ${response.status}`);
   }
 
   const reader = response.body!.getReader();

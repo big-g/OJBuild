@@ -10,6 +10,7 @@ import {
 } from '../../lib/api';
 import { listConnectors, getSyncStatus } from '../../lib/connectors-api';
 import { serializeToolCallArguments } from '../../lib/tool-call';
+import { readImageInput } from '../../lib/image-input';
 import {
   engineFromCompletionChunk,
   resolveChatEngine,
@@ -91,6 +92,8 @@ function useResearchCorpusSync(enabled: boolean): {
 
 export function InputArea() {
   const [input, setInput] = useState('');
+  const [image, setImage] = useState<{ name: string; encoded: string } | null>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
@@ -279,7 +282,7 @@ export function InputArea() {
   );
 
 const sendMessage = useCallback(async (messageText?: string) => {
-  const content = (messageText ?? input).trim();
+  const content = (messageText ?? input).trim() || (image ? 'Describe this image.' : '');
 
   if (!content || streamState.isStreaming) {
     voiceInteractionRef.current = false;
@@ -295,6 +298,11 @@ const sendMessage = useCallback(async (messageText?: string) => {
 
   if (!selectedModel) {
       toast.error('Pick a model first (⌘K)');
+      return;
+    }
+
+    if (image && deepResearch) {
+      toast.error('Turn off Deep Research to analyze an image.');
       return;
     }
 
@@ -330,7 +338,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
     const userMsg: ChatMessage = {
       id: generateId(),
       role: 'user',
-      content,
+      content: image ? `${content}\n[Image attached: ${image.name}; available for this turn]` : content,
       timestamp: Date.now(),
     };
     addMessage(convId, userMsg);
@@ -362,9 +370,11 @@ const sendMessage = useCallback(async (messageText?: string) => {
 },
   ...currentMessages.map((m) => ({
     role: m.role,
-    content: m.content,
+    content: m.id === userMsg.id ? content : m.content,
+    ...(m.id === userMsg.id && image ? { images: [image.encoded] } : {}),
   })),
 ];
+    setImage(null);
 
     const assistantMsg: ChatMessage = {
       id: generateId(),
@@ -769,6 +779,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
     }
   }, [
     input,
+    image,
     activeId,
     selectedModel,
     streamState.isStreaming,
@@ -819,6 +830,17 @@ const sendMessage = useCallback(async (messageText?: string) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
+    }
+  };
+
+  const handleImage = async (file?: File) => {
+    if (!file) return;
+    try {
+      setImage({ name: file.name, encoded: await readImageInput(file) });
+    } catch (error) {
+      toast.error(String(error instanceof Error ? error.message : error));
+    } finally {
+      if (imageInputRef.current) imageInputRef.current.value = '';
     }
   };
 
@@ -884,6 +906,12 @@ const sendMessage = useCallback(async (messageText?: string) => {
           </div>
         )}
       </div>
+      {image && (
+        <div className="mb-2 flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+          <span>Image: {image.name}</span>
+          <button type="button" onClick={() => setImage(null)} aria-label="Remove image" className="underline">Remove</button>
+        </div>
+      )}
       <div
         className="flex items-center gap-2 rounded-2xl px-4 py-3 transition-shadow"
         style={{
@@ -892,6 +920,8 @@ const sendMessage = useCallback(async (messageText?: string) => {
           boxShadow: 'var(--shadow-sm)',
         }}
       >
+        <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void handleImage(e.target.files?.[0])} />
+        <button type="button" title="Attach image" aria-label="Attach image" onClick={() => imageInputRef.current?.click()} disabled={streamState.isStreaming || modelLoading} className="p-2 disabled:opacity-30"><Paperclip size={16} /></button>
         <textarea
           ref={textareaRef}
           value={input}
@@ -922,7 +952,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
             />
             <button
               onClick={() => sendMessage()}
-              disabled={streamState.isStreaming || !input.trim() || modelLoading || !selectedModel}
+              disabled={streamState.isStreaming || (!input.trim() && !image) || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
