@@ -201,9 +201,21 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
 
         if get_provider(model) is not None or request_body.tools:
             raise HTTPException(status_code=400, detail="Image input currently requires a local model without tools")
-        if len(image_messages) != 1 or image_messages[0].role != "user" or len(image_messages[0].images) > 4:
-            raise HTTPException(status_code=400, detail="Attach up to four images to one user message")
+        if (
+            len(image_messages) != 1
+            or image_messages[0] is not request_body.messages[-1]
+            or image_messages[0].role != "user"
+            or len(image_messages[0].images) > 4
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Attach up to four images to the latest user message",
+            )
         for encoded in image_messages[0].images:
+            # Bound encoded input before allocating decoded bytes. Base64 of a
+            # 10 MiB image is at most 13,981,016 characters.
+            if len(encoded) > 13_981_016:
+                raise HTTPException(status_code=400, detail="Image exceeds 10 MiB")
             try:
                 raw = base64.b64decode(encoded, validate=True)
             except (ValueError, binascii.Error):

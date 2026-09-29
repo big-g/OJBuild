@@ -92,7 +92,9 @@ function useResearchCorpusSync(enabled: boolean): {
 
 export function InputArea() {
   const [input, setInput] = useState('');
-  const [image, setImage] = useState<{ name: string; encoded: string } | null>(null);
+  const [images, setImages] = useState<Array<{ name: string; type: string; encoded: string }>>([]);
+  const [imageLoading, setImageLoading] = useState(false);
+  const imageReadingRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -282,15 +284,14 @@ export function InputArea() {
   );
 
 const sendMessage = useCallback(async (messageText?: string) => {
-  const content = (messageText ?? input).trim() || (image ? 'Describe this image.' : '');
+  const content = (messageText ?? input).trim() || (images.length ? 'Describe these images.' : '');
 
-  if (!content || streamState.isStreaming) {
+  if (!content || streamState.isStreaming || imageReadingRef.current) {
     voiceInteractionRef.current = false;
     return;
   }
 
-  // Typed chat remains text-only; transcribed microphone input participates
-  // in the Conversation Mode speak/listen loop.
+  // Transcribed microphone input participates in the Conversation Mode loop.
   voiceInteractionRef.current = isVoiceInteraction(messageText);
 
   // A new query interrupts any response currently being spoken.
@@ -301,8 +302,8 @@ const sendMessage = useCallback(async (messageText?: string) => {
       return;
     }
 
-    if (image && deepResearch) {
-      toast.error('Turn off Deep Research to analyze an image.');
+    if (images.length && deepResearch) {
+      toast.error('Turn off Deep Research to analyze images.');
       return;
     }
 
@@ -338,7 +339,9 @@ const sendMessage = useCallback(async (messageText?: string) => {
     const userMsg: ChatMessage = {
       id: generateId(),
       role: 'user',
-      content: image ? `${content}\n[Image attached: ${image.name}; available for this turn]` : content,
+      content: images.length
+        ? `${content}\n[Images attached: ${images.map((image) => image.name).join(', ')}; available for this turn]`
+        : content,
       timestamp: Date.now(),
     };
     addMessage(convId, userMsg);
@@ -371,10 +374,10 @@ const sendMessage = useCallback(async (messageText?: string) => {
   ...currentMessages.map((m) => ({
     role: m.role,
     content: m.id === userMsg.id ? content : m.content,
-    ...(m.id === userMsg.id && image ? { images: [image.encoded] } : {}),
+    ...(m.id === userMsg.id && images.length ? { images: images.map((image) => image.encoded) } : {}),
   })),
 ];
-    setImage(null);
+    setImages([]);
 
     const assistantMsg: ChatMessage = {
       id: generateId(),
@@ -779,7 +782,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
     }
   }, [
     input,
-    image,
+    images,
     activeId,
     selectedModel,
     streamState.isStreaming,
@@ -833,13 +836,25 @@ const sendMessage = useCallback(async (messageText?: string) => {
     }
   };
 
-  const handleImage = async (file?: File) => {
-    if (!file) return;
+  const handleImages = async (files?: FileList | null) => {
+    if (!files?.length || imageReadingRef.current) return;
+    imageReadingRef.current = true;
+    setImageLoading(true);
     try {
-      setImage({ name: file.name, encoded: await readImageInput(file) });
+      if (images.length + files.length > 4) {
+        throw new Error('Attach at most four images per message.');
+      }
+      const added = await Promise.all(Array.from(files, async (file) => ({
+        name: file.name,
+        type: file.type,
+        encoded: await readImageInput(file),
+      })));
+      setImages((current) => [...current, ...added]);
     } catch (error) {
       toast.error(String(error instanceof Error ? error.message : error));
     } finally {
+      imageReadingRef.current = false;
+      setImageLoading(false);
       if (imageInputRef.current) imageInputRef.current.value = '';
     }
   };
@@ -906,10 +921,15 @@ const sendMessage = useCallback(async (messageText?: string) => {
           </div>
         )}
       </div>
-      {image && (
-        <div className="mb-2 flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-          <span>Image: {image.name}</span>
-          <button type="button" onClick={() => setImage(null)} aria-label="Remove image" className="underline">Remove</button>
+      {images.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
+          {images.map((image, index) => (
+            <div key={`${image.name}-${index}`} className="flex items-center gap-2 rounded-lg p-1" style={{ border: '1px solid var(--color-border)' }}>
+              <img src={`data:${image.type};base64,${image.encoded}`} alt={image.name} className="h-12 w-12 rounded object-cover" />
+              <span className="max-w-32 truncate" title={image.name}>{image.name}</span>
+              <button type="button" onClick={() => setImages((current) => current.filter((_, i) => i !== index))} aria-label={`Remove ${image.name}`} className="underline">Remove</button>
+            </div>
+          ))}
         </div>
       )}
       <div
@@ -920,8 +940,8 @@ const sendMessage = useCallback(async (messageText?: string) => {
           boxShadow: 'var(--shadow-sm)',
         }}
       >
-        <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void handleImage(e.target.files?.[0])} />
-        <button type="button" title="Attach image" aria-label="Attach image" onClick={() => imageInputRef.current?.click()} disabled={streamState.isStreaming || modelLoading} className="p-2 disabled:opacity-30"><Paperclip size={16} /></button>
+        <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" onChange={(e) => void handleImages(e.target.files)} />
+        <button type="button" title="Attach images" aria-label="Attach images" onClick={() => imageInputRef.current?.click()} disabled={streamState.isStreaming || modelLoading || imageLoading || images.length >= 4} className="p-2 disabled:opacity-30"><Paperclip size={16} /></button>
         <textarea
           ref={textareaRef}
           value={input}
@@ -952,7 +972,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
             />
             <button
               onClick={() => sendMessage()}
-              disabled={streamState.isStreaming || (!input.trim() && !image) || modelLoading || !selectedModel}
+              disabled={streamState.isStreaming || imageLoading || (!input.trim() && !images.length) || modelLoading || !selectedModel}
               title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{

@@ -38,18 +38,18 @@ def test_image_reaches_engine_without_agent():
     client, engine = _client(agent)
     response = _post(client, {
         "model": "vision-local",
-        "messages": [{"role": "user", "content": "What is shown?", "images": [PNG]}],
+        "messages": [{"role": "user", "content": "What is shown?", "images": [PNG, PNG]}],
     })
     assert response.status_code == 200
     assert not agent.run.called
     messages = engine.generate.call_args.args[0]
-    assert messages[-1].images == [PNG]
+    assert messages[-1].images == [PNG, PNG]
 
 
 def test_ollama_message_conversion_keeps_images():
-    messages = _to_messages([ChatMessage(role="user", content="Look", images=[PNG])])
+    messages = _to_messages([ChatMessage(role="user", content="Look", images=[PNG, PNG])])
     assert _to_openai_msgs(messages) == [
-        {"role": "user", "content": "Look", "images": [PNG]}
+        {"role": "user", "content": "Look", "images": [PNG, PNG]}
     ]
 
 
@@ -79,4 +79,29 @@ def test_invalid_image_and_cloud_route_rejected():
             "messages": [{"role": "user", "content": "Look", "images": [image]}],
         })
         assert response.status_code == 400
+    assert not engine.generate.called
+
+
+def test_prior_image_is_rejected_before_chat_history_is_used():
+    client, engine = _client()
+    response = _post(client, {
+        "model": "vision-local",
+        "messages": [
+            {"role": "user", "content": "Look", "images": [PNG]},
+            {"role": "assistant", "content": "I see it."},
+            {"role": "user", "content": "What color was it?"},
+        ],
+    })
+    assert response.status_code == 400
+    assert "latest user message" in response.json()["detail"]
+    assert not engine.generate.called
+
+
+def test_five_images_are_rejected():
+    client, engine = _client()
+    response = _post(client, {
+        "model": "vision-local",
+        "messages": [{"role": "user", "content": "Look", "images": [PNG] * 5}],
+    })
+    assert response.status_code == 400
     assert not engine.generate.called
