@@ -663,6 +663,9 @@ const sendMessage = useCallback(async (messageText?: string) => {
         // User cancelled or model switch — keep whatever was accumulated
         if (!accumulatedContent) accumulatedContent = '(Generation stopped)';
       } else {
+        // The server may reject an image (or the connection may fail) before
+        // it sees the bytes. Keep the attachments available for a retry.
+        if (images.length) setImages(images);
         const errMsg = err?.message || String(err);
         accumulatedContent =
           accumulatedContent || `Error: ${errMsg}`;
@@ -676,6 +679,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
       useAppStore.getState().setLiveEnergy(null);
     } finally {
       if (!accumulatedContent) {
+        if (images.length) setImages(images);
         accumulatedContent = 'No response was generated. Please try again.';
       }
       const totalMs = Date.now() - startTime;
@@ -836,7 +840,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
     }
   };
 
-  const handleImages = async (files?: FileList | null) => {
+  const handleImages = async (files?: FileList | File[] | null) => {
     if (!files?.length || imageReadingRef.current) return;
     imageReadingRef.current = true;
     setImageLoading(true);
@@ -856,6 +860,17 @@ const sendMessage = useCallback(async (messageText?: string) => {
       imageReadingRef.current = false;
       setImageLoading(false);
       if (imageInputRef.current) imageInputRef.current.value = '';
+    }
+  };
+
+  const handlePaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (files.length) {
+      event.preventDefault();
+      void handleImages(files);
     }
   };
 
@@ -946,6 +961,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
           ref={textareaRef}
           value={input}
           onChange={(e) => setInput(e.target.value)}
+          onPaste={handlePaste}
           onKeyDown={handleKeyDown}
           placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
           rows={1}
