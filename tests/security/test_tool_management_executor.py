@@ -111,3 +111,17 @@ def test_approved_managed_tool_executes():
 
     assert result.success
     assert tool.executed
+
+
+def test_mutated_management_record_blocks_unchanged_runtime_tool():
+    tool = _ManagedTool()
+    registry = _managed_registry(tool, approve=True)
+    record = registry.require(f"builtin:{tool.spec.name}")
+    # The runtime tool still matches the old fingerprint, but its management
+    # definition no longer matches the definition that was approved.
+    record.spec.required_capabilities.append("system:admin")
+    executor = ToolExecutor([tool], tool_management_registry=registry)
+    result = executor.execute(ToolCall(id="changed", name=tool.tool_id, arguments="{}"))
+    assert not result.success
+    assert "not approved" in result.content
+    assert not tool.executed

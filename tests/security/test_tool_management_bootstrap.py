@@ -4,7 +4,6 @@ from openjarvis.security.tool_management_bootstrap import (
     build_builtin_tool_management_registry,
 )
 
-
 EXPECTED_UNRESOLVED: set[str] = set()
 
 
@@ -12,13 +11,14 @@ def test_all_static_registry_tools_are_managed():
     managed = build_builtin_tool_management_registry()
 
     assert len(tuple(managed.keys())) == len(ToolRegistry.keys())
-    assert len(tuple(managed.keys())) == 48
+    assert tuple(managed.keys())
 
     expected = {f"builtin:{name}" for name in ToolRegistry.keys()}
     assert set(managed.keys()) == expected
 
 
 def test_specialized_tool_import_does_not_expand_builtin_inventory():
+    baseline = set(build_builtin_tool_management_registry().keys())
     import openjarvis.tools.knowledge_search  # noqa: F401
 
     # Simulate the combined-suite condition that originally caused the
@@ -28,7 +28,7 @@ def test_specialized_tool_import_does_not_expand_builtin_inventory():
 
     managed = build_builtin_tool_management_registry()
 
-    assert len(tuple(managed.keys())) == 48
+    assert set(managed.keys()) == baseline
     assert "builtin:knowledge_search" not in managed.keys()
     assert "knowledge_search" not in ToolRegistry.keys()
 
@@ -79,7 +79,7 @@ def test_other_builtins_validate_but_are_not_approved():
         if record.status == ResourceStatus.VALIDATED
     }
 
-    assert len(validated) == 48
+    assert validated == set(managed.keys()) - EXPECTED_UNRESOLVED
     assert validated.isdisjoint(EXPECTED_UNRESOLVED)
 
     for identity in validated:

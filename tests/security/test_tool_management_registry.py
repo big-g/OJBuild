@@ -209,3 +209,101 @@ def test_description_only_change_does_not_change_fingerprint():
     )
 
     assert fingerprint == record.fingerprint
+
+
+def _approved_record():
+    registry = ToolManagementRegistry()
+    record = registry.register(make_record())
+    validation = make_validation(record)
+    registry.validate(record.identity, validation)
+    registry.approve(record.identity, make_approval(record, validation))
+    return registry, record
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("required_capabilities", ["system:admin"]),
+        ("requires_confirmation", True),
+        ("timeout_seconds", 100.0),
+        ("evidence_kinds", ["current"]),
+        (
+            "parameters",
+            {"type": "object", "properties": {"command": {"type": "string"}}},
+        ),
+        ("metadata", {"trust": "changed"}),
+    ],
+)
+def test_mutated_spec_cannot_retain_executable_approval(field, value):
+    registry, record = _approved_record()
+    setattr(record.spec, field, value)
+    assert not record.is_approved()
+    assert not registry.check_execution(record.identity)[0]
+    assert not registry.check_execution(
+        record.identity, fingerprint=record.fingerprint
+    )[0]
+
+
+def test_nested_mutation_is_detected_without_update_definition():
+    registry, record = _approved_record()
+    record.spec.parameters["properties"]["value"]["type"] = "integer"
+    assert not record.is_approved()
+    assert not registry.check_execution(record.identity)[0]
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("implementation_id", "changed.implementation"),
+        ("is_local", False),
+        ("provenance", Provenance(source_type="plugin", source_id="changed")),
+    ],
+)
+def test_mutated_record_identity_data_invalidates_approval(field, value):
+    registry, record = _approved_record()
+    setattr(record, field, value)
+    assert not record.is_approved()
+    assert not registry.check_execution(record.identity)[0]
+
+
+def test_disabled_mutated_definition_cannot_be_reenabled():
+    registry, record = _approved_record()
+    registry.disable(record.identity)
+    record.spec.required_capabilities.append("system:admin")
+    with pytest.raises(ValueError, match="no longer has valid approval"):
+        registry.reenable(record.identity)
+    assert record.status == ResourceStatus.DISABLED
+
+
+def test_noncanonical_mutation_fails_closed():
+    registry, record = _approved_record()
+    record.spec.metadata = {"invalid": object()}
+    assert not record.is_approved()
+    assert not registry.check_execution(record.identity)[0]
+
+
+def test_definition_change_requires_fresh_validation_and_approval():
+    registry, record = _approved_record()
+    record.spec.required_capabilities.append("memory:read")
+    assert not record.is_approved()
+    fingerprint = compute_tool_fingerprint(
+        identity=record.identity,
+        spec=record.spec,
+        provenance=record.provenance,
+        implementation_id=record.implementation_id,
+        is_local=record.is_local,
+    )
+    registry.update_definition(
+        record.identity,
+        spec=record.spec,
+        provenance=record.provenance,
+        fingerprint=fingerprint,
+        implementation_id=record.implementation_id,
+        is_local=record.is_local,
+    )
+    assert not registry.check_execution(record.identity)[0]
+    validation = make_validation(record)
+    registry.validate(record.identity, validation)
+    assert not registry.check_execution(record.identity)[0]
+    registry.approve(record.identity, make_approval(record, validation))
+    assert registry.check_execution(record.identity)[0]

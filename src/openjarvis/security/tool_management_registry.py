@@ -45,10 +45,26 @@ class ManagedToolRecord:
             return False
 
         return (
-            self.validation.fingerprint == self.fingerprint
+            self.definition_is_current()
+            and self.validation.fingerprint == self.fingerprint
             and self.approval.fingerprint == self.fingerprint
             and self.approval.validation_id == self.validation.validation_id
         )
+
+    def definition_is_current(self) -> bool:
+        """Verify mutable definition data still matches its registered digest."""
+        try:
+            current = compute_tool_fingerprint(
+                identity=self.identity,
+                spec=self.spec,
+                provenance=self.provenance,
+                implementation_id=self.implementation_id,
+                is_local=self.is_local,
+            )
+        except Exception:
+            # Malformed definitions must never retain executable approval.
+            return False
+        return current == self.fingerprint
 
 
 def compute_tool_fingerprint(
@@ -314,7 +330,8 @@ class ToolManagementRegistry:
             )
 
         if (
-            record.validation is None
+            not record.definition_is_current()
+            or record.validation is None
             or record.approval is None
             or not record.validation.passed
             or record.validation.fingerprint != record.fingerprint
@@ -341,7 +358,10 @@ class ToolManagementRegistry:
         if record is None:
             return False, f"Tool is not registered for management: {identity}"
         if fingerprint is not None and fingerprint != record.fingerprint:
-            return False, f"Tool definition changed since management registration: {identity}"
+            return (
+                False,
+                f"Tool definition changed since management registration: {identity}",
+            )
         if not record.is_approved():
             return (
                 False,
