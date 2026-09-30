@@ -29,6 +29,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 # this module never forces numpy at load time (#404, #309).
 from openjarvis.connectors.embeddings import OllamaEmbedder, decode_embedding
 from openjarvis.connectors.store import KnowledgeStore
+from openjarvis.memory.store import RECALLABLE_TRUST_TIERS
 
 logger = logging.getLogger(__name__)
 
@@ -344,7 +345,19 @@ class HybridSearch:
         """
         prefix = f"{alias}." if alias else ""
         clauses: List[str] = [f"{prefix}deleted_at IS NULL"]
-        params: List[Any] = []
+        # Every recall path (including metadata fallback and thread siblings)
+        # must exclude quarantined rows before ranking or applying a limit.
+        # CASE also prevents corrupt JSON from breaking the entire search.
+        trust_tiers = sorted(RECALLABLE_TRUST_TIERS)
+        placeholders = ",".join("?" for _ in trust_tiers)
+        metadata = f"{prefix}metadata"
+        clauses.append(
+            f"CASE WHEN json_valid({metadata}) THEN "
+            f"CASE WHEN json_type({metadata}) = 'object' THEN "
+            f"COALESCE(json_extract({metadata}, '$.trust'), '') "
+            f"IN ({placeholders}) ELSE 0 END ELSE 0 END"
+        )
+        params: List[Any] = list(trust_tiers)
 
         if person:
             clauses.append(
@@ -500,14 +513,17 @@ class HybridSearch:
         """
         if not thread_id:
             return []
+        filter_sql, filter_params = self._build_filters(
+            person=None, time_range=None, sources=None
+        )
         rows = self._store._conn.execute(
-            """
+            f"""
             SELECT id, chunk_index, content, timestamp, author
             FROM knowledge_chunks
-            WHERE thread_id = ? AND deleted_at IS NULL
+            WHERE thread_id = ? AND {filter_sql}
             ORDER BY timestamp ASC, chunk_index ASC
             """,
-            (thread_id,),
+            [thread_id, *filter_params],
         ).fetchall()
         if not rows:
             return []
@@ -743,9 +759,9 @@ class HybridSearch:
             SELECT id, doc_id, content, source, title, author, participants,
                    timestamp, thread_id, chunk_index, url
             FROM knowledge_chunks
-            WHERE id IN ({placeholders})
+            WHERE id IN ({placeholders}) AND {unaliased_filter_sql}
             """,
-            ids,
+            [*ids, *unaliased_filter_params],
         ).fetchall()
         by_id = {r["id"]: r for r in meta_rows}
 
