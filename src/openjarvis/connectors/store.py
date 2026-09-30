@@ -156,7 +156,10 @@ class KnowledgeStore(MemoryBackend):
 
     backend_id: str = "knowledge"
 
-    def __init__(self, db_path: Union[str, Path] = "") -> None:
+    def __init__(
+        self, db_path: Union[str, Path] = "", *, publish_events: bool = True
+    ) -> None:
+        self._publish_events = publish_events
         if not db_path:
             from openjarvis.core.config import DEFAULT_CONFIG_DIR
 
@@ -325,6 +328,11 @@ class KnowledgeStore(MemoryBackend):
                 return existing["id"]
             return chunk_id
 
+        if self._publish_events:
+            self._publish_store_event(chunk_id, doc_id, source, doc_type)
+        return chunk_id
+
+    def _publish_store_event(self, chunk_id, doc_id, source, doc_type) -> None:
         get_event_bus().publish(
             EventType.MEMORY_STORE,
             {
@@ -335,7 +343,49 @@ class KnowledgeStore(MemoryBackend):
                 "doc_type": doc_type,
             },
         )
-        return chunk_id
+
+    def document_fingerprint(self, doc_id: str) -> Optional[str]:
+        """Return a complete active document's persisted version fingerprint."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT CASE WHEN json_valid(metadata) THEN "
+            "json_extract(metadata, '$.openjarvis_document_hash') END AS fingerprint "
+            "FROM knowledge_chunks WHERE doc_id = ? AND deleted_at IS NULL",
+            (doc_id,),
+        ).fetchall()
+        if len(rows) == 1 and isinstance(rows[0]["fingerprint"], str):
+            return rows[0]["fingerprint"]
+        return None
+
+    def replace_document(self, doc_id: str, staged: "KnowledgeStore") -> int:
+        """Replace a document and its FTS entries in one SQLite transaction.
+
+        Staging prevents chunking, embedding, or attachment extraction failures
+        from removing the previously indexed version. Events publish only after
+        the replacement commits, never from the staging database.
+        """
+        rows = staged._conn.execute("SELECT * FROM knowledge_chunks").fetchall()
+        if any(row["doc_id"] != doc_id for row in rows):
+            raise ValueError("Staged chunks belong to another document")
+        columns = [
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(knowledge_chunks)")
+        ]
+        placeholders = ", ".join("?" for _ in columns)
+        names = ", ".join(columns)
+        with self._conn:
+            self._conn.execute(
+                "DELETE FROM knowledge_chunks WHERE doc_id = ?", (doc_id,)
+            )
+            self._conn.executemany(
+                f"INSERT INTO knowledge_chunks ({names}) VALUES ({placeholders})",
+                [tuple(row[name] for name in columns) for row in rows],
+            )
+        if self._publish_events:
+            for row in rows:
+                self._publish_store_event(
+                    row["id"], doc_id, row["source"], row["doc_type"]
+                )
+        return len(rows)
 
     def retrieve(
         self,
@@ -397,8 +447,7 @@ class KnowledgeStore(MemoryBackend):
         trust_tiers = sorted(RECALLABLE_TRUST_TIERS)
         placeholders = ", ".join("?" for _ in trust_tiers)
         filters.append(
-            "COALESCE(json_extract(kc.metadata, '$.trust'), '') "
-            f"IN ({placeholders})"
+            f"COALESCE(json_extract(kc.metadata, '$.trust'), '') IN ({placeholders})"
         )
         params.extend(trust_tiers)
 
