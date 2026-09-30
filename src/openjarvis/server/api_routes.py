@@ -610,6 +610,8 @@ async def create_project(
             "metadata": project.metadata,
         }
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Failed to create project")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -640,6 +642,8 @@ async def list_projects(
             ]
         }
 
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Failed to list projects")
         raise HTTPException(status_code=500, detail=str(exc))
@@ -695,6 +699,8 @@ async def create_session(
             "messages": [],
         }
 
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:

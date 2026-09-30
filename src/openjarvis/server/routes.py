@@ -437,8 +437,8 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 bus=None,
                 trace_store=getattr(request.app.state, "trace_store", None),
                 memory_service=None,
-                session_store=None,
-                session_id=None,
+                session_store=session_store,
+                session_id=request_body.session_id,
                 user_id=user_id,
             )
 
