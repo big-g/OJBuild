@@ -15,6 +15,7 @@ from openjarvis.agents._stubs import AgentContext, AgentResult
 from openjarvis.core.events import EventBus, EventType  # noqa: E402
 from openjarvis.core.types import Role  # noqa: E402
 from openjarvis.server.app import create_app  # noqa: E402
+from tests.server.helpers import authenticated_client as _authenticated_client  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -71,7 +72,7 @@ def _test_config():
 def client():
     engine = _make_engine()
     app = create_app(engine, "test-model", config=_test_config())
-    return TestClient(app)
+    return _authenticated_client(app)
 
 
 @pytest.fixture
@@ -79,7 +80,85 @@ def client_with_agent():
     engine = _make_engine()
     agent = _make_agent()
     app = create_app(engine, "test-model", agent=agent, config=_test_config())
-    return TestClient(app)
+    return _authenticated_client(app)
+
+
+@pytest.mark.parametrize("credential", ["missing", "invalid", "expired", "revoked"])
+def test_chat_rejects_invalid_human_session(credential):
+    engine = _make_engine()
+    app = create_app(
+        engine, "test-model", config=_test_config(), api_key="master-test-key"
+    )
+    store = app.state.auth_store
+    store.create_user("test-user", "test-user", "test-password")
+    headers = {"Authorization": "Bearer master-test-key"}
+    if credential == "invalid":
+        headers["X-OpenJarvis-Session"] = "not-a-session"
+    elif credential in {"expired", "revoked"}:
+        token = store.create_session(
+            "test-user", expires_in=-1 if credential == "expired" else 3600
+        )
+        if credential == "revoked":
+            store.revoke_session(token)
+        headers["X-OpenJarvis-Session"] = token
+    response = TestClient(app).post(
+        "/v1/chat/completions",
+        headers=headers,
+        json={
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "Hello"}],
+        },
+    )
+    assert response.status_code == 401
+    assert not engine.generate.called
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_chat_rejects_other_owners_conversation(tmp_path, stream):
+    from openjarvis.sessions.session import SessionStore
+
+    engine = _make_engine()
+    app = create_app(engine, "test-model", config=_test_config())
+    store = SessionStore(tmp_path / "sessions.db")
+    app.state.session_store = store
+    try:
+        project = store.create_project("other-owner", "Private project")
+        session = store.create_session("other-owner", project.project_id)
+        response = _authenticated_client(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "session_id": session.session_id,
+                "stream": stream,
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+        assert response.status_code == 403
+        assert not engine.generate.called
+        assert store.get_session(session.session_id).messages == []
+    finally:
+        store.close()
+
+
+def test_raw_tool_stream_carries_authenticated_identity():
+    from openjarvis.server import routes
+
+    app = create_app(_make_capturing_engine([]), "test-model", config=_test_config())
+    with patch.object(
+        routes, "_record_completed_exchange", wraps=routes._record_completed_exchange
+    ) as record:
+        response = _authenticated_client(app).post(
+            "/v1/chat/completions",
+            json={
+                "model": "test-model",
+                "stream": True,
+                "tools": [{"type": "function", "function": {"name": "lookup"}}],
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+    assert response.status_code == 200
+    assert "[DONE]" in response.text
+    assert record.call_args.kwargs["user_id"] == "test-user"
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +171,11 @@ class _SpyMemoryService:
 
     def __init__(self) -> None:
         self.submissions: list[tuple[str, str]] = []
+        self.user_ids: list[str] = []
 
-    def submit(self, user_text: str, assistant_text: str = "") -> bool:
+    def submit(self, user_text: str, assistant_text: str = "", *, user_id="") -> bool:
         self.submissions.append((user_text, assistant_text))
+        self.user_ids.append(user_id)
         return True
 
     def stop(self, timeout: float = 2.0) -> None:
@@ -111,7 +192,7 @@ class TestMemoryServiceWiring:
             memory_service=spy,
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -122,6 +203,7 @@ class TestMemoryServiceWiring:
         )
         assert resp.status_code == 200
         assert spy.submissions == [("I like jazz", "remembered reply")]
+        assert spy.user_ids == ["test-user"]
 
     def test_agent_completion_feeds_memory(self):
         engine = _make_engine()
@@ -134,7 +216,7 @@ class TestMemoryServiceWiring:
             memory_service=spy,
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -145,12 +227,13 @@ class TestMemoryServiceWiring:
         )
         assert resp.status_code == 200
         assert spy.submissions == [("remember this", "agent reply")]
+        assert spy.user_ids == ["test-user"]
 
     def test_non_streaming_completion_publishes_completed_exchange(self):
         bus = EventBus(record_history=True)
         engine = _make_engine(content="event reply")
         app = create_app(engine, "test-model", bus=bus, config=_test_config())
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -177,7 +260,7 @@ class TestMemoryServiceWiring:
             memory_service=spy,
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -191,12 +274,13 @@ class TestMemoryServiceWiring:
         assert resp.status_code == 200
         assert "data:" in resp.text
         assert spy.submissions == [("stream remember", "Hello world")]
+        assert spy.user_ids == ["test-user"]
 
     def test_streaming_completion_publishes_completed_exchange(self):
         bus = EventBus(record_history=True)
         engine = _make_engine()
         app = create_app(engine, "test-model", bus=bus, config=_test_config())
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -223,7 +307,7 @@ class TestMemoryServiceWiring:
             "test-model",
             config=_test_config(),
         )  # memory_service defaults to None
-        client = TestClient(app)
+        client = _authenticated_client(app)
         resp = client.post(
             "/v1/chat/completions",
             json={
@@ -255,7 +339,7 @@ class TestChatCompletions:
             "test-model",
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -290,7 +374,7 @@ class TestChatCompletions:
             "test-model",
             config=config,
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -332,7 +416,7 @@ class TestChatCompletions:
             "test-model",
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -410,7 +494,7 @@ class TestChatCompletions:
             "finish_reason": "tool_calls",
         }
         app = create_app(engine, "test-model", config=_test_config())
-        client = TestClient(app)
+        client = _authenticated_client(app)
         resp = client.post(
             "/v1/chat/completions",
             json={
@@ -458,7 +542,7 @@ class TestChatCompletions:
         }
         agent = _make_agent(content="GENERIC AGENT FILLER")
         app = create_app(engine, "test-model", agent=agent, config=_test_config())
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -546,7 +630,7 @@ class TestChatCompletions:
 
         app = create_app(wrapped, "test-model", config=_test_config())
         app.state.bus = bus
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -659,7 +743,7 @@ class TestChatCompletions:
             "openjarvis.server.cloud_router.stream_local",
             side_effect=local_stream,
         ):
-            resp = TestClient(app).post(
+            resp = _authenticated_client(app).post(
                 "/v1/chat/completions",
                 json={
                     "model": "qwen3:8b",
@@ -750,7 +834,7 @@ class TestChatCompletions:
             bus=EventBus(),
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -825,7 +909,7 @@ class TestChatCompletions:
             bus=EventBus(),
             config=_test_config(),
         )
-        client = TestClient(app)
+        client = _authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -957,7 +1041,7 @@ class TestIdentityPromptInjection:
     def test_stream_injects_identity_when_absent(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -978,7 +1062,7 @@ class TestIdentityPromptInjection:
     def test_stream_no_double_injection_when_client_supplies_system(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1007,7 +1091,7 @@ class TestIdentityPromptInjection:
         agent = _make_agent(content="My name is Jarvis Prime.")
         agent._tools = [object()]
         agent._engine = engine
-        client = TestClient(
+        client = _authenticated_client(
             create_app(
                 engine,
                 "test-model",
@@ -1043,7 +1127,7 @@ class TestIdentityPromptInjection:
         captured: list = []
         engine = _make_capturing_engine(captured)
         # No agent -> non-stream request goes through _handle_direct.
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1061,7 +1145,7 @@ class TestIdentityPromptInjection:
     def test_direct_no_double_injection_when_client_supplies_system(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1082,7 +1166,7 @@ class TestIdentityPromptInjection:
     def test_direct_normalizes_mid_history_system_messages(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1116,7 +1200,7 @@ class TestIdentityPromptInjection:
     def test_stream_normalizes_mid_history_system_messages(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1165,7 +1249,7 @@ class TestIdentityPromptInjection:
                 system_prompt_config=cfg.system_prompt,
             ),
         )
-        client = TestClient(create_app(engine, "test-model", agent=agent, config=cfg))
+        client = _authenticated_client(create_app(engine, "test-model", agent=agent, config=cfg))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1209,7 +1293,7 @@ class TestIdentityPromptInjection:
         engine = _make_capturing_engine(captured)
         cfg = _identity_config()
         cfg.agent.context_from_memory = True
-        client = TestClient(
+        client = _authenticated_client(
             create_app(
                 engine,
                 "test-model",
@@ -1249,7 +1333,7 @@ class TestIdentityPromptInjection:
         engine = _make_capturing_engine(captured)
         cfg = _identity_config()
         cfg.agent.context_from_memory = True
-        client = TestClient(
+        client = _authenticated_client(
             create_app(
                 engine,
                 "test-model",
@@ -1284,7 +1368,7 @@ class TestIdentityPromptInjection:
         engine = _make_capturing_engine(captured)
         cfg = _identity_config()
         cfg.agent.context_from_memory = True
-        client = TestClient(
+        client = _authenticated_client(
             create_app(
                 engine,
                 "test-model",
@@ -1355,7 +1439,7 @@ class TestIdentityPromptInjection:
                 system_prompt_config=cfg.system_prompt,
             ),
         )
-        client = TestClient(
+        client = _authenticated_client(
             create_app(
                 engine,
                 "test-model",
@@ -1399,7 +1483,7 @@ class TestIdentityPromptInjection:
         cfg.memory_files = MemoryFilesConfig(
             soul_path=str(soul), memory_path="", user_path=""
         )
-        client = TestClient(create_app(engine, "test-model", config=cfg))
+        client = _authenticated_client(create_app(engine, "test-model", config=cfg))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1417,7 +1501,7 @@ class TestIdentityPromptInjection:
     def test_stream_tools_injects_identity_when_absent(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1447,7 +1531,7 @@ class TestIdentityPromptInjection:
     def test_stream_tools_normalizes_mid_history_system_messages(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = TestClient(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1575,7 +1659,7 @@ class TestModelsEndpoint:
     def test_multiple_models(self):
         engine = _make_engine(models=["model-a", "model-b", "model-c"])
         app = create_app(engine, "model-a", config=_test_config())
-        client = TestClient(app)
+        client = _authenticated_client(app)
         resp = client.get("/v1/models")
         data = resp.json()
         assert len(data["data"]) == 3
@@ -1597,7 +1681,7 @@ class TestModelsEndpoint:
             new_callable=AsyncMock,
         ) as list_local_models:
             list_local_models.return_value = []
-            client = TestClient(app)
+            client = _authenticated_client(app)
             resp = client.get("/v1/models")
 
         assert resp.status_code == 200
@@ -1623,7 +1707,7 @@ class TestModelsEndpoint:
             "openjarvis.server.cloud_router.stream_cloud",
             return_value=direct_cloud_tokens(),
         ) as stream_cloud:
-            client = TestClient(app)
+            client = _authenticated_client(app)
             resp = client.post(
                 "/v1/chat/completions",
                 json={
@@ -1654,7 +1738,7 @@ class TestHealthEndpoint:
         engine = _make_engine()
         engine.health.return_value = False
         app = create_app(engine, "test-model", config=_test_config())
-        client = TestClient(app)
+        client = _authenticated_client(app)
         resp = client.get("/health")
         assert resp.status_code == 503
 
@@ -1733,7 +1817,7 @@ class TestTraceRecording:
         assert store is not None, "traces explicitly enabled → store should exist"
         assert store.count() == 0
 
-        client = TestClient(app)
+        client = _authenticated_client(app)
         resp = client.post(
             "/v1/chat/completions",
             json={
@@ -1757,7 +1841,7 @@ class TestTraceRecording:
         assert store is not None
         assert store.count() == 0
 
-        client = TestClient(app)
+        client = _authenticated_client(app)
         resp = client.post(
             "/v1/chat/completions",
             json={
@@ -1814,7 +1898,7 @@ def test_current_request_without_evidence_is_blocked(tmp_path):
     session_token = auth_store.create_session("test-user")
     app.state.auth_store = auth_store
 
-    client = TestClient(app)
+    client = _authenticated_client(app)
 
     headers = {
         "Authorization": "Bearer oj_sk_test123",
@@ -1917,7 +2001,7 @@ def test_current_request_is_allowed_with_web_evidence(tmp_path):
     session_token = auth_store.create_session("test-user")
     app.state.auth_store = auth_store
 
-    client = TestClient(app)
+    client = _authenticated_client(app)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -1999,7 +2083,7 @@ def test_streamed_agent_answer_is_grounded_before_content_is_emitted():
         bus=EventBus(),
         config=_test_config(),
     )
-    client = TestClient(app)
+    client = _authenticated_client(app)
 
     resp = client.post(
         "/v1/chat/completions",
@@ -2074,7 +2158,7 @@ def test_current_request_is_blocked_when_web_search_fails(tmp_path):
     session_token = auth_store.create_session("test-user")
     app.state.auth_store = auth_store
 
-    client = TestClient(app)
+    client = _authenticated_client(app)
 
     resp = client.post(
         "/v1/chat/completions",

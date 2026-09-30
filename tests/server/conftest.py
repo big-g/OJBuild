@@ -13,6 +13,20 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_auth_db(tmp_path, monkeypatch):
+    """Give each test its own real auth store without changing auth behavior."""
+    from openjarvis.server import auth_store
+
+    real_auth_store = auth_store.AuthStore
+
+    class IsolatedAuthStore(real_auth_store):
+        def __init__(self, db_path=None):
+            super().__init__(db_path if db_path is not None else tmp_path / "auth.db")
+
+    monkeypatch.setattr(auth_store, "AuthStore", IsolatedAuthStore)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_traces_db(tmp_path, monkeypatch):
     """Point ``config.traces.db_path`` at a temp file for every server test.
 

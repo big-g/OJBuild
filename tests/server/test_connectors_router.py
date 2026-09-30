@@ -685,11 +685,20 @@ def test_connect_weather_requires_location(app, tmp_path: Path) -> None:
         _instances.pop("weather", None)
 
 
-def test_connect_news_rss_requires_and_persists_feeds(app, tmp_path: Path) -> None:
+def test_connect_news_rss_requires_and_persists_feeds(
+    app, tmp_path: Path, monkeypatch
+) -> None:
     """A local connector with required setup cannot claim success for ``{}``."""
     from openjarvis.connectors.news_rss import NewsRSSConnector
     from openjarvis.server.connectors_router import _instances
 
+    # This tests configuration persistence, not the availability of public DNS.
+    monkeypatch.setattr(
+        "socket.getaddrinfo",
+        lambda hostname, port, *args, **kwargs: [
+            (2, 1, 6, "", ("93.184.216.34", port))
+        ],
+    )
     path = tmp_path / "news_rss.json"
     instance = NewsRSSConnector(config_path=str(path))
     instance.sync = lambda **_kwargs: iter(())

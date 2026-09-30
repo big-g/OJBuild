@@ -11,6 +11,7 @@ fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from openjarvis.server.app import create_app  # noqa: E402
+from tests.server.helpers import authenticated_client  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -160,7 +161,7 @@ class TestStreamingResilience:
 
         engine.stream = failing_stream
         app = create_app(engine, "test-model")
-        client = TestClient(app)
+        client = authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -182,7 +183,7 @@ class TestStreamingResilience:
         """Verify tokens stream through correctly (not batched)."""
         engine = _make_engine()
         app = create_app(engine, "test-model")
-        client = TestClient(app)
+        client = authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",
@@ -220,7 +221,7 @@ class TestStreamingResilience:
         )
 
         app = create_app(engine, "test-model", agent=agent)
-        client = TestClient(app)
+        client = authenticated_client(app)
 
         resp = client.post(
             "/v1/chat/completions",

@@ -439,6 +439,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 memory_service=None,
                 session_store=None,
                 session_id=None,
+                user_id=user_id,
             )
 
         if use_server_agent:
@@ -1101,6 +1102,7 @@ async def _handle_stream_tools(
     memory_service=None,
     session_store=None,
     session_id=None,
+    user_id="",
 ):
 
     """Stream a raw OpenAI-compat function-calling response via SSE.
