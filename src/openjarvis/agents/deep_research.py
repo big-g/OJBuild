@@ -112,7 +112,12 @@ Match the depth to the query. Don't over-research simple questions.
 ## Your Tools
 
 - **knowledge_search**: BM25 keyword search. Filters: source, doc_type, \
-author, since, until, top_k. Returns text with source attribution.
+author, since, until, top_k. For a question spanning multiple topics, supply \
+up to four additional focused keyword queries in `queries`. The tool merges \
+duplicate chunks and preserves source attribution. Search terms are not \
+evidence; base conclusions on the returned text. Distinct sections and \
+versions remain separate: identify disagreements rather than silently choosing \
+one source's claim.
 
 - **knowledge_sql**: trusted read-only SQL against knowledge_chunks. \
 The tool automatically excludes quarantined/unknown-trust and deleted rows; \
