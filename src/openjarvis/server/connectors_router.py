@@ -47,6 +47,12 @@ def _ensure_connectors_registered() -> None:
     ensure_connectors_populated()
 
 
+def _is_managed_source(connector_id: str) -> bool:
+    from openjarvis.connectors.source_adapters import is_source_adapter
+
+    return is_source_adapter(connector_id)
+
+
 # ---------------------------------------------------------------------------
 # Pydantic request model — defined at module level so FastAPI can resolve
 # the type annotation correctly when injecting request bodies.
@@ -102,8 +108,8 @@ def create_connectors_router():
 
     def _get_or_create(connector_id: str) -> Any:
         """Return a cached connector instance, creating it if needed."""
-        if connector_id == "local_files":
-            raise HTTPException(409, "Manage Local Files instances through /v1/sources")
+        if _is_managed_source(connector_id):
+            raise HTTPException(409, "Manage source instances through /v1/sources")
         if connector_id not in _instances:
             cls = ConnectorRegistry.get(connector_id)
             _instances[connector_id] = cls()
@@ -400,7 +406,7 @@ def create_connectors_router():
         _ensure_connectors_registered()
         results = []
         for key in sorted(ConnectorRegistry.keys()):
-            if key == "local_files":
+            if _is_managed_source(key):
                 continue  # configured instances are managed through /v1/sources
             try:
                 instance = _get_or_create(key)
@@ -476,8 +482,8 @@ def create_connectors_router():
     @_serialized_async
     async def connect_connector(connector_id: str, req: ConnectRequest):
         """Connect a connector using the supplied credentials."""
-        if connector_id == "local_files":
-            raise HTTPException(409, "Manage Local Files instances through /v1/sources")
+        if _is_managed_source(connector_id):
+            raise HTTPException(409, "Manage source instances through /v1/sources")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(

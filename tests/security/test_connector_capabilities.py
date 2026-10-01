@@ -66,3 +66,46 @@ def test_connector_grant_does_not_imply_access_to_local_files():
     )
     assert not result.success
     assert "file:read" in result.content
+
+
+def test_public_source_requires_network_access_and_selected_adapter_access():
+    from openjarvis.core.types import ToolCall
+    from openjarvis.tools._stubs import ToolExecutor
+
+    for adapter_id in ("web_page", "json_api"):
+        policy = CapabilityPolicy(default_deny=True)
+        assert policy.resolve_effective_tool_capabilities(
+            DigestCollectTool(), {"sources": [adapter_id]}
+        ) == (f"connector:{adapter_id}:read", "network:fetch")
+        policy.grant("reader", f"connector:{adapter_id}:read")
+        result = ToolExecutor(
+            [DigestCollectTool()],
+            capability_policy=policy,
+            agent_id="reader",
+        ).execute(
+            ToolCall(
+                id="public",
+                name="digest_collect",
+                arguments='{"sources":["' + adapter_id + '"]}',
+            )
+        )
+        assert not result.success
+        assert "network:fetch" in result.content
+
+
+def test_adapter_capabilities_do_not_depend_on_legacy_connector_registration(
+    monkeypatch,
+):
+    from dataclasses import replace
+
+    from openjarvis.connectors import source_adapters
+
+    adapter = replace(
+        source_adapters.get_adapter("web_page"), adapter_id="future_public"
+    )
+    monkeypatch.setitem(source_adapters._ADAPTERS, adapter.adapter_id, adapter)
+    assert not ConnectorRegistry.contains(adapter.adapter_id)
+    assert CapabilityPolicy().resolve_effective_tool_capabilities(
+        DigestCollectTool(),
+        {"sources": [adapter.adapter_id]},
+    ) == ("connector:web_page:read", "network:fetch")

@@ -13,13 +13,14 @@ export function SourceConfigurationFields({
   config: SourceConfig;
   onChange: (config: SourceConfig) => void;
 }) {
+  const fieldValue = (name: string) => config[name] ?? adapter.fields.find((field) => field.name === name)?.default_value ?? '';
   return <>
-    {adapter.fields.map((field) => <label key={field.name} className="flex flex-col gap-1">
+    {adapter.fields.filter((field) => !field.visible_when || fieldValue(field.visible_when.field) === field.visible_when.equals).map((field) => <label key={field.name} className="flex flex-col gap-1">
       {field.label}
       {field.type === 'select' ? <select
         aria-label={field.label}
         required={field.required}
-        value={String(config[field.name] ?? '')}
+        value={String(fieldValue(field.name))}
         onChange={(event) => onChange({ ...config, [field.name]: event.target.value })}
       >
         <option value="">Choose…</option>
@@ -29,13 +30,16 @@ export function SourceConfigurationFields({
         type={field.type === 'checkbox' ? 'checkbox' : field.type === 'number' ? 'number' : 'text'}
         required={field.required}
         placeholder={field.placeholder}
-        {...(field.type === 'checkbox' ? { checked: Boolean(config[field.name]) } : { value: String(config[field.name] ?? '') })}
+        min={field.min}
+        max={field.max}
+        {...(field.type === 'checkbox' ? { checked: Boolean(fieldValue(field.name)) } : { value: String(fieldValue(field.name)) })}
         onChange={(event) => onChange({
           ...config,
           [field.name]: field.type === 'checkbox' ? event.target.checked
             : field.type === 'number' ? Number(event.target.value) : event.target.value,
         })}
       />}
+      {field.description && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{field.description}</span>}
     </label>)}
   </>;
 }

@@ -258,6 +258,7 @@ class KnowledgeSearchTool(BaseTool):
                     ),
                     "title": str(title),
                     "url": str(url),
+                    "retrieved_at": str(meta.get("fetched_at", "")),
                     "content": result.content,
                     "metadata": {
                         "score": result.score,
@@ -277,6 +278,12 @@ class KnowledgeSearchTool(BaseTool):
                                 "source_instance_name",
                                 "adapter_id",
                                 "config_version",
+                                "requested_url",
+                                "final_url",
+                                "fetched_at",
+                                "response_version",
+                                "content_type",
+                                "record_id",
                             )
                             if key in meta
                         },

@@ -468,7 +468,7 @@ class DigestCollectTool(BaseTool):
             },
             category="data",
             timeout_seconds=60.0,
-            required_capabilities=["connector:*:read", "file:read"],
+            required_capabilities=["connector:*:read", "file:read", "network:fetch"],
         )
 
     def resolve_required_capabilities(
@@ -477,6 +477,7 @@ class DigestCollectTool(BaseTool):
     ) -> tuple[str, ...]:
         """Resolve exact connector read requirements for this invocation."""
         from openjarvis.connectors import ensure_connectors_populated
+        from openjarvis.connectors.source_adapters import get_adapter, is_source_adapter
 
         ensure_connectors_populated()
         sources = params.get("sources", [])
@@ -488,14 +489,15 @@ class DigestCollectTool(BaseTool):
             if not isinstance(raw_source, str) or not raw_source.strip():
                 raise ValueError("sources contains an invalid connector ID")
             source = raw_source.strip()
-            if not ConnectorRegistry.contains(source):
+            if not is_source_adapter(source) and not ConnectorRegistry.contains(source):
                 raise ValueError(f"Unknown connector: {source}")
+            if is_source_adapter(source):
+                capabilities.extend(get_adapter(source).required_capabilities)
+                continue
             connector_cls = ConnectorRegistry.get(source)
             resolver = getattr(connector_cls, "capability_requirements", None)
             if not callable(resolver):
-                raise ValueError(
-                    f"Connector '{source}' has no capability declaration"
-                )
+                raise ValueError(f"Connector '{source}' has no capability declaration")
             capabilities.extend(str(cap) for cap in resolver())
 
         return tuple(dict.fromkeys(capabilities))
@@ -503,6 +505,7 @@ class DigestCollectTool(BaseTool):
     def execute(self, **params: Any) -> ToolResult:
         # Ensure connectors are registered
         from openjarvis.connectors import ensure_connectors_populated
+        from openjarvis.connectors.source_adapters import is_source_adapter
 
         ensure_connectors_populated()
 
@@ -517,19 +520,19 @@ class DigestCollectTool(BaseTool):
         errors: List[str] = []
 
         for source in sources:
-            if not ConnectorRegistry.contains(source):
+            if not is_source_adapter(source) and not ConnectorRegistry.contains(source):
                 errors.append(f"Connector '{source}' not available")
                 continue
 
             try:
-                connector_cls = ConnectorRegistry.get(source)
-                if source == "local_files":
+                if is_source_adapter(source):
                     from openjarvis.connectors.source_manager import (
                         ManagedSourcesReader,
                     )
 
                     connector = ManagedSourcesReader(source)
                 else:
+                    connector_cls = ConnectorRegistry.get(source)
                     connector = connector_cls()
 
                 if not connector.is_connected():

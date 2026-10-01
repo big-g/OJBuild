@@ -12,6 +12,13 @@ from typing import Any, Callable
 
 from openjarvis.connectors._stubs import BaseConnector
 from openjarvis.connectors.local_files import LocalFilesConnector
+from openjarvis.connectors.web_sources import (
+    JsonAPIConnector,
+    WebPageConnector,
+    probe_public_source,
+    validate_json_config,
+    validate_web_config,
+)
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,8 @@ class SourceAdapter:
     required_capabilities: tuple[str, ...]
     config_version: int = 1
     full_snapshot: bool = False
+    snapshot_config_field: str | None = None
+    probe: Callable[[dict[str, Any]], dict[str, Any]] | None = None
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -36,6 +45,7 @@ class SourceAdapter:
             "required_capabilities": self.required_capabilities,
             "operations": ["test", "sync", "remove"],
             "full_snapshot": self.full_snapshot,
+            "snapshot_config_field": self.snapshot_config_field,
         }
 
     def validate_config(self, config: dict[str, Any]) -> dict[str, Any]:
@@ -70,6 +80,10 @@ def list_adapters() -> list[dict[str, Any]]:
     return [_ADAPTERS[key].metadata() for key in sorted(_ADAPTERS)]
 
 
+def is_source_adapter(adapter_id: str) -> bool:
+    return adapter_id in _ADAPTERS
+
+
 def _validate_local_files(config: dict[str, Any]) -> dict[str, Any]:
     path = config.get("path")
     if not isinstance(path, str) or not path.strip():
@@ -98,5 +112,110 @@ register_adapter(
         factory=lambda config: LocalFilesConnector(root_path=config["path"]),
         required_capabilities=LocalFilesConnector.capability_requirements(),
         full_snapshot=True,
+    )
+)
+
+_URL_FIELD = {
+    "name": "url",
+    "label": "Public URL",
+    "type": "text",
+    "required": True,
+    "placeholder": "https://example.org/resource",
+}
+_RECORDS = {"field": "mode", "equals": "records"}
+
+register_adapter(
+    SourceAdapter(
+        adapter_id="web_page",
+        display_name="Web Page",
+        description="Index one public HTML or text page. JavaScript is not executed.",
+        fields=(_URL_FIELD,),
+        validate=validate_web_config,
+        factory=lambda config: WebPageConnector(config=config),
+        required_capabilities=WebPageConnector.capability_requirements(),
+        full_snapshot=True,
+        probe=lambda config: probe_public_source(config, reader_class=WebPageConnector),
+    )
+)
+
+register_adapter(
+    SourceAdapter(
+        adapter_id="json_api",
+        display_name="JSON API",
+        description=(
+            "Read a public JSON GET response as one document "
+            "or map an array to records."
+        ),
+        fields=(
+            _URL_FIELD,
+            {
+                "name": "mode",
+                "label": "Index as",
+                "type": "select",
+                "default_value": "document",
+                "options": [
+                    {"value": "document", "label": "Whole JSON document"},
+                    {"value": "records", "label": "Individual records"},
+                ],
+            },
+            {
+                "name": "records_pointer",
+                "label": "Records array pointer",
+                "type": "text",
+                "placeholder": "/data/items (empty for root array)",
+                "required": False,
+                "visible_when": _RECORDS,
+            },
+            {
+                "name": "id_pointer",
+                "label": "Record ID pointer",
+                "type": "text",
+                "default_value": "/id",
+                "visible_when": _RECORDS,
+            },
+            {
+                "name": "title_pointer",
+                "label": "Title pointer",
+                "type": "text",
+                "placeholder": "/title (empty to use record ID)",
+                "required": False,
+                "visible_when": _RECORDS,
+            },
+            {
+                "name": "content_pointer",
+                "label": "Content pointer",
+                "type": "text",
+                "placeholder": "/body (empty to index the whole record)",
+                "required": False,
+                "visible_when": _RECORDS,
+            },
+            {
+                "name": "max_records",
+                "label": "Maximum records",
+                "type": "number",
+                "default_value": 200,
+                "min": 1,
+                "max": 1000,
+                "visible_when": _RECORDS,
+            },
+            {
+                "name": "complete_snapshot",
+                "label": "This response is a complete snapshot",
+                "type": "checkbox",
+                "required": False,
+                "default_value": False,
+                "description": (
+                    "Remove missing records only when the response "
+                    "contains the complete collection."
+                ),
+                "visible_when": _RECORDS,
+            },
+        ),
+        validate=validate_json_config,
+        factory=lambda config: JsonAPIConnector(config=config),
+        required_capabilities=JsonAPIConnector.capability_requirements(),
+        full_snapshot=True,
+        snapshot_config_field="complete_snapshot",
+        probe=lambda config: probe_public_source(config, reader_class=JsonAPIConnector),
     )
 )

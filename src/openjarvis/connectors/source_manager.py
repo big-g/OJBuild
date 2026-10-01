@@ -30,6 +30,10 @@ class _InstanceConnector(BaseConnector):
             raise ValueError("Source configuration needs an adapter version migration")
         self.reader = adapter.factory(record["config"])
         self.full_snapshot = adapter.full_snapshot
+        if adapter.snapshot_config_field:
+            self.full_snapshot = self.full_snapshot and (
+                record["config"].get(adapter.snapshot_config_field) is True
+            )
         self.seen: set[str] = set()
 
     def is_connected(self) -> bool:
@@ -118,6 +122,8 @@ class SourceManager:
     def test(self, adapter_id: str, config: dict) -> dict:
         adapter = get_adapter(adapter_id)
         validated = adapter.validate_config(config)
+        if adapter.probe is not None:
+            return {"ok": True, "config": validated, **adapter.probe(validated)}
         reader = adapter.factory(validated)
         if not reader.is_connected():
             raise ValueError("Source is unavailable")

@@ -230,6 +230,7 @@ BUILTIN_CONNECTOR_IDS: tuple[str, ...] = (
     "granola",
     "hackernews",
     "imap",
+    "json_api",
     "local_files",
     "imessage",
     "news_rss",
@@ -241,6 +242,7 @@ BUILTIN_CONNECTOR_IDS: tuple[str, ...] = (
     "spotify",
     "strava",
     "weather",
+    "web_page",
     "whatsapp",
 )
 

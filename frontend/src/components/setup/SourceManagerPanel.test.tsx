@@ -28,3 +28,23 @@ describe('adapter-driven source configuration', () => {
     expect(html).not.toContain('Server folder');
   });
 });
+
+it('uses adapter defaults and displays dependent fields only in their mode', () => {
+  const fields: SourceAdapter = { ...adapter, fields: [
+    { name: 'mode', label: 'Mode', type: 'select', default_value: 'document', options: [
+      { value: 'document', label: 'Whole document' }, { value: 'records', label: 'Records' },
+    ] },
+    { name: 'id_pointer', label: 'Record ID pointer', type: 'text', default_value: '/id', visible_when: { field: 'mode', equals: 'records' } },
+    { name: 'max_records', label: 'Record limit', type: 'number', default_value: 200, min: 1, max: 1000, visible_when: { field: 'mode', equals: 'records' } },
+    { name: 'complete', label: 'Complete snapshot', type: 'checkbox', default_value: false, description: 'Removes missing records', visible_when: { field: 'mode', equals: 'records' } },
+  ] };
+  const whole = renderToStaticMarkup(<SourceConfigurationFields adapter={fields} config={{}} onChange={() => {}} />);
+  expect(whole).toContain('value="document" selected=""');
+  expect(whole).not.toContain('Record ID pointer');
+  const records = renderToStaticMarkup(<SourceConfigurationFields adapter={fields} config={{ mode: 'records' }} onChange={() => {}} />);
+  expect(records).toContain('value="/id"');
+  expect(records).toContain('value="200"');
+  expect(records).toContain('min="1"');
+  expect(records).toContain('Removes missing records');
+  expect(records).not.toContain('checked=""');
+});

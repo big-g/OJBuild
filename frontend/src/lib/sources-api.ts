@@ -6,6 +6,11 @@ export interface SourceField {
   type: 'text' | 'number' | 'checkbox' | 'select';
   required?: boolean;
   placeholder?: string;
+  default_value?: string | number | boolean;
+  description?: string;
+  min?: number;
+  max?: number;
+  visible_when?: { field: string; equals: string | number | boolean };
   options?: { value: string; label: string }[];
 }
 
@@ -51,7 +56,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 export const listSourceAdapters = () => request<{ adapters: SourceAdapter[] }>('/adapters');
 export const listSourceInstances = () => request<{ sources: SourceInstance[] }>('');
 export const testSourceConfiguration = (adapter_id: string, config: SourceConfig) =>
-  request<{ ok: boolean; config: SourceConfig }>('/test', 'POST', { adapter_id, config });
+  request<{ ok: boolean; config: SourceConfig; documents?: number; sample_titles?: string[]; final_url?: string }>('/test', 'POST', { adapter_id, config });
 export const createSourceInstance = (adapter_id: string, name: string, config: SourceConfig) =>
   request<SourceInstance>('', 'POST', { adapter_id, name, config });
 export const updateSourceInstance = (source: SourceInstance) =>

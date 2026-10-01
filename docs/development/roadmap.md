@@ -29,12 +29,18 @@ Automatic model routing is deferred; explicit model selection remains supported.
 
 ## Phase 2: dynamic source management
 
-1. **Current implementation step:** database-backed, named source instances;
+1. **Implemented:** database-backed, named source instances;
    adapter-provided configuration fields and server validation; web add/edit/test/
    enable/disable/sync/remove controls; independent indexing and checkpoints;
    migrate the initial Local Files JSON connection without duplicating its index.
-2. **Next:** generic web/API adapters using the same instance contract, with safe
-   network access, explicit credential handling, and usable provenance.
+2. **Implemented:** public Web Page and JSON API GET adapters through the same
+   instance contract. Public destinations are checked and pinned per redirect;
+   response sizes and record counts are bounded; JSON mapping supports stable IDs
+   and explicit complete-snapshot reconciliation. Connection tests fetch/parse
+   without indexing; evidence retains actual fetch time and original/final URLs.
+   **Next:** protected credential references and authenticated API connections,
+   followed by explicit pagination and incremental/deletion contracts. Public
+   adapters accept no credentials and do not access private-network services.
 3. **Pending:** durable scheduled jobs, cancellation/progress, configuration
    evolution across adapter versions, audit history, and migration of existing
    OAuth/token integrations into the instance model. Secret-bearing adapter fields

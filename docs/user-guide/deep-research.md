@@ -197,5 +197,53 @@ restarts; an interrupted sync is reported and can be retried.
 Tool reads still require `connector:local_files:read` and `file:read`. Configuring
 a source grants no tool permissions. Adapter discovery supplies versioned fields
 and operation metadata for the frontend; unsupported config versions are rejected.
-This first instance adapter contains no secret fields. Credential references,
-scheduled jobs, cancellation/progress, and web/API adapters remain roadmap work.
+These adapters contain no secret fields. Protected credential references,
+scheduled jobs, cancellation/progress, and authenticated APIs remain roadmap work.
+
+### Public Web Page and JSON API sources
+
+**Web Page** indexes one public HTML, plain-text or Markdown URL. It extracts
+readable HTML text and a page title, excludes script/style/template and explicitly
+hidden elements, and does not execute JavaScript or follow page links. Add one
+named connection per page. For browser-rendered sites and crawling, the existing
+Playwright/Scrapy tools remain separate governed operations.
+
+**JSON API** fetches a public JSON endpoint with GET. The default **Whole JSON
+document** mode indexes the response without guessing field meanings. Choose
+**Individual records** to map an array to documents:
+
+| Setting | Example | Meaning |
+|---|---|---|
+| Records array pointer | `/data/items` | Array to index; empty means the root array |
+| Record ID pointer | `/id` | Nonempty string or integer that stays stable across updates |
+| Title pointer | `/title` | Optional string/number title; empty uses the record ID |
+| Content pointer | `/body` | Text/value to index; empty indexes the entire record |
+| Maximum records | `200` | Error if the array exceeds this count; maximum 1,000 |
+| Complete snapshot | Off by default | Enable only if the response contains the whole collection; then missing records are removed after a successful sync |
+
+Pointers start with `/`; use `~1` for a slash in a key and `~0` for a tilde.
+Duplicate IDs, missing pointers, invalid JSON, duplicate object keys and non-finite
+numbers report errors before any new records are indexed. Without **Complete
+snapshot**, records absent from one response remain indexed. Automatic pagination
+and authenticated endpoints are not supported in this step.
+
+**Test connection** actually fetches and parses either public source without
+saving/indexing it. Fetching accepts public HTTP/HTTPS addresses on ports 80/443,
+pins verified DNS addresses while keeping TLS hostname verification, revalidates
+redirects, and rejects private/metadata addresses and HTTPS-to-HTTP downgrades.
+There are at most five redirects, four address attempts per destination, a 2 MiB
+response limit, 20-second I/O timeouts and a checked 60-second fetch budget.
+Compressed, partial, failed and unsupported-format responses report errors.
+Private services belong in explicitly scoped integrations rather than these
+public adapters. These sources send no credentials, cookies or custom headers;
+credential-bearing URLs and recognized credential query parameters are rejected.
+Do not put secrets into a public URL.
+
+Indexing records the original URL, final URL, response hash, fetch time and source
+instance identity. Search evidence retains the actual fetch timestamp, so a search
+does not make cached web content appear newly fetched. Failed syncs retain the
+prior successful watermark and do not reconcile missing documents.
+
+Tool reads require the selected adapter's `connector:web_page:read` or
+`connector:json_api:read` capability plus `network:fetch`. Saving a source grants
+none of these capabilities. Existing Local Files permissions are unchanged.

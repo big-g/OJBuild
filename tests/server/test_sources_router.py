@@ -33,8 +33,9 @@ def test_adapter_fields_test_configuration_and_crud(client, tmp_path):
     root = tmp_path / "documents"
     root.mkdir()
     definitions = client.get("/v1/sources/adapters").json()["adapters"]
-    assert definitions[0]["fields"][0]["name"] == "path"
-    assert definitions[0]["required_capabilities"] == [
+    local = next(item for item in definitions if item["adapter_id"] == "local_files")
+    assert local["fields"][0]["name"] == "path"
+    assert local["required_capabilities"] == [
         "connector:local_files:read",
         "file:read",
     ]

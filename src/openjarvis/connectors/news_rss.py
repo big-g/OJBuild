@@ -8,11 +8,9 @@ functions for easy mocking in tests.
 from __future__ import annotations
 
 import http.client
-import ipaddress
 import json
-import socket
+import socket as socket  # re-export the existing transport test hook
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -24,144 +22,33 @@ import httpx
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
 from openjarvis.core.registry import ConnectorRegistry
+from openjarvis.security.public_http import (
+    PinnedHTTPConnection as _PinnedHTTPConnection,
+)
+from openjarvis.security.public_http import (
+    PinnedHTTPSConnection as _PinnedHTTPSConnection,
+)
+from openjarvis.security.public_http import (
+    PublicTarget,
+    resolve_public_addresses,
+    validate_public_url,
+)
 
 _DEFAULT_CONFIG_PATH = str(DEFAULT_CONFIG_DIR / "connectors" / "news_rss.json")
 _MAX_REDIRECTS = 5
 _MAX_FEED_BYTES = 10 * 1024 * 1024
 
 
-@dataclass(frozen=True)
-class _FeedTarget:
-    """A validated URL plus the exact public addresses it may connect to."""
-
-    scheme: str
-    hostname: str
-    port: int
-    request_target: str
-    host_header: str
-    addresses: tuple[str, ...]
-
-
+# Compatibility wrappers retain the feed-specific test/extension hooks.
 def _resolve_host_addresses(hostname: str, port: int) -> tuple[str, ...]:
-    """Resolve once, reject every non-global answer, and return pinned IPs."""
-    from openjarvis.security.ssrf import is_private_ip
-
-    try:
-        results = socket.getaddrinfo(
-            hostname,
-            port,
-            socket.AF_UNSPEC,
-            socket.SOCK_STREAM,
-        )
-    except socket.gaierror as exc:
-        raise ValueError(
-            f"RSS feed hostname could not be resolved: {hostname}"
-        ) from exc
-
-    addresses: list[str] = []
-    for _family, _type, _proto, _canonname, sockaddr in results:
-        raw_ip = sockaddr[0].split("%", 1)[0]
-        try:
-            address = ipaddress.ip_address(raw_ip)
-        except ValueError as exc:
-            raise ValueError(f"RSS feed resolved to an invalid IP: {raw_ip}") from exc
-        # ``is_global`` closes gaps outside the project's original RFC1918
-        # list (CGNAT, benchmarking, documentation, and other special ranges).
-        if not address.is_global or is_private_ip(str(address)):
-            raise ValueError(f"RSS feed resolved to a non-public IP: {address}")
-        normalized = str(address)
-        if normalized not in addresses:
-            addresses.append(normalized)
-
-    if not addresses:
-        raise ValueError(f"RSS feed hostname returned no addresses: {hostname}")
-    return tuple(addresses)
+    return resolve_public_addresses(hostname, port)
 
 
-def _validate_feed_url(url: str) -> _FeedTarget:
-    """Reject malformed/private targets and pin the addresses just checked."""
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("Each RSS feed must be an http(s) URL")
-    if parsed.username is not None or parsed.password is not None:
-        raise ValueError("RSS feed URLs must not contain user credentials")
-    hostname = parsed.hostname
-    if not hostname:
-        raise ValueError("Each RSS feed must include a hostname")
-    try:
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    except ValueError as exc:
-        raise ValueError("RSS feed URL contains an invalid port") from exc
-
-    from openjarvis.security.ssrf import check_ssrf
-
-    error = check_ssrf(url)
-    if error:
-        raise ValueError(f"RSS feed URL is not allowed: {error}")
-
-    # IDNA is used consistently for DNS, HTTP Host, TLS SNI, and certificate
-    # verification. IP literals are already ASCII and remain unchanged.
-    try:
-        ipaddress.ip_address(hostname)
-        connection_hostname = hostname
-    except ValueError:
-        try:
-            connection_hostname = hostname.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise ValueError("RSS feed hostname is not valid IDNA") from exc
-
-    addresses = _resolve_host_addresses(connection_hostname, port)
-    default_port = 443 if parsed.scheme == "https" else 80
-    displayed_host = (
-        f"[{connection_hostname}]"
-        if ":" in connection_hostname
-        else connection_hostname
-    )
-    host_header = displayed_host if port == default_port else f"{displayed_host}:{port}"
-    request_target = parsed.path or "/"
-    if parsed.query:
-        request_target = f"{request_target}?{parsed.query}"
-
-    return _FeedTarget(
-        scheme=parsed.scheme,
-        hostname=connection_hostname,
-        port=port,
-        request_target=request_target,
-        host_header=host_header,
-        addresses=addresses,
-    )
+def _validate_feed_url(url: str) -> PublicTarget:
+    return validate_public_url(url, resolver=_resolve_host_addresses)
 
 
-class _PinnedConnectionMixin:
-    """Connect to a verified IP while retaining the URL host for HTTP/TLS."""
-
-    def __init__(self, host: str, port: int, *, pinned_ip: str, **kwargs: Any) -> None:
-        self._pinned_ip = pinned_ip
-        super().__init__(host, port, **kwargs)
-        # HTTPConnection.__init__ deliberately installs socket.create_connection
-        # as an instance attribute, so replace that hook after initialization.
-        self._create_connection = self._create_pinned_connection
-
-    def _create_pinned_connection(self, address, timeout, source_address):
-        # Ignore ``address[0]`` so http.client never performs a second DNS
-        # lookup. HTTPSConnection still uses ``self.host`` as TLS SNI and for
-        # certificate hostname verification.
-        return socket.create_connection(
-            (self._pinned_ip, address[1]),
-            timeout,
-            source_address,
-        )
-
-
-class _PinnedHTTPConnection(_PinnedConnectionMixin, http.client.HTTPConnection):
-    pass
-
-
-class _PinnedHTTPSConnection(_PinnedConnectionMixin, http.client.HTTPSConnection):
-    pass
-
-
-def _request_feed(url: str, target: _FeedTarget) -> httpx.Response:
+def _request_feed(url: str, target: PublicTarget) -> httpx.Response:
     """GET *url* using only the already-validated addresses in *target*."""
     request = httpx.Request("GET", url)
     last_error: Exception | None = None
