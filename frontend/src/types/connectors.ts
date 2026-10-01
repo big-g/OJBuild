@@ -92,16 +92,6 @@ export type SourceCard = ConnectorMeta;
 export type ConnectorCategory = ConnectorMeta['category'];
 
 export const SOURCE_CATALOG: ConnectorMeta[] = [
-  {
-    connector_id: 'local_files',
-    display_name: 'Local Files',
-    auth_type: 'filesystem',
-    category: 'documents',
-    icon: 'FolderOpen',
-    color: '#6366f1',
-    description: 'Index a folder on the server: text, CSV, JSON, HTML, and PDFs with extractable text.',
-    unitLabel: 'documents',
-  },
   // ── Upload / Paste ─────────────────────────────────────────────────
   {
     connector_id: 'upload',

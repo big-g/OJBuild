@@ -7,11 +7,10 @@ from unittest.mock import MagicMock, patch
 
 from openjarvis.connectors._stubs import Document
 from openjarvis.core.registry import ConnectorRegistry, ToolRegistry
+from openjarvis.tools.digest_collect import DigestCollectTool
 
 
 def test_digest_collect_registered():
-    from openjarvis.tools.digest_collect import DigestCollectTool
-
     ToolRegistry.register_value("digest_collect", DigestCollectTool)
     assert ToolRegistry.contains("digest_collect")
 

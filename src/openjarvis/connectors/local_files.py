@@ -100,7 +100,8 @@ class LocalFilesConnector(BaseConnector):
     auth_type = "filesystem"
     required_capabilities = ("connector:local_files:read", "file:read")
 
-    def __init__(self, *, config_path: str = "") -> None:
+    def __init__(self, *, config_path: str = "", root_path: str = "") -> None:
+        self._configured_root = root_path
         self._config_path = (
             Path(config_path)
             if config_path
@@ -109,8 +110,15 @@ class LocalFilesConnector(BaseConnector):
         self._status = SyncStatus()
 
     def _root(self) -> Path:
-        data = json.loads(self._config_path.read_text(encoding="utf-8"))
-        root = Path(data["path"]).expanduser().resolve(strict=True)
+        path = self._configured_root
+        if not path:
+            data = json.loads(self._config_path.read_text(encoding="utf-8"))
+            path = data["path"]
+        root = Path(path).expanduser().resolve(strict=True)
+        if str(root) != path:
+            raise ValueError(
+                "Configured directory changed; test and reconfigure the source"
+            )
         if not root.is_dir():
             raise ValueError("Local Files requires a directory on the server")
         return root

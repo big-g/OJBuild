@@ -41,41 +41,10 @@ def _knowledge_sources(connector_id: str, connector: Any = None) -> tuple[str, .
 
 
 def _ensure_connectors_registered() -> None:
-    """Ensure ConnectorRegistry is populated.
+    """Restore connector registrations without reloading shared infrastructure."""
+    from openjarvis.connectors import ensure_connectors_populated
 
-    If the registry has been cleared (e.g. by test fixtures) but connector
-    modules are already cached in sys.modules, reload each submodule to
-    re-execute their @ConnectorRegistry.register decorators.
-    """
-    import importlib
-    import sys
-
-    from openjarvis.core.registry import ConnectorRegistry
-
-    # First, try a normal import (works if modules haven't been imported yet).
-    try:
-        import openjarvis.connectors  # noqa: F401
-    except Exception:
-        pass
-
-    # If the registry is still empty, reload individual connector submodules
-    # that are already present in sys.modules.
-    if not ConnectorRegistry.keys():
-        for mod_name in list(sys.modules):
-            if (
-                mod_name.startswith("openjarvis.connectors.")
-                and not mod_name.endswith("_stubs")
-                and not mod_name.endswith("pipeline")
-                and not mod_name.endswith("store")
-                and not mod_name.endswith("chunker")
-                and not mod_name.endswith("retriever")
-                and not mod_name.endswith("sync_engine")
-                and not mod_name.endswith("oauth")
-            ):
-                try:
-                    importlib.reload(sys.modules[mod_name])
-                except Exception:
-                    pass
+    ensure_connectors_populated()
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +102,8 @@ def create_connectors_router():
 
     def _get_or_create(connector_id: str) -> Any:
         """Return a cached connector instance, creating it if needed."""
+        if connector_id == "local_files":
+            raise HTTPException(409, "Manage Local Files instances through /v1/sources")
         if connector_id not in _instances:
             cls = ConnectorRegistry.get(connector_id)
             _instances[connector_id] = cls()
@@ -429,6 +400,8 @@ def create_connectors_router():
         _ensure_connectors_registered()
         results = []
         for key in sorted(ConnectorRegistry.keys()):
+            if key == "local_files":
+                continue  # configured instances are managed through /v1/sources
             try:
                 instance = _get_or_create(key)
                 results.append(_connector_summary(key, instance))
@@ -503,6 +476,8 @@ def create_connectors_router():
     @_serialized_async
     async def connect_connector(connector_id: str, req: ConnectRequest):
         """Connect a connector using the supplied credentials."""
+        if connector_id == "local_files":
+            raise HTTPException(409, "Manage Local Files instances through /v1/sources")
         _ensure_connectors_registered()
         if not ConnectorRegistry.contains(connector_id):
             raise HTTPException(

@@ -1,0 +1,38 @@
+.source-manager {
+  margin-bottom: 20px;
+  font-size: 13px;
+}
+.source-manager input:not([type='checkbox']),
+.source-manager select {
+  padding: 8px 10px;
+  background: var(--color-input-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-input-border);
+  border-radius: 5px;
+  max-width: 100%;
+}
+.source-manager label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.source-manager button {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  cursor: pointer;
+}
+.source-manager button:hover:not(:disabled) {
+  border-color: var(--color-accent-purple);
+}
+.source-manager button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.source-manager fieldset {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 12px;
+}

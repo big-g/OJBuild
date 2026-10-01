@@ -163,17 +163,21 @@ def ensure_connectors_populated() -> None:
     if ConnectorRegistry.keys():
         return
 
-    for module_name in list(sys.modules):
-        if (
-            module_name.startswith("openjarvis.connectors.")
-            and module_name not in {
-                "openjarvis.connectors._stubs",
-                "openjarvis.connectors.store",
-            }
-        ):
-            module = sys.modules.get(module_name)
-            if module is not None:
-                try:
-                    importlib.reload(module)
-                except Exception:
-                    pass
+    # Reload only modules that define concrete connector classes. Re-executing
+    # stores/managers/adapter registries replaces exception and registry identities
+    # while callers still hold their originals, breaking lifecycle contracts.
+    for module_name, module in list(sys.modules.items()):
+        if not module_name.startswith("openjarvis.connectors.") or module is None:
+            continue
+        defines_connector = any(
+            isinstance(value, type)
+            and issubclass(value, BaseConnector)
+            and value.__module__ == module_name
+            and bool(getattr(value, "connector_id", ""))
+            for value in vars(module).values()
+        )
+        if defines_connector:
+            try:
+                importlib.reload(module)
+            except Exception:
+                pass

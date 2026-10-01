@@ -1,0 +1,64 @@
+import { apiFetch } from './api';
+
+export interface SourceField {
+  name: string;
+  label: string;
+  type: 'text' | 'number' | 'checkbox' | 'select';
+  required?: boolean;
+  placeholder?: string;
+  options?: { value: string; label: string }[];
+}
+
+export interface SourceAdapter {
+  adapter_id: string;
+  display_name: string;
+  description: string;
+  config_version: number;
+  fields: SourceField[];
+  required_capabilities: string[];
+  operations: string[];
+}
+
+export type SourceConfig = Record<string, string | number | boolean>;
+export interface SourceInstance {
+  id: string;
+  adapter_id: string;
+  name: string;
+  config: SourceConfig;
+  config_version: number;
+  revision: number;
+  enabled: boolean;
+  state: 'idle' | 'syncing' | 'error';
+  error: string | null;
+  chunks?: number;
+  checkpoint?: { last_sync: string | null; items_synced: number; error: string | null } | null;
+}
+
+async function request<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
+  const response = await apiFetch(`/v1/sources${path}`, {
+    method,
+    ...(body === undefined ? {} : {
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: response.statusText }));
+    throw new Error(typeof error.detail === 'string' ? error.detail : `Source request failed (${response.status})`);
+  }
+  return response.status === 204 ? undefined as T : response.json();
+}
+
+export const listSourceAdapters = () => request<{ adapters: SourceAdapter[] }>('/adapters');
+export const listSourceInstances = () => request<{ sources: SourceInstance[] }>('');
+export const testSourceConfiguration = (adapter_id: string, config: SourceConfig) =>
+  request<{ ok: boolean; config: SourceConfig }>('/test', 'POST', { adapter_id, config });
+export const createSourceInstance = (adapter_id: string, name: string, config: SourceConfig) =>
+  request<SourceInstance>('', 'POST', { adapter_id, name, config });
+export const updateSourceInstance = (source: SourceInstance) =>
+  request<SourceInstance>(`/${encodeURIComponent(source.id)}`, 'PUT', {
+    revision: source.revision, name: source.name, config: source.config, enabled: source.enabled,
+  });
+export const removeSourceInstance = (source: SourceInstance) =>
+  request<void>(`/${encodeURIComponent(source.id)}?revision=${source.revision}`, 'DELETE');
+export const syncSourceInstance = (id: string) =>
+  request<{ status: string }>(`/${encodeURIComponent(id)}/sync`, 'POST');

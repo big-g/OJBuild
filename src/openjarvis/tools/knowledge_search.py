@@ -269,7 +269,15 @@ class KnowledgeSearchTool(BaseTool):
                         "matched_queries": meta["matched_queries"],
                         **{
                             key: meta[key]
-                            for key in ("section", "jurisdiction", "version")
+                            for key in (
+                                "section",
+                                "jurisdiction",
+                                "version",
+                                "source_instance_id",
+                                "source_instance_name",
+                                "adapter_id",
+                                "config_version",
+                            )
                             if key in meta
                         },
                     },

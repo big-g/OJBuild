@@ -1,4 +1,54 @@
-# Roadmap
+# OJBuild Roadmap
+
+This section governs the customized `big-g/OJBuild` project. The upstream
+workstreams below are reference material, not completion criteria for this build.
+
+## Design requirement: dynamic configuration and growth
+
+New configuration-heavy features must support database-backed instances managed
+through the web frontend. Separate adapter/tool definitions from configured
+instances; definitions declare versioned settings, validation, operations, and
+capability requirements. Avoid one hardcoded connection per integration.
+Registration and configuration never imply authorization. Preserve the existing
+ToolSpec/ToolExecutor, capability governance, provenance, and evidence hard gate.
+Use explicit migrations and independent identities for configuration, sync state,
+and indexed data. Extensibility must retain bounded execution and observable errors.
+
+## Project phases
+
+| Phase | Status | Scope |
+|---|---|---|
+| 1 | Complete | Browser voice conversation, speech recognition, speech playback, resume listening |
+| 2 | Active | Authentication; persistent conversations across browser, desktop and Android; knowledge/reasoning and evidence integrity; tool governance and runtime tool addition; trace correlation; centralized Ubuntu backend and client validation |
+| 3 | Planned | Text-to-image and text-to-3D generation, followed by secure remote access |
+| 4 | Planned | Home Assistant integration; Echo devices as Jarvis clients in Phase 4.1 |
+| 5 | Planned | Nextcloud monitoring/notifications and a self-hosted email server |
+
+Multi-user separation and Apple client work are outside the current Phase 2 scope.
+Automatic model routing is deferred; explicit model selection remains supported.
+
+## Phase 2: dynamic source management
+
+1. **Current implementation step:** database-backed, named source instances;
+   adapter-provided configuration fields and server validation; web add/edit/test/
+   enable/disable/sync/remove controls; independent indexing and checkpoints;
+   migrate the initial Local Files JSON connection without duplicating its index.
+2. **Next:** generic web/API adapters using the same instance contract, with safe
+   network access, explicit credential handling, and usable provenance.
+3. **Pending:** durable scheduled jobs, cancellation/progress, configuration
+   evolution across adapter versions, audit history, and migration of existing
+   OAuth/token integrations into the instance model. Secret-bearing adapter fields
+   must use protected credential references; never return credentials in source APIs.
+4. **Pending:** Playwright and Scrapy integration through existing governed tools,
+   followed by desktop/Android end-to-end validation of research and configuration.
+
+Phase 2 remains open until the evidence hard gate, runtime tool addition, trace
+identity, knowledge maintenance, and client validation meet their acceptance checks.
+The source-management foundation alone does not complete Phase 2.
+
+---
+
+# Upstream reference roadmap
 
 ## Current Focus Areas
 

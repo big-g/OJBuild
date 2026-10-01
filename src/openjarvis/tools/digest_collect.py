@@ -523,7 +523,14 @@ class DigestCollectTool(BaseTool):
 
             try:
                 connector_cls = ConnectorRegistry.get(source)
-                connector = connector_cls()
+                if source == "local_files":
+                    from openjarvis.connectors.source_manager import (
+                        ManagedSourcesReader,
+                    )
+
+                    connector = ManagedSourcesReader(source)
+                else:
+                    connector = connector_cls()
 
                 if not connector.is_connected():
                     errors.append(

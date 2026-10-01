@@ -1,0 +1,284 @@
+"""Instance lifecycle and adapter execution using existing ingestion machinery."""
+
+from __future__ import annotations
+
+import fcntl
+import hashlib
+import os
+import threading
+import uuid
+from contextlib import contextmanager
+from dataclasses import replace
+from typing import Iterator
+
+from openjarvis.connectors._stubs import BaseConnector, Document
+from openjarvis.connectors.pipeline import IngestionPipeline
+from openjarvis.connectors.source_adapters import get_adapter
+from openjarvis.connectors.source_store import SourceConflict, SourceStore
+from openjarvis.connectors.store import KnowledgeStore
+from openjarvis.connectors.sync_engine import SyncEngine
+
+_SYNC_SLOTS = threading.BoundedSemaphore(2)
+
+
+class _InstanceConnector(BaseConnector):
+    def __init__(self, record: dict) -> None:
+        self.record = record
+        self.connector_id = record["id"]  # independent checkpoint identity
+        adapter = get_adapter(record["adapter_id"])
+        if record["config_version"] != adapter.config_version:
+            raise ValueError("Source configuration needs an adapter version migration")
+        self.reader = adapter.factory(record["config"])
+        self.full_snapshot = adapter.full_snapshot
+        self.seen: set[str] = set()
+
+    def is_connected(self) -> bool:
+        return self.reader.is_connected()
+
+    def sync_status(self):
+        return self.reader.sync_status()
+
+    def disconnect(self) -> None:
+        raise SourceConflict("Remove configured instances through SourceManager")
+
+    def sync(self, *, since=None, cursor=None) -> Iterator[Document]:
+        # Local snapshots must include unchanged files so deletion reconciliation
+        # only follows a complete, successful traversal. Other adapters can use
+        # incremental fetching once they declare their deletion semantics.
+        kwargs = {} if self.full_snapshot else {"since": since, "cursor": cursor}
+        for doc in self.reader.sync(**kwargs):
+            prefix = f"source:{self.record['id']}:"
+            doc_id = (
+                doc.doc_id
+                if self.record["legacy_document_ids"]
+                else prefix + doc.doc_id
+            )
+            source_id = (
+                doc.source_id
+                if self.record["legacy_document_ids"]
+                else prefix + doc.source_id
+            )
+            self.seen.add(doc_id)
+            yield replace(
+                doc,
+                doc_id=doc_id,
+                source_id=source_id,
+                metadata={
+                    **doc.metadata,
+                    "source_instance_id": self.record["id"],
+                    "source_instance_name": self.record["name"],
+                    "adapter_id": self.record["adapter_id"],
+                    "config_version": self.record["config_version"],
+                },
+            )
+
+
+class SourceManager:
+    def __init__(self, store: SourceStore | None = None, *, knowledge_path: str = ""):
+        self.store = store or SourceStore()
+        self.knowledge_path = knowledge_path
+        self.lock_dir = self.store.path.parent / "source-locks"
+        self.lock_dir.mkdir(mode=0o700, exist_ok=True)
+
+    @contextmanager
+    def _locked(self, source_id: str):
+        # UUID validation prevents lock-path traversal. Advisory locks work across
+        # server processes and are released by the OS after a crash/restart.
+        source_id = str(uuid.UUID(source_id))
+        fd = os.open(
+            self.lock_dir / source_id, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
+        )
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise SourceConflict("Source is busy; wait for sync to finish") from exc
+            yield
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _name(name: str) -> str:
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
+            raise ValueError("Source name must contain 1–120 characters")
+        return name.strip()
+
+    def create(self, adapter_id: str, name: str, config: dict) -> dict:
+        adapter = get_adapter(adapter_id)
+        config = adapter.validate_config(config)
+        return self.store.create(
+            adapter_id, self._name(name), config, adapter.config_version
+        )
+
+    def _connector(self, record: dict) -> _InstanceConnector:
+        if not record["enabled"]:
+            raise SourceConflict("Source is disabled; enable it before syncing")
+        return _InstanceConnector(record)
+
+    def test(self, adapter_id: str, config: dict) -> dict:
+        adapter = get_adapter(adapter_id)
+        validated = adapter.validate_config(config)
+        reader = adapter.factory(validated)
+        if not reader.is_connected():
+            raise ValueError("Source is unavailable")
+        return {"ok": True, "config": validated}
+
+    def update(
+        self, source_id: str, revision: int, *, name: str, config: dict, enabled: bool
+    ) -> dict:
+        name = self._name(name)
+        with self._locked(source_id):
+            old = self.store.get(source_id)
+            if old["revision"] != revision:
+                raise SourceConflict("Source changed; refresh before saving")
+            adapter = get_adapter(old["adapter_id"])
+            if old["config_version"] != adapter.config_version:
+                raise ValueError(
+                    "Source configuration needs an adapter version migration"
+                )
+            # Naming/disabling an unavailable source should still work. Validate
+            # the directory only when its configuration changes or it is enabled.
+            if config != old["config"] or (enabled and not old["enabled"]):
+                config = adapter.validate_config(config)
+            if config != old["config"]:
+                self._reset_and_purge(old)
+            result = self.store.update(
+                source_id, revision, name=name, config=config, enabled=enabled
+            )
+            self.store.set_status(source_id, "idle")
+            return {**result, "state": "idle", "error": None}
+
+    @staticmethod
+    def _prefix(record: dict) -> str:
+        if record["legacy_document_ids"]:
+            root_id = hashlib.sha256(record["config"]["path"].encode()).hexdigest()[:16]
+            return f"local_files:{root_id}:"
+        return f"source:{record['id']}:"
+
+    def _reset_and_purge(self, record: dict) -> None:
+        with KnowledgeStore(self.knowledge_path) as knowledge:
+            with SyncEngine(
+                IngestionPipeline(knowledge), state_db=str(self.store.path)
+            ) as engine:
+                # Reset first: if cleanup fails, a retry can safely re-read the
+                # existing source instead of skipping already-purged documents.
+                engine.reset_checkpoint(record["id"])
+            knowledge.reconcile_document_prefix(self._prefix(record), set())
+
+    def delete(self, source_id: str, revision: int) -> None:
+        with self._locked(source_id):
+            record = self.store.get(source_id)
+            if record["revision"] != revision:
+                raise SourceConflict("Source changed; refresh before removing")
+            self._reset_and_purge(record)
+            self.store.delete(source_id)
+
+    def sync(self, source_id: str) -> int:
+        with self._locked(source_id):
+            return self._sync_locked(source_id)
+
+    def _sync_locked(self, source_id: str) -> int:
+        self.store.set_status(source_id, "syncing")
+        try:
+            connector = self._connector(self.store.get(source_id))
+            with KnowledgeStore(self.knowledge_path) as knowledge:
+                with SyncEngine(
+                    IngestionPipeline(knowledge), state_db=str(self.store.path)
+                ) as engine:
+                    chunks = engine.sync(connector)
+                # A failed scan never removes documents that weren't reached.
+                if connector.full_snapshot:
+                    knowledge.reconcile_document_prefix(
+                        self._prefix(connector.record),
+                        connector.seen,
+                    )
+            self.store.set_status(source_id, "idle")
+            return chunks
+        except Exception as exc:
+            self.store.set_status(source_id, "error", str(exc))
+            raise
+
+    def start_sync(self, source_id: str) -> None:
+        # Hold the same OS lock from acceptance until the worker finishes so a
+        # rapid edit/remove cannot race with a not-yet-started background worker.
+        lock = self._locked(source_id)
+        lock.__enter__()
+        slot_acquired = False
+        try:
+            self._connector(self.store.get(source_id))
+            slot_acquired = _SYNC_SLOTS.acquire(blocking=False)
+            if not slot_acquired:
+                raise SourceConflict("Two sources are syncing; retry when one finishes")
+            self.store.set_status(source_id, "syncing")
+
+            def run():
+                try:
+                    self._sync_locked(source_id)
+                except Exception:
+                    pass  # persisted by _sync_locked, exposed by GET /sources
+                finally:
+                    lock.__exit__(None, None, None)
+                    _SYNC_SLOTS.release()
+
+            threading.Thread(target=run, daemon=True).start()
+        except Exception:
+            lock.__exit__(None, None, None)
+            if slot_acquired:
+                _SYNC_SLOTS.release()
+            raise
+
+    def list(self) -> list[dict]:
+        results = []
+        for record in self.store.list():
+            # Persisted 'syncing' without an OS lock means the old worker died.
+            if record["state"] == "syncing":
+                try:
+                    with self._locked(record["id"]):
+                        self.store.set_status(
+                            record["id"], "error", "Sync interrupted; retry"
+                        )
+                        record = self.store.get(record["id"])
+                except SourceConflict:
+                    pass
+                except KeyError:
+                    continue  # removed after the initial list snapshot
+            with KnowledgeStore(self.knowledge_path) as knowledge:
+                record["chunks"] = knowledge.count_document_prefix(self._prefix(record))
+                with SyncEngine(
+                    IngestionPipeline(knowledge), state_db=str(self.store.path)
+                ) as engine:
+                    record["checkpoint"] = engine.get_checkpoint(record["id"])
+            record.pop("legacy_document_ids")
+            results.append(record)
+        return results
+
+    def collect(self, adapter_id: str, *, since=None) -> Iterator[Document]:
+        """Tool-side reads preserve adapter capability checks in the caller."""
+        for record in self.store.list():
+            if record["adapter_id"] != adapter_id or not record["enabled"]:
+                continue
+            with self._locked(record["id"]):
+                current = self.store.get(record["id"])
+                connector = self._connector(current)
+                for doc in connector.sync():
+                    if since is None or doc.timestamp.replace(
+                        tzinfo=None
+                    ) >= since.replace(tzinfo=None):
+                        yield doc
+
+
+class ManagedSourcesReader:
+    """Read enabled instances through the existing capability-governed digest tool."""
+
+    def __init__(self, adapter_id: str) -> None:
+        self.manager = SourceManager()
+        self.adapter_id = adapter_id
+
+    def is_connected(self) -> bool:
+        return any(
+            record["adapter_id"] == self.adapter_id and record["enabled"]
+            for record in self.manager.store.list()
+        )
+
+    def sync(self, *, since=None, **kwargs) -> Iterator[Document]:
+        yield from self.manager.collect(self.adapter_id, since=since)

@@ -1,0 +1,160 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  createSourceInstance, listSourceAdapters, listSourceInstances,
+  removeSourceInstance, syncSourceInstance, testSourceConfiguration, updateSourceInstance,
+} from '../../lib/sources-api';
+import type { SourceAdapter, SourceConfig, SourceInstance } from '../../lib/sources-api';
+import './SourceManagerPanel.css';
+
+export function SourceConfigurationFields({
+  adapter, config, onChange,
+}: {
+  adapter: SourceAdapter;
+  config: SourceConfig;
+  onChange: (config: SourceConfig) => void;
+}) {
+  return <>
+    {adapter.fields.map((field) => <label key={field.name} className="flex flex-col gap-1">
+      {field.label}
+      {field.type === 'select' ? <select
+        aria-label={field.label}
+        required={field.required}
+        value={String(config[field.name] ?? '')}
+        onChange={(event) => onChange({ ...config, [field.name]: event.target.value })}
+      >
+        <option value="">Choose…</option>
+        {(field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select> : <input
+        aria-label={field.label}
+        type={field.type === 'checkbox' ? 'checkbox' : field.type === 'number' ? 'number' : 'text'}
+        required={field.required}
+        placeholder={field.placeholder}
+        {...(field.type === 'checkbox' ? { checked: Boolean(config[field.name]) } : { value: String(config[field.name] ?? '') })}
+        onChange={(event) => onChange({
+          ...config,
+          [field.name]: field.type === 'checkbox' ? event.target.checked
+            : field.type === 'number' ? Number(event.target.value) : event.target.value,
+        })}
+      />}
+    </label>)}
+  </>;
+}
+
+export function SourceManagerPanel() {
+  const [adapters, setAdapters] = useState<SourceAdapter[]>([]);
+  const [sources, setSources] = useState<SourceInstance[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [editing, setEditing] = useState<SourceInstance | null | undefined>(undefined);
+  const [adapterId, setAdapterId] = useState('');
+  const [name, setName] = useState('');
+  const [config, setConfig] = useState<SourceConfig>({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const generation = useRef(0);
+  const adapter = adapters.find((item) => item.adapter_id === adapterId);
+
+  const refresh = useCallback(async () => {
+    const requestGeneration = ++generation.current;
+    const [definitions, connections] = await Promise.all([listSourceAdapters(), listSourceInstances()]);
+    if (requestGeneration !== generation.current) return;
+    setAdapters(definitions.adapters);
+    setSources(connections.sources);
+    setLoaded(true);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const load = () => refresh().catch((err) => {
+      if (active) setError(err instanceof Error ? err.message : String(err));
+    });
+    void load();
+    const interval = setInterval(load, 3000);
+    return () => { active = false; generation.current++; clearInterval(interval); };
+  }, [refresh]);
+
+  const perform = async (operation: () => Promise<unknown>, message: string) => {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await operation();
+      setNotice(message);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openEditor = (source: SourceInstance | null) => {
+    setEditing(source);
+    setAdapterId(source?.adapter_id ?? adapters[0]?.adapter_id ?? '');
+    setName(source?.name ?? '');
+    setConfig(source?.config ?? {});
+    setError('');
+    setNotice('');
+  };
+
+  const save = async () => {
+    if (!adapter) return;
+    await perform(async () => {
+      if (editing) await updateSourceInstance({ ...editing, name, config });
+      else await createSourceInstance(adapter.adapter_id, name, config);
+      setEditing(undefined);
+    }, 'Source saved. Choose Sync to index its documents.');
+  };
+
+  return <section className="source-manager hud-panel p-4 flex flex-col gap-3" aria-label="Configured sources">
+    <div className="flex items-center justify-between gap-3">
+      <h3 className="hud-label">Configured sources</h3>
+      <button type="button" disabled={busy || !loaded || !adapters.length} onClick={() => openEditor(null)}>Add source</button>
+    </div>
+    <p style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
+      Manage named connections, each with its own settings and indexed documents.
+    </p>
+    {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
+    {notice && <p role="status">{notice}</p>}
+    {!loaded && <p>Loading configured sources…</p>}
+    {loaded && sources.length === 0 && <p>No configured sources yet.</p>}
+    {sources.map((source) => <article key={source.id} className="hud-panel p-3 flex flex-col gap-2">
+      <div><strong>{source.name}</strong> · {adapters.find((item) => item.adapter_id === source.adapter_id)?.display_name ?? source.adapter_id}</div>
+      <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
+        {source.enabled ? 'Enabled' : 'Disabled'} · {source.state === 'syncing' ? 'Syncing…' : `${source.chunks ?? 0} indexed chunks`}
+        {source.checkpoint?.last_sync && ` · Last sync ${new Date(source.checkpoint.last_sync).toLocaleString()}`}
+      </div>
+      {source.error && <p role="alert">{source.error}</p>}
+      <div className="flex flex-wrap gap-3">
+        <button disabled={busy || source.state === 'syncing' || !source.enabled} onClick={() => void perform(() => syncSourceInstance(source.id), 'Sync started.')}>Sync</button>
+        <button disabled={busy || source.state === 'syncing'} onClick={() => openEditor(source)}>Edit</button>
+        <button disabled={busy || source.state === 'syncing'} onClick={() => void perform(() => updateSourceInstance({ ...source, enabled: !source.enabled }), 'Source updated.')}>{source.enabled ? 'Disable' : 'Enable'}</button>
+        <button disabled={busy || source.state === 'syncing'} onClick={() => {
+          if (window.confirm(`Remove “${source.name}” and its indexed documents? Original files will be kept.`)) {
+            void perform(() => removeSourceInstance(source), 'Source and its indexed documents removed.');
+          }
+        }}>Remove</button>
+      </div>
+    </article>)}
+    {editing !== undefined && adapter && <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <fieldset disabled={busy} className="flex flex-col gap-3">
+        <legend>{editing ? 'Edit source' : 'Add source'}</legend>
+        <label>Source type <select value={adapterId} disabled={!!editing} onChange={(event) => {
+          setAdapterId(event.target.value); setConfig({}); setNotice('');
+        }}>{adapters.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}</select></label>
+        <p>{adapter.description}</p>
+        <label>Name <input aria-label="Source name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)} /></label>
+        <SourceConfigurationFields adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); }} />
+        {editing && <p>Changing the configuration clears this connection’s indexed documents. Sync again after saving.</p>}
+        <div className="flex gap-3">
+          <button type="button" onClick={() => void perform(async () => {
+            const result = await testSourceConfiguration(adapterId, config);
+            setConfig(result.config);
+          }, 'Connection test passed. Configuration has not been saved.')}>Test connection</button>
+          <button type="submit">Save source</button>
+          <button type="button" onClick={() => setEditing(undefined)}>Cancel</button>
+        </div>
+      </fieldset>
+    </form>}
+  </section>;
+}

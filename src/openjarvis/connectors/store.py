@@ -554,6 +554,34 @@ class KnowledgeStore(MemoryBackend):
         )
         self._conn.commit()
 
+    def count_document_prefix(self, prefix: str) -> int:
+        """Count one instance's chunks without SQL wildcard interpretation."""
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM knowledge_chunks WHERE substr(doc_id,1,?)=?",
+            (len(prefix), prefix),
+        ).fetchone()[0]
+
+    def reconcile_document_prefix(self, prefix: str, retained: set[str]) -> int:
+        """Remove missing documents after a complete successful source snapshot."""
+        if not prefix:
+            raise ValueError("A nonempty document namespace is required")
+        rows = self._conn.execute(
+            "SELECT DISTINCT doc_id FROM knowledge_chunks WHERE substr(doc_id,1,?)=?",
+            (len(prefix), prefix),
+        ).fetchall()
+        removed = 0
+        try:
+            for row in rows:
+                if row[0] not in retained:
+                    removed += self._conn.execute(
+                        "DELETE FROM knowledge_chunks WHERE doc_id=?", (row[0],)
+                    ).rowcount
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        return removed
+
     # ------------------------------------------------------------------
     # Extra helpers
     # ------------------------------------------------------------------
