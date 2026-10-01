@@ -46,10 +46,15 @@ Automatic model routing is deferred; explicit model selection remains supported.
    incremental sync tokens committed only after ingestion and cleanup; explicit
    deletion-ID arrays scoped to one instance; complete-snapshot reconciliation
    across all pages. Failed/truncated scans retain the prior token and watermark.
-   **Next:** durable scheduled jobs and observable sync lifecycle. Private-network
-   services and OAuth authorization flows remain separate future integrations.
-3. **Pending:** durable scheduled jobs, cancellation/progress, configuration
-   evolution across adapter versions, audit history, and migration of existing
+   Private-network services and OAuth authorization flows remain separate future
+   integrations.
+3. **Implemented:** persistent opt-in interval schedules and queued sync runs;
+   authenticated web progress/cancellation controls; bounded per-source run history;
+   restart recovery and cross-process worker leases with a global two-job limit.
+   Cancellation retains the prior incremental checkpoint; interrupted runs can be
+   retried without overlapping a live worker.
+   **Next:** configuration evolution across adapter versions and configuration
+   audit history, followed by migration of existing
    OAuth/token integrations into the instance model. Secret-bearing adapter fields
    must use protected credential references; never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,

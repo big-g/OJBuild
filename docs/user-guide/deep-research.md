@@ -197,8 +197,45 @@ restarts; an interrupted sync is reported and can be retried.
 Tool reads still require `connector:local_files:read` and `file:read`. Configuring
 a source grants no tool permissions. Adapter discovery supplies versioned fields
 and operation metadata for the frontend; unsupported config versions are rejected.
-These adapters contain no secret fields. Credentials use protected references;
-scheduled jobs and cancellation/progress remain roadmap work.
+These adapters contain no secret fields. Credentials use protected references.
+
+### Scheduled sync, progress and cancellation
+
+Each source has an opt-in schedule, disabled initially. Enable it in the source
+manager, choose an interval from 5 minutes to 7 days, and save. The first run is
+due one interval after saving. Due times use UTC; these are elapsed intervals,
+not calendar or cron schedules. A disabled source keeps its schedule settings
+but does not run. The server must be running for schedules to execute.
+
+Schedules and jobs persist in `sources.db`. Missed intervals coalesce into one
+run, rather than a backlog. Busy sources and the global limit of two background
+sync workers defer due work to a later scheduler tick. Worker leases prevent
+another server process from starting the same source. Queued jobs resume after
+a restart, unless their source configuration changed or the source was disabled.
+An abandoned running job is marked **Interrupted**; retry with **Sync**, or wait
+for the next scheduled run. Its previous successful token and watermark remain.
+
+The latest run shows its phase, documents read, pages fetched and chunks written.
+These counters describe work performed, not necessarily new documents. **Run
+history** loads the latest 20 runs; at most 100 completed runs are retained per
+source. Removing a source removes its schedules and run history. This operational
+history is separate from the configuration audit history planned on the roadmap.
+Background API syncs create run records; synchronous command-line/tool reads do not.
+
+**Cancel** requests a cooperative stop between files, pages and response reads.
+A blocked network read or document parser must reach its next boundary first.
+Already indexed chunks can remain, but cancellation preserves the previous
+incremental token and skips final missing-document/deletion reconciliation.
+Once a job enters its final commit phase, cancellation is rejected so cleanup and
+checkpoint advancement finish consistently. Shutdown requests cancellation of
+local workers and waits up to five seconds after stopping the scheduler; blocked
+work can outlast that grace period and retains its leases until it stops.
+
+Schedule edits use their own revision and do not clear indexed knowledge or
+change the source configuration revision. Schedule, history and cancellation
+endpoints require the same authenticated access as the source manager. Run
+records store IDs, timestamps, counters and bounded errors, never credentials
+or fetched response bodies.
 
 ### Web Page and JSON API sources
 

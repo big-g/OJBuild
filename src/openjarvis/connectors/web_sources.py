@@ -13,6 +13,7 @@ from typing import Iterator
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
+from openjarvis.connectors.sync_control import SyncCancelled
 from openjarvis.core.registry import ConnectorRegistry
 from openjarvis.security.public_http import (
     fetch_public_source,
@@ -279,6 +280,10 @@ class _PublicSource(BaseConnector):
                 self._status.items_synced += 1
             self._status.state = "idle"
             self._status.last_sync = datetime.now(timezone.utc)
+        except SyncCancelled:
+            self._status.state = "cancelled"
+            self._status.error = "Sync cancelled"
+            raise
         except Exception as exc:
             self._status.state = "error"
             if self._authentication:
@@ -307,16 +312,22 @@ class _PublicSource(BaseConnector):
             raise ValueError("Authenticated response reflects protected credentials")
 
     def _fetch(self, accept: str, *, url=None, deadline=None, allowed_origin=None):
+        self.check_sync_cancelled()
+        control = getattr(self, "_sync_control", None)
+        if control:
+            control.report(phase="fetching")
         url = url or self.config["url"]
         response = fetch_public_source(
             url,
             accept=accept,
+            **({"cancel_event": control} if control is not None else {}),
             **({"deadline": deadline} if deadline is not None else {}),
             **({"allowed_origin": allowed_origin} if allowed_origin else {}),
             **(
                 {"authentication": self._authentication} if self._authentication else {}
             ),
         )
+        self.check_sync_cancelled()
         if self._authentication:
             self._reject_reflection(response.content.decode("utf-8", errors="replace"))
         if len(response.content) > 2 * 1024 * 1024:
@@ -469,6 +480,7 @@ class JsonAPIConnector(_PublicSource):
         visited, page_tokens, document_ids = set(), set(), set()
         documents, total_bytes = [], 0
         for page in range(1, self.config["max_pages"] + 1):
+            self.check_sync_cancelled()
             if time.monotonic() >= deadline:
                 raise ValueError("Paginated source exceeded its fetch budget")
             if current in visited:
@@ -487,6 +499,9 @@ class JsonAPIConnector(_PublicSource):
             total_bytes += len(response.content)
             if total_bytes > 10 * 1024 * 1024:
                 raise ValueError("JSON API exceeds the 10 MiB total response limit")
+            control = getattr(self, "_sync_control", None)
+            if control:
+                control.report(force=True, phase="reading", pages_read=page)
             value = self._decode(response)
             if self._authentication:
                 self._reject_reflection(_json_text(value))
@@ -554,6 +569,8 @@ class JsonAPIConnector(_PublicSource):
                     )
                 if time.monotonic() >= deadline:
                     raise ValueError("Paginated source exceeded its fetch budget")
+                if control:
+                    control.report(force=True, documents_total=len(documents))
                 return documents
             if continuation in page_tokens:
                 raise ValueError("JSON API repeated a page continuation")

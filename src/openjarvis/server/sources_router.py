@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, StrictInt
 
 from openjarvis.connectors.source_adapters import list_adapters
 from openjarvis.connectors.source_manager import SourceManager
@@ -65,11 +65,26 @@ class CredentialRotation(BaseModel):
     secret: SecretStr
 
 
+class SourceScheduleEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: StrictInt = Field(ge=0)
+    enabled: StrictBool
+    interval_seconds: StrictInt = Field(ge=300, le=604800)
+
+
 def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     manager = manager or SourceManager()
     router = APIRouter(
         prefix="/v1/sources", tags=["sources"], route_class=SafeSourceRoute
     )
+
+    @router.on_event("startup")
+    def start_jobs():
+        manager.start_jobs()
+
+    @router.on_event("shutdown")
+    def stop_jobs():
+        manager.stop_jobs()
 
     def invoke(operation, *args, **kwargs):
         try:
@@ -144,9 +159,27 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     def remove_source(source_id: str, revision: int):
         invoke(manager.delete, source_id, revision)
 
+    @router.get("/{source_id}/jobs")
+    def job_history(source_id: str):
+        return {"jobs": invoke(manager.jobs.history, source_id)}
+
+    @router.put("/{source_id}/schedule")
+    def set_schedule(source_id: str, req: SourceScheduleEdit):
+        return invoke(
+            manager.jobs.set_schedule,
+            source_id,
+            req.revision,
+            enabled=req.enabled,
+            interval_seconds=req.interval_seconds,
+        )
+
+    @router.post("/{source_id}/cancel", status_code=202)
+    def cancel_sync(source_id: str):
+        return invoke(manager.cancel_sync, source_id)
+
     @router.post("/{source_id}/sync", status_code=202)
     def sync_source(source_id: str):
-        invoke(manager.start_sync, source_id)
-        return {"source_id": source_id, "status": "started"}
+        job = invoke(manager.start_sync, source_id)
+        return {"source_id": source_id, "status": "started", "job": job}
 
     return router

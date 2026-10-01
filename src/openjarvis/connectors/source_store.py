@@ -28,7 +28,7 @@ class SourceStore:
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise ValueError("Source database uses an unsupported schema version")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sources (
@@ -42,8 +42,11 @@ class SourceStore:
                 CREATE TABLE IF NOT EXISTS source_migrations (
                     name TEXT PRIMARY KEY
                 );
-                PRAGMA user_version=1;
+
             """)
+            from openjarvis.connectors.source_jobs import SCHEMA
+
+            conn.executescript(SCHEMA + "PRAGMA user_version=2;")
         legacy = (
             Path(legacy_path)
             if legacy_path
@@ -55,6 +58,7 @@ class SourceStore:
     def connection(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.path, timeout=10)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
         try:
             with conn:
                 yield conn

@@ -58,3 +58,12 @@ it('uses the authenticated transport for credential lifecycle and sends revision
   ]);
   expect(JSON.parse(String(apiFetch.mock.calls[2][1]?.body))).toEqual({ revision: 2, secret: 'replacement-token' });
 });
+
+it('routes schedule, job history and cancellation through authenticated transport', async () => {
+  const { setSourceSchedule, listSourceJobs, cancelSourceSync } = await import('./sources-api');
+  await setSourceSchedule('source/one', { revision: 2, enabled: true, interval_seconds: 300 });
+  await listSourceJobs('source/one');
+  await cancelSourceSync('source/one');
+  expect(apiFetch.mock.calls.map(([url]) => url)).toEqual(['/v1/sources/source%2Fone/schedule', '/v1/sources/source%2Fone/jobs', '/v1/sources/source%2Fone/cancel']);
+  expect(JSON.parse(String(apiFetch.mock.calls[0][1]?.body))).toEqual({ revision: 2, enabled: true, interval_seconds: 300 });
+});

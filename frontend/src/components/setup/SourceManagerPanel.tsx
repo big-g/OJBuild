@@ -6,6 +6,7 @@ import {
 import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } from '../../lib/sources-api';
 import './SourceManagerPanel.css';
 import { CredentialManagerPanel } from './CredentialManagerPanel';
+import { SourceSyncControls } from './SourceSyncControls';
 
 export function SourceConfigurationFields({
   adapter, config, onChange, credentials = [],
@@ -136,15 +137,16 @@ export function SourceManagerPanel() {
     {sources.map((source) => <article key={source.id} className="hud-panel p-3 flex flex-col gap-2">
       <div><strong>{source.name}</strong> · {adapters.find((item) => item.adapter_id === source.adapter_id)?.display_name ?? source.adapter_id}</div>
       <div style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
-        {source.enabled ? 'Enabled' : 'Disabled'} · {source.state === 'syncing' ? 'Syncing…' : `${source.chunks ?? 0} indexed chunks`}
+        {source.enabled ? 'Enabled' : 'Disabled'} · {(source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') ? (source.state === 'queued' ? 'Queued…' : 'Syncing…') : `${source.chunks ?? 0} indexed chunks`}
         {source.checkpoint?.last_sync && ` · Last sync ${new Date(source.checkpoint.last_sync).toLocaleString()}`}
       </div>
+      <SourceSyncControls source={source} refresh={refresh} />
       {source.error && <p role="alert">{source.error}</p>}
       <div className="flex flex-wrap gap-3">
-        <button disabled={busy || source.state === 'syncing' || !source.enabled} onClick={() => void perform(() => syncSourceInstance(source.id), 'Sync started.')}>Sync</button>
-        <button disabled={busy || source.state === 'syncing'} onClick={() => openEditor(source)}>Edit</button>
-        <button disabled={busy || source.state === 'syncing'} onClick={() => void perform(() => updateSourceInstance({ ...source, enabled: !source.enabled }), 'Source updated.')}>{source.enabled ? 'Disable' : 'Enable'}</button>
-        <button disabled={busy || source.state === 'syncing'} onClick={() => {
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || !source.enabled} onClick={() => void perform(() => syncSourceInstance(source.id), 'Sync started.')}>Sync</button>
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running')} onClick={() => openEditor(source)}>Edit</button>
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running')} onClick={() => void perform(() => updateSourceInstance({ ...source, enabled: !source.enabled }), 'Source updated.')}>{source.enabled ? 'Disable' : 'Enable'}</button>
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running')} onClick={() => {
           if (window.confirm(`Remove “${source.name}” and its indexed documents? Original files will be kept.`)) {
             void perform(() => removeSourceInstance(source), 'Source and its indexed documents removed.');
           }

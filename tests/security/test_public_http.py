@@ -387,3 +387,38 @@ def test_fetch_respects_shared_deadline_before_dns_or_connection(monkeypatch):
             deadline=public_http.time.monotonic() - 1,
         )
     dns.assert_not_called()
+
+
+def test_cancelled_source_fetch_stops_before_dns(monkeypatch):
+    from openjarvis.connectors.sync_control import SyncCancelled
+
+    event = MagicMock()
+    event.is_set.return_value = True
+    dns = MagicMock()
+    monkeypatch.setattr(public_http, "validate_public_url", dns)
+    with pytest.raises(SyncCancelled):
+        public_http.fetch_public_source(
+            "https://api.example.com/data",
+            accept="application/json",
+            cancel_event=event,
+        )
+    dns.assert_not_called()
+
+
+def test_pinned_fetch_cancellation_between_reads_closes_connection(monkeypatch):
+    from openjarvis.connectors.sync_control import SyncCancelled
+
+    response = Response(body=b"hello")
+    connection, _, target = transport(monkeypatch, response)
+    event = MagicMock()
+    event.is_set.side_effect = [False, False, True]
+    with pytest.raises(SyncCancelled):
+        public_http._request_source(
+            "https://example.test/data",
+            target,
+            max_bytes=100,
+            deadline=public_http.time.monotonic() + 60,
+            accept="text/plain",
+            cancel_event=event,
+        )
+    connection.close.assert_called_once()

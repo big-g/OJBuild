@@ -172,6 +172,7 @@ class LocalFilesConnector(BaseConnector):
         root_id = hashlib.sha256(str(root).encode()).hexdigest()[:16]
         try:
             for path in paths:
+                self.check_sync_cancelled()
                 descriptor = _open_scoped(root, path.relative_to(root))
                 with os.fdopen(descriptor, "rb") as stream:
                     info = os.fstat(stream.fileno())

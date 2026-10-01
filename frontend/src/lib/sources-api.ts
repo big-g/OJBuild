@@ -41,7 +41,9 @@ export interface SourceInstance {
   config_version: number;
   revision: number;
   enabled: boolean;
-  state: 'idle' | 'syncing' | 'error';
+  state: 'idle' | 'queued' | 'syncing' | 'cancelled' | 'error';
+  schedule?: SourceSchedule;
+  latest_job?: SourceJob | null;
   error: string | null;
   chunks?: number;
   checkpoint?: { last_sync: string | null; items_synced: number; error: string | null } | null;
@@ -87,3 +89,19 @@ export const rotateSourceCredential = (credential: SourceCredential, secret: str
   request<SourceCredential>(`/credentials/${encodeURIComponent(credential.id)}`, 'PUT', { revision: credential.revision, secret });
 export const removeSourceCredential = (credential: SourceCredential) =>
   request<void>(`/credentials/${encodeURIComponent(credential.id)}?revision=${credential.revision}`, 'DELETE');
+
+export interface SourceSchedule {
+  source_id?: string; revision: number; enabled: boolean; interval_seconds: number;
+  next_run_at?: string | null;
+}
+export interface SourceJob {
+  id: string; source_id: string; source_revision: number; trigger: 'manual' | 'scheduled';
+  state: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted';
+  phase: string; created_at: string; started_at: string | null; finished_at: string | null;
+  cancel_requested: boolean; documents_seen: number; documents_total: number | null;
+  chunks_written: number; pages_read: number; error: string | null;
+}
+export const setSourceSchedule = (id: string, schedule: Pick<SourceSchedule, 'revision' | 'enabled' | 'interval_seconds'>) =>
+  request<SourceSchedule>(`/${encodeURIComponent(id)}/schedule`, 'PUT', schedule);
+export const listSourceJobs = (id: string) => request<{ jobs: SourceJob[] }>(`/${encodeURIComponent(id)}/jobs`);
+export const cancelSourceSync = (id: string) => request<SourceJob>(`/${encodeURIComponent(id)}/cancel`, 'POST');

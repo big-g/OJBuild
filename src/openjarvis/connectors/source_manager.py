@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import os
 import threading
+import time
 import uuid
 from contextlib import contextmanager
 from dataclasses import replace
@@ -14,8 +15,10 @@ from typing import Iterator
 from openjarvis.connectors._stubs import BaseConnector, Document
 from openjarvis.connectors.pipeline import IngestionPipeline
 from openjarvis.connectors.source_adapters import get_adapter
+from openjarvis.connectors.source_jobs import SourceJobs
 from openjarvis.connectors.source_store import SourceConflict, SourceStore
 from openjarvis.connectors.store import KnowledgeStore
+from openjarvis.connectors.sync_control import JobControl, SyncCancelled
 from openjarvis.connectors.sync_engine import SyncEngine
 
 _SYNC_SLOTS = threading.BoundedSemaphore(2)
@@ -35,6 +38,7 @@ class _InstanceConnector(BaseConnector):
                 record["config"].get(adapter.snapshot_config_field) is True
             )
         self.seen: set[str] = set()
+        self.control = None
 
     def is_connected(self) -> bool:
         return self.reader.is_connected()
@@ -50,7 +54,12 @@ class _InstanceConnector(BaseConnector):
         # only follows a complete, successful traversal. Other adapters can use
         # incremental fetching once they declare their deletion semantics.
         kwargs = {} if self.full_snapshot else {"since": since, "cursor": cursor}
+        if self.control:
+            self.control.check()
         for doc in self.reader.sync(**kwargs):
+            if self.control:
+                self.control.check()
+                self.control.report(phase="indexing", documents_seen=len(self.seen) + 1)
             prefix = f"source:{self.record['id']}:"
             doc_id = (
                 doc.doc_id
@@ -82,6 +91,12 @@ class SourceManager:
         self.store = store or SourceStore()
         self.knowledge_path = knowledge_path
         self._credentials = None
+        self.jobs = SourceJobs(self.store)
+        self._runner = None
+        self._workers = {}
+        self._worker_guard = threading.RLock()
+        self.job_lock_dir = self.store.path.parent / "source-job-locks"
+        self.job_lock_dir.mkdir(mode=0o700, exist_ok=True)
         self.lock_dir = self.store.path.parent / "source-locks"
         self.lock_dir.mkdir(mode=0o700, exist_ok=True)
 
@@ -101,6 +116,46 @@ class SourceManager:
             yield
         finally:
             os.close(fd)
+
+    @contextmanager
+    def _job_locked(self, identity):
+        identity = str(uuid.UUID(identity))
+        fd = os.open(
+            self.job_lock_dir / identity, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
+        )
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise SourceConflict("Job is busy") from None
+            yield
+        finally:
+            os.close(fd)
+
+    def start_jobs(self):
+        from openjarvis.connectors.source_job_runner import SourceJobRunner
+
+        with self._worker_guard:
+            if self._runner is None:
+                self._runner = SourceJobRunner(self)
+            self._runner.start()
+
+    def stop_jobs(self):
+        if self._runner:
+            self._runner.stop()
+        with self._worker_guard:
+            workers = list(self._workers.items())
+        for identity, _ in workers:
+            try:
+                self.jobs.cancel(self.jobs.get(identity)["source_id"])
+            except (KeyError, SourceConflict):
+                pass  # Committing work must finish; never report it cancelled.
+        deadline = time.monotonic() + 5
+        for _, worker in workers:
+            worker.join(timeout=max(0, deadline - time.monotonic()))
+
+    def cancel_sync(self, source_id):
+        return self.jobs.cancel(source_id)
 
     @staticmethod
     def _name(name: str) -> str:
@@ -148,15 +203,18 @@ class SourceManager:
         return _InstanceConnector(record)
 
     @contextmanager
-    def _reading(self, record):
+    def _reading(self, record, control=None):
         adapter = get_adapter(record["adapter_id"])
         with self._credential(adapter, record["config"], unlock=True) as material:
             connector = self._connector(record)
+            connector.control = control
+            connector.reader.bind_sync_control(control)
             if material:
                 adapter.bind_credential(connector.reader, material)
             try:
                 yield connector
             finally:
+                connector.reader.bind_sync_control(None)
                 if material:
                     adapter.bind_credential(connector.reader, None)
                     material.clear()
@@ -234,13 +292,16 @@ class SourceManager:
         with self._locked(source_id):
             return self._sync_locked(source_id)
 
-    def _sync_locked(self, source_id: str) -> int:
+    def _sync_locked(self, source_id: str, control=None) -> int:
         self.store.set_status(source_id, "syncing")
         try:
-            with self._reading(self.store.get(source_id)) as connector:
+            with self._reading(self.store.get(source_id), control) as connector:
                 return self._ingest(connector)
+        except SyncCancelled:
+            self.store.set_status(source_id, "cancelled")
+            raise
         except Exception as exc:
-            self.store.set_status(source_id, "error", str(exc))
+            self.store.set_status(source_id, "error", str(exc)[:1000])
             raise
 
     def _ingest(self, connector):
@@ -251,6 +312,13 @@ class SourceManager:
             ) as engine:
 
                 def complete():
+                    if connector.control:
+                        connector.control.report(
+                            force=True,
+                            documents_seen=len(connector.seen),
+                            documents_total=len(connector.seen),
+                        )
+                        self.jobs.begin_commit(connector.control.identity)
                     # Readers stage/validate every page before yielding. Ingest
                     # first, then apply explicit deletions or snapshot cleanup.
                     if connector.full_snapshot:
@@ -263,37 +331,97 @@ class SourceManager:
                     )
                     return connector.reader.sync_status().cursor
 
-                chunks = engine.sync(connector, on_complete=complete)
+                def progress(chunks):
+                    if connector.control:
+                        connector.control.report(force=True, chunks_written=chunks)
+
+                chunks = engine.sync(
+                    connector,
+                    on_complete=complete,
+                    cancel_event=connector.control,
+                    on_progress=progress,
+                )
+                if connector.control and connector.control.is_set():
+                    raise SyncCancelled()
         self.store.set_status(source_id, "idle")
         return chunks
 
-    def start_sync(self, source_id: str) -> None:
-        # Hold the same OS lock from acceptance until the worker finishes so a
-        # rapid edit/remove cannot race with a not-yet-started background worker.
+    def start_sync(self, source_id: str, *, trigger="manual", now=None, job_id=None):
         lock = self._locked(source_id)
         lock.__enter__()
-        slot_acquired = False
+        slot_acquired, job_lock, identity = False, None, job_id
+        claimed = False
+        slots = _SYNC_SLOTS
         try:
-            self._connector(self.store.get(source_id))
-            slot_acquired = _SYNC_SLOTS.acquire(blocking=False)
+            record = self.store.get(source_id)
+            if job_id:
+                queued = self.jobs.get(job_id)
+                if (
+                    queued["source_revision"] != record["revision"]
+                    or not record["enabled"]
+                ):
+                    self.jobs.finish(
+                        job_id,
+                        "cancelled",
+                        "Source changed or was disabled before the queued sync started",
+                    )
+                    lock.__exit__(None, None, None)
+                    return self.jobs.get(job_id)
+            if not record["enabled"]:
+                raise SourceConflict("Source is disabled; enable it before syncing")
+            slot_acquired = slots.acquire(blocking=False)
             if not slot_acquired:
                 raise SourceConflict("Two sources are syncing; retry when one finishes")
+            if identity is None:
+                identity = self.jobs.create(record, trigger=trigger, now=now)["id"]
+            job_lock = self._job_locked(identity)
+            job_lock.__enter__()
+            try:
+                self.jobs.claim(identity)
+            except SourceConflict:
+                queued = self.jobs.get(identity)
+                if queued["state"] == "queued":
+                    job_lock.__exit__(None, None, None)
+                    lock.__exit__(None, None, None)
+                    slots.release()
+                    return queued
+                raise
+            claimed = True
             self.store.set_status(source_id, "syncing")
 
             def run():
+                control = JobControl(self.jobs, identity)
                 try:
-                    self._sync_locked(source_id)
-                except Exception:
-                    pass  # persisted by _sync_locked, exposed by GET /sources
+                    self._sync_locked(source_id, control)
+                    self.jobs.finish(identity, "succeeded")
+                except SyncCancelled:
+                    self.jobs.finish(identity, "cancelled")
+                except Exception as exc:
+                    self.jobs.finish(identity, "failed", str(exc))
                 finally:
+                    job_lock.__exit__(None, None, None)
                     lock.__exit__(None, None, None)
-                    _SYNC_SLOTS.release()
+                    slots.release()
+                    with self._worker_guard:
+                        self._workers.pop(identity, None)
 
-            threading.Thread(target=run, daemon=True).start()
+            worker = threading.Thread(
+                target=run, name=f"source-sync-{identity}", daemon=True
+            )
+            with self._worker_guard:
+                self._workers[identity] = worker
+                worker.start()
+            return self.jobs.get(identity)
         except Exception:
+            with self._worker_guard:
+                self._workers.pop(identity, None)
+            if claimed:
+                self.jobs.finish(identity, "failed", "Sync worker could not start")
+            if job_lock is not None:
+                job_lock.__exit__(None, None, None)
             lock.__exit__(None, None, None)
             if slot_acquired:
-                _SYNC_SLOTS.release()
+                slots.release()
             raise
 
     def list(self) -> list[dict]:
@@ -317,6 +445,12 @@ class SourceManager:
                     IngestionPipeline(knowledge), state_db=str(self.store.path)
                 ) as engine:
                     record["checkpoint"] = engine.get_checkpoint(record["id"])
+            try:
+                record["schedule"] = self.jobs.schedule(record["id"])
+                history = self.jobs.history(record["id"], limit=1)
+            except KeyError:
+                continue
+            record["latest_job"] = history[0] if history else None
             record.pop("legacy_document_ids")
             results.append(record)
         return results

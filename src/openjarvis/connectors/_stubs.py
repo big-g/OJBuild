@@ -87,6 +87,15 @@ class BaseConnector(ABC):
             raise ValueError("Connector has no stable connector_id")
         return (f"connector:{connector_id}:read",)
 
+    def bind_sync_control(self, control) -> None:
+        """Attach ephemeral job progress/cancellation, independent of config."""
+        self._sync_control = control
+
+    def check_sync_cancelled(self) -> None:
+        control = getattr(self, "_sync_control", None)
+        if control is not None:
+            control.check()
+
     def knowledge_sources(self) -> tuple[str, ...]:
         """Return KnowledgeStore source values owned by this connector."""
         return self.indexed_sources or (self.connector_id,)

@@ -214,10 +214,12 @@ def _request_source(
     deadline: float,
     accept: str,
     credential_headers: dict[str, str] | None = None,
+    cancel_event=None,
 ) -> httpx.Response:
     """Read a bounded, uncompressed response from verified public addresses."""
     last_error = None
     for address in target.addresses[:4]:
+        _check_cancel(cancel_event)
         connection_cls = (
             PinnedHTTPSConnection if target.scheme == "https" else PinnedHTTPConnection
         )
@@ -253,6 +255,7 @@ def _request_source(
                 raise ValueError("Source returned unsupported compressed content")
             data = bytearray()
             while True:
+                _check_cancel(cancel_event)
                 if connection.sock is not None:
                     connection.sock.settimeout(_remaining(deadline))
                 chunk = response.read1(min(65536, max_bytes + 1 - len(data)))
@@ -281,6 +284,13 @@ def _request_source(
     raise ValueError("Source connection failed or timed out") from last_error
 
 
+def _check_cancel(cancel_event):
+    if cancel_event is not None and cancel_event.is_set():
+        from openjarvis.connectors.sync_control import SyncCancelled
+
+        raise SyncCancelled()
+
+
 def source_origin(url: str) -> str:
     """Canonical origin for a normalized source URL, including effective port."""
     parsed = urlparse(normalize_source_url(url))
@@ -296,6 +306,7 @@ def fetch_public_source(
     authentication: dict | None = None,
     deadline: float | None = None,
     allowed_origin: str | None = None,
+    cancel_event=None,
 ) -> httpx.Response:
     """Validate and pin each redirect; reject partial/empty/error responses."""
     deadline = (
@@ -305,6 +316,7 @@ def fetch_public_source(
     )
     current = normalize_source_url(url)
     for _ in range(6):
+        _check_cancel(cancel_event)
         _remaining(deadline)
         if authentication:
             from openjarvis.connectors.source_credentials import credential_origin
@@ -328,6 +340,7 @@ def fetch_public_source(
             max_bytes=max_bytes,
             deadline=deadline,
             accept=accept,
+            **({"cancel_event": cancel_event} if cancel_event is not None else {}),
             **(
                 {"credential_headers": authentication["headers"]}
                 if authentication

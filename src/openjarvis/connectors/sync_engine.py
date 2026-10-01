@@ -89,6 +89,7 @@ class SyncEngine:
         *,
         cancel_event: Optional[threading.Event] = None,
         on_complete: Optional[Callable[[], Optional[str]]] = None,
+        on_progress: Optional[Callable[[int], None]] = None,
     ) -> int:
         """Run a full sync for *connector* and return the number of items ingested.
 
@@ -132,6 +133,8 @@ class SyncEngine:
 
                 if len(batch) >= _BATCH_SIZE:
                     items_ingested += self._pipeline.ingest(batch)
+                    if on_progress:
+                        on_progress(items_ingested)
                     batch = []
                     # Progress checkpoint: track cursor/items so a later
                     # retry can resume from here, but must NOT advance
@@ -148,6 +151,8 @@ class SyncEngine:
             # Ingest any remaining documents.
             if batch and not (cancel_event is not None and cancel_event.is_set()):
                 items_ingested += self._pipeline.ingest(batch)
+                if on_progress:
+                    on_progress(items_ingested)
             # Source-specific cleanup must finish before advancing its durable
             # upstream token. Progress/error checkpoints retain the old token.
             if on_complete is not None and not (

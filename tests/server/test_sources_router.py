@@ -177,3 +177,57 @@ def test_credential_validation_never_echoes_secret(client, secret):
     assert "protected-validation-marker" not in response.text
     assert "secret\\nwith-newline" not in response.text
     assert client.get("/v1/sources/credentials").json()["credentials"] == []
+
+
+def test_schedule_history_and_cancel_routes_require_api_authentication(
+    client, tmp_path
+):
+    folder = tmp_path / "scheduled"
+    folder.mkdir()
+    source = client.post(
+        "/v1/sources",
+        json={
+            "adapter_id": "local_files",
+            "name": "Scheduled",
+            "config": {"path": str(folder)},
+        },
+    ).json()
+    base = f"/v1/sources/{source['id']}"
+    payload = {"revision": 0, "enabled": True, "interval_seconds": 300}
+    assert (
+        client.put(
+            base + "/schedule", json=payload, headers={"Authorization": ""}
+        ).status_code
+        == 401
+    )
+    assert client.get(base + "/jobs", headers={"Authorization": ""}).status_code == 401
+    assert (
+        client.post(base + "/cancel", headers={"Authorization": ""}).status_code == 401
+    )
+    schedule = client.put(base + "/schedule", json=payload)
+    assert schedule.status_code == 200
+    assert schedule.json()["revision"] == 1
+    assert client.put(base + "/schedule", json=payload).status_code == 409
+    assert client.get(base + "/jobs").json()["jobs"] == []
+    assert client.post(base + "/cancel").status_code == 409
+    listed = client.get("/v1/sources").json()["sources"][0]
+    assert listed["schedule"]["enabled"]
+    assert listed["revision"] == 1
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"revision": 0, "enabled": True, "interval_seconds": 299},
+        {"revision": 0, "enabled": "true", "interval_seconds": 300},
+        {"revision": False, "enabled": True, "interval_seconds": 300},
+        {"revision": 0, "enabled": True, "interval_seconds": True},
+    ],
+)
+def test_schedule_request_validation_is_strict(client, payload):
+    assert (
+        client.put(
+            "/v1/sources/00000000-0000-0000-0000-000000000001/schedule", json=payload
+        ).status_code
+        == 422
+    )
