@@ -231,3 +231,106 @@ def test_schedule_request_validation_is_strict(client, payload):
         ).status_code
         == 422
     )
+
+
+def test_migration_api_is_authenticated_explicit_and_revision_bound(
+    client, tmp_path, monkeypatch
+):
+    from dataclasses import replace
+
+    from openjarvis.connectors import source_adapters
+    from openjarvis.connectors.source_adapters import ConfigMigration, get_adapter
+
+    root = tmp_path / "documents"
+    root.mkdir()
+    item = client.post(
+        "/v1/sources",
+        json={
+            "adapter_id": "local_files",
+            "name": "Private",
+            "config": {"path": str(root)},
+        },
+    ).json()
+    monkeypatch.setitem(
+        source_adapters._ADAPTERS,
+        "local_files",
+        replace(
+            get_adapter("local_files"),
+            config_version=2,
+            migrations=(ConfigMigration(1, lambda cfg: cfg, preserves_index=True),),
+        ),
+    )
+    base = f"/v1/sources/{item['id']}"
+    for path, body in [
+        (base + "/migration/preview", {"revision": 1}),
+        (base + "/migration", {"revision": 1, "plan_token": "a" * 64}),
+    ]:
+        assert (
+            client.post(path, json=body, headers={"Authorization": ""}).status_code
+            == 401
+        )
+    assert client.get(base + "/audit", headers={"Authorization": ""}).status_code == 401
+    assert (
+        client.get("/v1/sources/audit", headers={"Authorization": ""}).status_code
+        == 401
+    )
+    assert (
+        client.post(base + "/migration/preview", json={"revision": True}).status_code
+        == 422
+    )
+    assert (
+        client.post(
+            base + "/migration/preview", json={"revision": 1, "actor": "spoof"}
+        ).status_code
+        == 422
+    )
+    plan = client.post(base + "/migration/preview", json={"revision": 1}).json()
+    assert not plan["index_reset"]
+    assert len(client.get(base + "/audit").json()["events"]) == 1
+    assert (
+        client.post(
+            base + "/migration", json={"revision": 1, "plan_token": "a" * 64}
+        ).status_code
+        == 409
+    )
+    result = client.post(
+        base + "/migration", json={"revision": 1, "plan_token": plan["plan_token"]}
+    )
+    assert result.status_code == 200 and result.json()["config_version"] == 2
+    assert (
+        client.post(
+            base + "/migration", json={"revision": 1, "plan_token": plan["plan_token"]}
+        ).status_code
+        == 409
+    )
+    event = client.get(base + "/audit").json()["events"][0]
+    assert event["action"] == "migrated" and event["actor"] == "server_access"
+    assert "Private" not in str(event) and str(root) not in str(event)
+    assert client.delete(base + "?revision=2").status_code == 204
+    assert client.get("/v1/sources/audit").json()["events"][0]["action"] == "removed"
+    assert len(client.get(base + "/audit").json()["events"]) == 3
+    assert client.get(base + "/audit?before_id=0").status_code == 422
+
+
+def test_configuration_audit_attributes_verified_session_identity(client, tmp_path):
+    from openjarvis.server.auth_store import AuthStore
+
+    store = AuthStore(tmp_path / "sessions.db")
+    store.create_user("owner", "Owner", "test-password-long")
+    token = store.create_session("owner")
+    client.app.state.auth_store = store
+    root = tmp_path / "documents"
+    root.mkdir()
+    response = client.post(
+        "/v1/sources",
+        headers={"X-OpenJarvis-Session": token},
+        json={
+            "adapter_id": "local_files",
+            "name": "Private",
+            "config": {"path": str(root)},
+        },
+    )
+    assert response.status_code == 201
+    event = client.get("/v1/sources/audit").json()["events"][0]
+    assert event["actor"] == "user:owner"
+    assert token not in str(event)

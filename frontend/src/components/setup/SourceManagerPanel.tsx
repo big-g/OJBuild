@@ -7,6 +7,7 @@ import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } fr
 import './SourceManagerPanel.css';
 import { CredentialManagerPanel } from './CredentialManagerPanel';
 import { SourceSyncControls } from './SourceSyncControls';
+import { SourceAuditHistory, SourceEvolutionControls } from './SourceEvolutionControls';
 
 export function SourceConfigurationFields({
   adapter, config, onChange, credentials = [],
@@ -141,11 +142,12 @@ export function SourceManagerPanel() {
         {source.checkpoint?.last_sync && ` · Last sync ${new Date(source.checkpoint.last_sync).toLocaleString()}`}
       </div>
       <SourceSyncControls source={source} refresh={refresh} />
+      <SourceEvolutionControls source={source} refresh={refresh} />
       {source.error && <p role="alert">{source.error}</p>}
       <div className="flex flex-wrap gap-3">
-        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || !source.enabled} onClick={() => void perform(() => syncSourceInstance(source.id), 'Sync started.')}>Sync</button>
-        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running')} onClick={() => openEditor(source)}>Edit</button>
-        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running')} onClick={() => void perform(() => updateSourceInstance({ ...source, enabled: !source.enabled }), 'Source updated.')}>{source.enabled ? 'Disable' : 'Enable'}</button>
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || !source.enabled || (!!source.configuration_state && source.configuration_state !== 'current')} onClick={() => void perform(() => syncSourceInstance(source.id), 'Sync started.')}>Sync</button>
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || (!!source.configuration_state && source.configuration_state !== 'current')} onClick={() => openEditor(source)}>Edit</button>
+        <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || (!source.enabled && !!source.configuration_state && source.configuration_state !== 'current')} onClick={() => void perform(() => updateSourceInstance({ ...source, enabled: !source.enabled }), 'Source updated.')}>{source.enabled ? 'Disable' : 'Enable'}</button>
         <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running')} onClick={() => {
           if (window.confirm(`Remove “${source.name}” and its indexed documents? Original files will be kept.`)) {
             void perform(() => removeSourceInstance(source), 'Source and its indexed documents removed.');
@@ -153,6 +155,7 @@ export function SourceManagerPanel() {
         }}>Remove</button>
       </div>
     </article>)}
+    <SourceAuditHistory />
     <CredentialManagerPanel credentials={credentials} refresh={refresh} />
     {editing !== undefined && adapter && <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy} className="flex flex-col gap-3">

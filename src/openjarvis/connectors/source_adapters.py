@@ -5,6 +5,7 @@ Secrets live in the server vault; adapter configuration carries references only.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -18,6 +19,15 @@ from openjarvis.connectors.web_sources import (
     validate_json_config,
     validate_web_config,
 )
+
+
+@dataclass(frozen=True)
+class ConfigMigration:
+    """Trusted, local N -> N+1 transformation; reset indexing by default."""
+
+    from_version: int
+    transform: Callable[[dict[str, Any]], dict[str, Any]]
+    preserves_index: bool = False
 
 
 @dataclass(frozen=True)
@@ -35,6 +45,7 @@ class SourceAdapter:
     probe: Callable[[BaseConnector], dict[str, Any]] | None = None
     credential_kinds: tuple[str, ...] = ()
     bind_credential: Callable[[BaseConnector, dict], None] | None = None
+    migrations: tuple[ConfigMigration, ...] = ()
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -42,6 +53,7 @@ class SourceAdapter:
             "display_name": self.display_name,
             "description": self.description,
             "config_version": self.config_version,
+            "migration_from_versions": [step.from_version for step in self.migrations],
             "fields": self.fields,
             "credential_kinds": self.credential_kinds,
             "required_capabilities": self.required_capabilities,
@@ -56,6 +68,30 @@ class SourceAdapter:
             raise ValueError("Configuration contains unsupported fields")
         return self.validate(config)
 
+    def migrate_config(self, config: dict[str, Any], version: int):
+        if type(version) is not int or not 1 <= version < self.config_version:
+            raise ValueError("No upgrade is available for this configuration version")
+        steps = {step.from_version: step for step in self.migrations}
+        result, reset = deepcopy(config), False
+        for current in range(version, self.config_version):
+            step = steps.get(current)
+            if step is None:
+                raise ValueError("Adapter has no complete migration path")
+            try:
+                result = step.transform(deepcopy(result))
+                if not isinstance(result, dict):
+                    raise ValueError
+            except Exception:
+                raise ValueError("Adapter configuration migration failed") from None
+            reset = reset or not step.preserves_index
+        try:
+            result = self.validate_config(result)
+        except Exception:
+            raise ValueError("Migrated configuration is invalid") from None
+        if result.get("credential_id") != config.get("credential_id"):
+            raise ValueError("Migration cannot change protected credential references")
+        return result, reset
+
 
 _ADAPTERS: dict[str, SourceAdapter] = {}
 
@@ -68,6 +104,17 @@ def register_adapter(adapter: SourceAdapter) -> None:
         raise ValueError("Secret fields require a credential-reference implementation")
     if not adapter.required_capabilities:
         raise ValueError("Source adapters must declare capability requirements")
+    if type(adapter.config_version) is not int or adapter.config_version < 1:
+        raise ValueError("Adapter configuration version must be a positive integer")
+    versions = [step.from_version for step in adapter.migrations]
+    if len(set(versions)) != len(versions) or any(
+        type(step.from_version) is not int
+        or not 1 <= step.from_version < adapter.config_version
+        or not callable(step.transform)
+        or type(step.preserves_index) is not bool
+        for step in adapter.migrations
+    ):
+        raise ValueError("Invalid adapter configuration migration steps")
     _ADAPTERS[adapter.adapter_id] = adapter
 
 

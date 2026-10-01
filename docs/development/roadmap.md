@@ -53,8 +53,12 @@ Automatic model routing is deferred; explicit model selection remains supported.
    restart recovery and cross-process worker leases with a global two-job limit.
    Cancellation retains the prior incremental checkpoint; interrupted runs can be
    retried without overlapping a live worker.
-   **Next:** configuration evolution across adapter versions and configuration
-   audit history, followed by migration of existing
+   **Implemented:** trusted explicit adapter-version migration chains, authenticated
+   preview/apply controls with revision and plan checks, safe index reset defaults,
+   and transactional configuration audit events retained after source removal.
+   Audit records exclude values and secrets; verified sessions identify users,
+   while shared server access is recorded without claiming a personal identity.
+   **Next:** migration of existing
    OAuth/token integrations into the instance model. Secret-bearing adapter fields
    must use protected credential references; never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,

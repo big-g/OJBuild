@@ -48,14 +48,14 @@ class SourceJobRunner:
                                     "Sync interrupted; retry uses the "
                                     "previous successful token",
                                 )
-                    except (SourceConflict, KeyError):
+                    except (SourceConflict, KeyError, ValueError):
                         pass
                 for job in self.manager.jobs.active(state="queued"):
                     if self.stop_event.is_set():
                         return
                     try:
                         self.manager.start_sync(job["source_id"], job_id=job["id"])
-                    except (SourceConflict, KeyError):
+                    except (SourceConflict, KeyError, ValueError):
                         pass
                 for schedule in self.manager.jobs.due(now):
                     if self.stop_event.is_set():
@@ -64,7 +64,7 @@ class SourceJobRunner:
                         self.manager.start_sync(
                             schedule["source_id"], trigger="scheduled", now=now
                         )
-                    except (SourceConflict, KeyError):
+                    except (SourceConflict, KeyError, ValueError):
                         pass  # Capacity/busy schedules remain due for the next tick.
         except BlockingIOError:
             pass  # Another server process owns this tick's scheduler lease.

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from openjarvis.connectors.source_audit import append_event
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
 
 
@@ -28,7 +29,7 @@ class SourceStore:
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise ValueError("Source database uses an unsupported schema version")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sources (
@@ -44,9 +45,10 @@ class SourceStore:
                 );
 
             """)
+            from openjarvis.connectors.source_audit import SCHEMA as AUDIT_SCHEMA
             from openjarvis.connectors.source_jobs import SCHEMA
 
-            conn.executescript(SCHEMA + "PRAGMA user_version=2;")
+            conn.executescript(SCHEMA + AUDIT_SCHEMA + "PRAGMA user_version=3;")
         legacy = (
             Path(legacy_path)
             if legacy_path
@@ -89,7 +91,9 @@ class SourceStore:
             raise KeyError(source_id)
         return self._record(row)
 
-    def create(self, adapter_id: str, name: str, config: dict, version: int) -> dict:
+    def create(
+        self, adapter_id: str, name: str, config: dict, version: int, *, actor="system"
+    ) -> dict:
         source_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         with self.connection() as conn:
@@ -99,30 +103,103 @@ class SourceStore:
                 "VALUES (?,?,?,?,?,1,1,0,?,?)",
                 (source_id, adapter_id, name, json.dumps(config), version, now, now),
             )
+            record = self._record(
+                conn.execute(
+                    "SELECT * FROM sources WHERE id=?", (source_id,)
+                ).fetchone()
+            )
+            append_event(
+                conn,
+                record,
+                "created",
+                actor=actor,
+                fields=("name", "config", "enabled"),
+            )
         return self.get(source_id)
 
     def update(
-        self, source_id: str, revision: int, *, name: str, config: dict, enabled: bool
+        self,
+        source_id: str,
+        revision: int,
+        *,
+        name: str,
+        config: dict,
+        enabled: bool,
+        actor="system",
+        config_version=None,
+        migration=False,
+        index_reset=False,
+        legacy_document_ids=None,
     ) -> dict:
         with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM sources WHERE id=?", (source_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(source_id)
+            old = self._record(row)
             changed = conn.execute(
                 "UPDATE sources SET name=?,config=?,enabled=?,revision=revision+1,"
-                "updated_at=? WHERE id=? AND revision=?",
+                "updated_at=?,config_version=?,legacy_document_ids=? "
+                "WHERE id=? AND revision=?",
                 (
                     name,
                     json.dumps(config),
                     enabled,
                     datetime.now(timezone.utc).isoformat(),
+                    config_version
+                    if config_version is not None
+                    else old["config_version"],
+                    legacy_document_ids
+                    if legacy_document_ids is not None
+                    else old["legacy_document_ids"],
                     source_id,
                     revision,
                 ),
             ).rowcount
             if not changed:
                 raise SourceConflict("Source changed; refresh before saving")
+            record = self._record(
+                conn.execute(
+                    "SELECT * FROM sources WHERE id=?", (source_id,)
+                ).fetchone()
+            )
+            fields = [
+                key
+                for key in ("name", "config", "enabled", "config_version")
+                if old[key] != record[key]
+            ]
+            fields.extend(
+                f"config.{key}"
+                for key in old["config"].keys() | config.keys()
+                if old["config"].get(key) != config.get(key)
+                or (key in old["config"]) != (key in config)
+            )
+            if old["legacy_document_ids"] != record["legacy_document_ids"]:
+                fields.append("document_identity")
+            append_event(
+                conn,
+                record,
+                "migrated" if migration else "updated",
+                actor=actor,
+                fields=fields,
+                index_reset=index_reset,
+                previous_version=old["config_version"] if migration else None,
+            )
         return self.get(source_id)
 
-    def delete(self, source_id: str) -> None:
+    def delete(self, source_id: str, *, actor="system") -> None:
         with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM sources WHERE id=?", (source_id,)
+            ).fetchone()
+            if row is None:
+                raise KeyError(source_id)
+            append_event(
+                conn, self._record(row), "removed", actor=actor, index_reset=True
+            )
             conn.execute("DELETE FROM sources WHERE id=?", (source_id,))
 
     def set_status(self, source_id: str, state: str, error: str | None = None) -> None:
@@ -158,6 +235,14 @@ class SourceStore:
                 (source_id, json.dumps(config), now, now),
             )
             conn.execute("INSERT INTO source_migrations VALUES ('local_files_json')")
+            record = self._record(
+                conn.execute(
+                    "SELECT * FROM sources WHERE id=?", (source_id,)
+                ).fetchone()
+            )
+            append_event(
+                conn, record, "legacy_imported", fields=("config", "name", "enabled")
+            )
         # Retain a backup. A committed migration marker prevents re-import if the
         # process stops between the database commit and this rename.
         path.replace(path.with_suffix(".json.migrated"))

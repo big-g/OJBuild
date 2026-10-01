@@ -67,3 +67,13 @@ it('routes schedule, job history and cancellation through authenticated transpor
   expect(apiFetch.mock.calls.map(([url]) => url)).toEqual(['/v1/sources/source%2Fone/schedule', '/v1/sources/source%2Fone/jobs', '/v1/sources/source%2Fone/cancel']);
   expect(JSON.parse(String(apiFetch.mock.calls[0][1]?.body))).toEqual({ revision: 2, enabled: true, interval_seconds: 300 });
 });
+
+it('uses authenticated migration preview/apply and cursor audit routes', async () => {
+  const { previewSourceMigration, applySourceMigration, listSourceAudit } = await import('./sources-api');
+  await previewSourceMigration(source);
+  await applySourceMigration({ source_id: source.id, revision: 7, from_version: 1, to_version: 2, config: {}, index_reset: true, plan_token: 'a'.repeat(64) });
+  await listSourceAudit(source.id, 20);
+  await listSourceAudit();
+  expect(apiFetch.mock.calls.map(([url]) => url)).toEqual(['/v1/sources/instance-1/migration/preview', '/v1/sources/instance-1/migration', '/v1/sources/instance-1/audit?before_id=20', '/v1/sources/audit']);
+  expect(JSON.parse(String(apiFetch.mock.calls[1][1]?.body))).toEqual({ revision: 7, plan_token: 'a'.repeat(64) });
+});

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, StrictInt
 
 from openjarvis.connectors.source_adapters import list_adapters
+from openjarvis.connectors.source_audit import list_events
 from openjarvis.connectors.source_manager import SourceManager
 from openjarvis.connectors.source_store import SourceConflict
 
@@ -72,6 +73,15 @@ class SourceScheduleEdit(BaseModel):
     interval_seconds: StrictInt = Field(ge=300, le=604800)
 
 
+class MigrationPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: StrictInt = Field(ge=1)
+
+
+class MigrationApply(MigrationPreview):
+    plan_token: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     manager = manager or SourceManager()
     router = APIRouter(
@@ -95,6 +105,14 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
             raise HTTPException(409, str(exc)) from exc
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    def actor(request):
+        user_id = getattr(request.state, "auth_user_id", None)
+        return f"user:{user_id}" if user_id is not None else "server_access"
+
+    @router.get("/audit")
+    def audit(before_id: int | None = Query(None, ge=1)):
+        return {"events": invoke(list_events, manager.store, before_id=before_id)}
 
     @router.get("/credentials")
     def credentials():
@@ -137,13 +155,15 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
         return {"sources": manager.list()}
 
     @router.post("", status_code=201)
-    def create_source(req: SourceInput):
-        result = invoke(manager.create, req.adapter_id, req.name, req.config)
+    def create_source(req: SourceInput, request: Request):
+        result = invoke(
+            manager.create, req.adapter_id, req.name, req.config, actor=actor(request)
+        )
         result.pop("legacy_document_ids")
         return result
 
     @router.put("/{source_id}")
-    def edit_source(source_id: str, req: SourceEdit):
+    def edit_source(source_id: str, req: SourceEdit, request: Request):
         result = invoke(
             manager.update,
             source_id,
@@ -151,26 +171,48 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
             name=req.name,
             config=req.config,
             enabled=req.enabled,
+            actor=actor(request),
         )
         result.pop("legacy_document_ids")
         return result
 
     @router.delete("/{source_id}", status_code=204)
-    def remove_source(source_id: str, revision: int):
-        invoke(manager.delete, source_id, revision)
+    def remove_source(source_id: str, revision: int, request: Request):
+        invoke(manager.delete, source_id, revision, actor=actor(request))
+
+    @router.get("/{source_id}/audit")
+    def source_audit(source_id: str, before_id: int | None = Query(None, ge=1)):
+        return {
+            "events": invoke(list_events, manager.store, source_id, before_id=before_id)
+        }
+
+    @router.post("/{source_id}/migration/preview")
+    def preview_migration(source_id: str, req: MigrationPreview):
+        return invoke(manager.migration_preview, source_id, req.revision)
+
+    @router.post("/{source_id}/migration")
+    def apply_migration(source_id: str, req: MigrationApply, request: Request):
+        return invoke(
+            manager.migrate,
+            source_id,
+            req.revision,
+            req.plan_token,
+            actor=actor(request),
+        )
 
     @router.get("/{source_id}/jobs")
     def job_history(source_id: str):
         return {"jobs": invoke(manager.jobs.history, source_id)}
 
     @router.put("/{source_id}/schedule")
-    def set_schedule(source_id: str, req: SourceScheduleEdit):
+    def set_schedule(source_id: str, req: SourceScheduleEdit, request: Request):
         return invoke(
             manager.jobs.set_schedule,
             source_id,
             req.revision,
             enabled=req.enabled,
             interval_seconds=req.interval_seconds,
+            actor=actor(request),
         )
 
     @router.post("/{source_id}/cancel", status_code=202)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import fcntl
 import hashlib
+import json
 import os
 import threading
 import time
@@ -189,12 +190,18 @@ class SourceManager:
         ) as row:
             yield self.credentials.material(row) if unlock else None
 
-    def create(self, adapter_id: str, name: str, config: dict) -> dict:
+    def create(
+        self, adapter_id: str, name: str, config: dict, *, actor="system"
+    ) -> dict:
         adapter = get_adapter(adapter_id)
         config = adapter.validate_config(config)
         with self._credential(adapter, config):
             return self.store.create(
-                adapter_id, self._name(name), config, adapter.config_version
+                adapter_id,
+                self._name(name),
+                config,
+                adapter.config_version,
+                actor=actor,
             )
 
     def _connector(self, record: dict) -> _InstanceConnector:
@@ -238,15 +245,37 @@ class SourceManager:
                     material.clear()
 
     def update(
-        self, source_id: str, revision: int, *, name: str, config: dict, enabled: bool
+        self,
+        source_id: str,
+        revision: int,
+        *,
+        name: str,
+        config: dict,
+        enabled: bool,
+        actor="system",
     ) -> dict:
         name = self._name(name)
         with self._locked(source_id):
             old = self.store.get(source_id)
             if old["revision"] != revision:
                 raise SourceConflict("Source changed; refresh before saving")
+            if not enabled and config == old["config"]:
+                # Quarantine/rename must work even if the adapter was removed,
+                # its old fields changed, or its referenced service is offline.
+                result = self.store.update(
+                    source_id,
+                    revision,
+                    name=name,
+                    config=config,
+                    enabled=False,
+                    actor=actor,
+                )
+                self.store.set_status(source_id, "idle")
+                return {**result, "state": "idle", "error": None}
             adapter = get_adapter(old["adapter_id"])
-            if old["config_version"] != adapter.config_version:
+            if old["config_version"] != adapter.config_version and (
+                enabled or config != old["config"]
+            ):
                 raise ValueError(
                     "Source configuration needs an adapter version migration"
                 )
@@ -258,10 +287,69 @@ class SourceManager:
                 if config != old["config"]:
                     self._reset_and_purge(old)
                 result = self.store.update(
-                    source_id, revision, name=name, config=config, enabled=enabled
+                    source_id,
+                    revision,
+                    name=name,
+                    config=config,
+                    enabled=enabled,
+                    actor=actor,
+                    index_reset=config != old["config"],
                 )
                 self.store.set_status(source_id, "idle")
                 return {**result, "state": "idle", "error": None}
+
+    def migration_preview(self, source_id, revision):
+        with self._locked(source_id):
+            return self._migration_plan(self.store.get(source_id), revision)
+
+    def _migration_plan(self, old, revision):
+        if old["revision"] != revision:
+            raise SourceConflict("Source changed; refresh before migrating")
+        adapter = get_adapter(old["adapter_id"])
+        config, reset = adapter.migrate_config(old["config"], old["config_version"])
+        # Imported file identities depend on the v1 path field. Move them to
+        # instance identities on an upgrade before that field can evolve.
+        reset = reset or old["legacy_document_ids"]
+        with self._credential(adapter, config):
+            pass  # Validate credential origin/kind without decrypting or fetching.
+        plan = dict(
+            source_id=old["id"],
+            revision=revision,
+            from_version=old["config_version"],
+            to_version=adapter.config_version,
+            config=config,
+            index_reset=reset,
+        )
+        plan["plan_token"] = hashlib.sha256(
+            json.dumps(plan, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return plan
+
+    def migrate(self, source_id, revision, plan_token, *, actor="system"):
+        with self._locked(source_id):
+            old = self.store.get(source_id)
+            plan = self._migration_plan(old, revision)
+            if plan_token != plan["plan_token"]:
+                raise SourceConflict("Migration preview changed; preview again")
+            adapter = get_adapter(old["adapter_id"])
+            with self._credential(adapter, plan["config"]):
+                if plan["index_reset"]:
+                    self._reset_and_purge(old)
+                result = self.store.update(
+                    source_id,
+                    revision,
+                    name=old["name"],
+                    config=plan["config"],
+                    enabled=old["enabled"],
+                    config_version=plan["to_version"],
+                    migration=True,
+                    actor=actor,
+                    index_reset=plan["index_reset"],
+                    legacy_document_ids=False,
+                )
+                self.store.set_status(source_id, "idle")
+            result.pop("legacy_document_ids")
+            return {**result, "state": "idle", "error": None}
 
     @staticmethod
     def _prefix(record: dict) -> str:
@@ -280,13 +368,13 @@ class SourceManager:
                 engine.reset_checkpoint(record["id"])
             knowledge.reconcile_document_prefix(self._prefix(record), set())
 
-    def delete(self, source_id: str, revision: int) -> None:
+    def delete(self, source_id: str, revision: int, *, actor="system") -> None:
         with self._locked(source_id):
             record = self.store.get(source_id)
             if record["revision"] != revision:
                 raise SourceConflict("Source changed; refresh before removing")
             self._reset_and_purge(record)
-            self.store.delete(source_id)
+            self.store.delete(source_id, actor=actor)
 
     def sync(self, source_id: str) -> int:
         with self._locked(source_id):
@@ -369,6 +457,13 @@ class SourceManager:
                     return self.jobs.get(job_id)
             if not record["enabled"]:
                 raise SourceConflict("Source is disabled; enable it before syncing")
+            if (
+                record["config_version"]
+                != get_adapter(record["adapter_id"]).config_version
+            ):
+                raise ValueError(
+                    "Source configuration needs an adapter version migration"
+                )
             slot_acquired = slots.acquire(blocking=False)
             if not slot_acquired:
                 raise SourceConflict("Two sources are syncing; retry when one finishes")
@@ -451,6 +546,21 @@ class SourceManager:
             except KeyError:
                 continue
             record["latest_job"] = history[0] if history else None
+            try:
+                adapter = get_adapter(record["adapter_id"])
+                version = record["config_version"]
+                steps = {step.from_version for step in adapter.migrations}
+                record["configuration_state"] = (
+                    "current"
+                    if version == adapter.config_version
+                    else "migration_available"
+                    if 1 <= version < adapter.config_version
+                    and all(v in steps for v in range(version, adapter.config_version))
+                    else "unsupported"
+                )
+                record["adapter_config_version"] = adapter.config_version
+            except ValueError:
+                record["configuration_state"] = "unsupported"
             record.pop("legacy_document_ids")
             results.append(record)
         return results

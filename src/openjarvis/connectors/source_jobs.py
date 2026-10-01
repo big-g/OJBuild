@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from openjarvis.connectors.source_audit import append_event
 from openjarvis.connectors.source_store import SourceConflict
 
 SCHEMA = """
@@ -64,7 +65,16 @@ class SourceJobs:
             )
         )
 
-    def set_schedule(self, source_id, revision, *, enabled, interval_seconds, now=None):
+    def set_schedule(
+        self,
+        source_id,
+        revision,
+        *,
+        enabled,
+        interval_seconds,
+        now=None,
+        actor="system",
+    ):
         if (
             not isinstance(enabled, bool)
             or isinstance(interval_seconds, bool)
@@ -104,6 +114,19 @@ class SourceJobs:
                     "_run_at"
                 ),
                 (source_id, current + 1, enabled, interval_seconds, next_run),
+            )
+            record = self.store._record(
+                conn.execute(
+                    "SELECT * FROM sources WHERE id=?", (source_id,)
+                ).fetchone()
+            )
+            append_event(
+                conn,
+                record,
+                "schedule_updated",
+                actor=actor,
+                fields=("schedule",),
+                schedule_revision=current + 1,
             )
         return self.schedule(source_id)
 

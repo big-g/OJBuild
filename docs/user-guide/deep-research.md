@@ -219,7 +219,7 @@ The latest run shows its phase, documents read, pages fetched and chunks written
 These counters describe work performed, not necessarily new documents. **Run
 history** loads the latest 20 runs; at most 100 completed runs are retained per
 source. Removing a source removes its schedules and run history. This operational
-history is separate from the configuration audit history planned on the roadmap.
+history is separate from the configuration history described below.
 Background API syncs create run records; synchronous command-line/tool reads do not.
 
 **Cancel** requests a cooperative stop between files, pages and response reads.
@@ -236,6 +236,61 @@ change the source configuration revision. Schedule, history and cancellation
 endpoints require the same authenticated access as the source manager. Run
 records store IDs, timestamps, counters and bounded errors, never credentials
 or fetched response bodies.
+
+### Configuration upgrades and audit history
+
+When trusted server adapter code introduces a new configuration version, existing
+sources retain their saved settings. They cannot sync until upgraded, and their
+scheduled syncs wait without generating repeated failed jobs. The source manager
+shows an available upgrade only when every version has an explicit migration step.
+Unknown adapters, future versions and incomplete migration paths stay blocked;
+install compatible trusted adapter code to resolve them. No adapter code is
+downloaded or installed by this workflow. Existing built-in adapters remain at
+version 1; this mechanism supports their future changes without forcing an upgrade.
+
+Choose **Preview configuration upgrade** to see the proposed settings and whether
+the index and checkpoint will be retained or cleared. Preview performs local
+transformation and validation, without fetching remote content, decrypting
+credentials, changing settings or writing an audit event. Choose **Apply
+configuration upgrade** to save that preview. The server rechecks both the source
+revision and the proposed plan; if either changed, preview again. Busy sources
+cannot be upgraded. Scheduling settings remain intact, and queued jobs created
+against an older source revision are cancelled before fetching.
+
+Adapter migrations default to clearing that source's indexed documents and
+checkpoint. Trusted adapter authors may explicitly preserve them only when the
+transformation preserves document identity, ingestion and incremental-token
+semantics. Imported Local Files sources always reset on their first adapter upgrade
+to replace path-dependent legacy IDs with source-instance IDs. Other sources are
+unaffected. After a reset, sync again to rebuild knowledge. Index cleanup uses the
+existing checkpoint-first reset procedure; an interrupted or failed cleanup can
+require reindexing even if the configuration upgrade has not committed.
+
+Migration steps are registered in server code as `ConfigMigration(from_version,
+transform, preserves_index=False)` entries on `SourceAdapter.migrations`. Each
+pure, deterministic transform advances exactly one version, N to N+1. The final
+result must pass the adapter's current validation and retain the same protected
+credential reference and valid origin binding. Missing steps, validation failures
+or changed credential references reject the upgrade. Adapter discovery and
+configuration upgrades grant no tool capabilities.
+
+**Configuration history** records successful creation/import, edits, schedule
+edits, upgrades and removal. **All configuration history (including removed
+sources)** also exposes records for deleted sources. It loads 50 events at a time
+and supports loading older changes. Events persist across restarts, are retained
+without automatic pruning, and include source/adapter IDs, action, timestamp,
+revision, version, changed field names and whether indexing was reset. Setting
+changes and their audit events commit in the same source-database transaction.
+Existing databases receive the audit table without invented historical events.
+
+Verified login sessions record `user:<user_id>`; shared API-key/server access
+records `server_access`, and internal operations record `system`. The identity is
+derived on the server, never from a supplied actor field. Audit records exclude
+names, configuration values, URLs, response bodies, credential IDs and secrets.
+They describe committed changes, not rejected attempts, and do not provide undo,
+credential-vault history or tamper-proof logging. All audit and migration endpoints
+require the same authenticated access as other source-management endpoints.
+You can disable or remove an unsupported source while keeping its saved settings.
 
 ### Web Page and JSON API sources
 

@@ -40,6 +40,8 @@ export interface SourceInstance {
   config: SourceConfig;
   config_version: number;
   revision: number;
+  configuration_state?: 'current' | 'migration_available' | 'unsupported';
+  adapter_config_version?: number;
   enabled: boolean;
   state: 'idle' | 'queued' | 'syncing' | 'cancelled' | 'error';
   schedule?: SourceSchedule;
@@ -105,3 +107,20 @@ export const setSourceSchedule = (id: string, schedule: Pick<SourceSchedule, 're
   request<SourceSchedule>(`/${encodeURIComponent(id)}/schedule`, 'PUT', schedule);
 export const listSourceJobs = (id: string) => request<{ jobs: SourceJob[] }>(`/${encodeURIComponent(id)}/jobs`);
 export const cancelSourceSync = (id: string) => request<SourceJob>(`/${encodeURIComponent(id)}/cancel`, 'POST');
+
+export interface SourceMigrationPlan {
+  source_id: string; revision: number; from_version: number; to_version: number;
+  config: SourceConfig; index_reset: boolean; plan_token: string;
+}
+export interface SourceAuditEvent {
+  id: number; source_id: string; adapter_id: string; action: string; actor: string;
+  created_at: string; revision: number; config_version: number;
+  previous_version: number | null; schedule_revision: number | null;
+  changed_fields: string[]; index_reset: boolean;
+}
+export const previewSourceMigration = (source: SourceInstance) =>
+  request<SourceMigrationPlan>(`/${encodeURIComponent(source.id)}/migration/preview`, 'POST', { revision: source.revision });
+export const applySourceMigration = (plan: SourceMigrationPlan) =>
+  request<SourceInstance>(`/${encodeURIComponent(plan.source_id)}/migration`, 'POST', { revision: plan.revision, plan_token: plan.plan_token });
+export const listSourceAudit = (id?: string, beforeId?: number) =>
+  request<{ events: SourceAuditEvent[] }>(`${id ? `/${encodeURIComponent(id)}` : ''}/audit${beforeId === undefined ? '' : `?before_id=${beforeId}`}`);
