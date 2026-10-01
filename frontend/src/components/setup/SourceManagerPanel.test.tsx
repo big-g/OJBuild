@@ -61,3 +61,27 @@ it('renders protected credential references from adapter metadata without secret
   expect(html).not.toContain('Other key');
   expect(html).not.toContain('type="password"');
 });
+
+it('supports compound conditions and mode-specific field values from metadata', () => {
+  const fields: SourceAdapter = { ...adapter, fields: [
+    { name: 'mode', label: 'Mode', type: 'select', default_value: 'records', options: [{ value: 'records', label: 'Records' }, { value: 'document', label: 'Document' }], value_updates: { document: { pagination: 'none', sync_mode: 'snapshot', complete_snapshot: false } } },
+    { name: 'pagination', label: 'Pagination', type: 'select', default_value: 'none', options: [{ value: 'none', label: 'Single response' }, { value: 'cursor', label: 'Page cursor' }] },
+    { name: 'next_pointer', label: 'Next page pointer', type: 'text', visible_when: [{ field: 'mode', equals: 'records' }, { field: 'pagination', one_of: ['cursor', 'next_url'] }] },
+  ] };
+  const none = renderToStaticMarkup(<SourceConfigurationFields adapter={fields} config={{}} onChange={() => {}} />);
+  expect(none).not.toContain('Next page pointer');
+  const paginated = renderToStaticMarkup(<SourceConfigurationFields adapter={fields} config={{ pagination: 'cursor' }} onChange={() => {}} />);
+  expect(paginated).toContain('Next page pointer');
+  const document = renderToStaticMarkup(<SourceConfigurationFields adapter={fields} config={{ mode: 'document', pagination: 'cursor' }} onChange={() => {}} />);
+  expect(document).not.toContain('Next page pointer');
+});
+
+it('applies server-declared dependent value resets when the sync mode changes', () => {
+  const definition: SourceAdapter = { ...adapter, fields: [{ name: 'sync_mode', label: 'Sync contract', type: 'select', options: [{ value: 'snapshot', label: 'Snapshot' }, { value: 'incremental', label: 'Incremental' }], value_updates: { incremental: { complete_snapshot: false } } }] };
+  let saved: Record<string, string | number | boolean> = {};
+  const tree = SourceConfigurationFields({ adapter: definition, config: { complete_snapshot: true, url: 'https://api.example.com/data' }, onChange: (value) => { saved = value; } });
+  const label = tree.props.children[0];
+  const select = label.props.children[1];
+  select.props.onChange({ target: { value: 'incremental' } });
+  expect(saved).toEqual({ complete_snapshot: false, sync_mode: 'incremental', url: 'https://api.example.com/data' });
+});

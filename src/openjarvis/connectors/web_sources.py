@@ -5,14 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import asdict
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Iterator
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
 from openjarvis.core.registry import ConnectorRegistry
-from openjarvis.security.public_http import fetch_public_source, normalize_source_url
+from openjarvis.security.public_http import (
+    fetch_public_source,
+    normalize_source_url,
+    source_origin,
+)
 
 _MAX_RECORDS = 1000
 
@@ -84,6 +90,53 @@ def validate_json_config(config: dict) -> dict:
         result[field] = validate_pointer(config.get(field, default))
     if mode == "records" and not result["id_pointer"]:
         raise ValueError("Record mode requires a stable ID pointer")
+    pagination = config.get("pagination", "none")
+    sync_mode = config.get("sync_mode", "snapshot")
+    if pagination not in ("none", "next_url", "cursor"):
+        raise ValueError("Unsupported pagination mode")
+    if sync_mode not in ("snapshot", "incremental"):
+        raise ValueError("Unsupported sync mode")
+    max_pages = config.get("max_pages", 10)
+    if (
+        isinstance(max_pages, bool)
+        or not isinstance(max_pages, int)
+        or not 1 <= max_pages <= 50
+    ):
+        raise ValueError("Page limit must be an integer between 1 and 50")
+    if mode != "records" and (pagination != "none" or sync_mode != "snapshot"):
+        raise ValueError("Pagination and incremental sync require record mode")
+    if sync_mode == "incremental" and complete:
+        raise ValueError(
+            "Incremental sync cannot reconcile missing records as a snapshot"
+        )
+    result.update(pagination=pagination, sync_mode=sync_mode, max_pages=max_pages)
+    for field in ("next_pointer", "sync_token_pointer", "deleted_ids_pointer"):
+        result[field] = validate_pointer(config.get(field, ""))
+    if pagination != "none" and not result["next_pointer"]:
+        raise ValueError("Pagination requires a next-page pointer")
+    if sync_mode == "incremental" and not result["sync_token_pointer"]:
+        raise ValueError("Incremental sync requires a final-page sync-token pointer")
+    if result["deleted_ids_pointer"] and sync_mode != "incremental":
+        raise ValueError("Explicit deletion IDs require incremental sync")
+    for field, default in (
+        ("cursor_parameter", "cursor"),
+        ("sync_token_parameter", "since"),
+    ):
+        parameter = config.get(field, default)
+        if not isinstance(parameter, str) or not re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_.-]{0,63}", parameter
+        ):
+            raise ValueError(
+                "Query parameter names must be non-secret HTTP query names"
+            )
+        normalize_source_url("https://example.org/?" + urlencode({parameter: "value"}))
+        result[field] = parameter
+    if (
+        pagination == "cursor"
+        and sync_mode == "incremental"
+        and result["cursor_parameter"] == result["sync_token_parameter"]
+    ):
+        raise ValueError("Page cursor and incremental sync parameters must differ")
     return result
 
 
@@ -203,7 +256,7 @@ class _PublicSource(BaseConnector):
     def sync_status(self) -> SyncStatus:
         return self._status
 
-    def _documents(self) -> list[Document]:
+    def _documents(self, *, since=None, cursor=None) -> list[Document]:
         raise NotImplementedError
 
     def sync(self, *, since=None, cursor=None) -> Iterator[Document]:
@@ -213,7 +266,7 @@ class _PublicSource(BaseConnector):
                 raise ValueError(
                     "Source credential must be unlocked through SourceManager"
                 )
-            documents = self._documents()
+            documents = self._documents(since=since, cursor=cursor)
             if self._authentication:
                 self._reject_reflection(
                     json.dumps(
@@ -253,10 +306,13 @@ class _PublicSource(BaseConnector):
         if any(value in text for value in variants):
             raise ValueError("Authenticated response reflects protected credentials")
 
-    def _fetch(self, accept: str):
+    def _fetch(self, accept: str, *, url=None, deadline=None, allowed_origin=None):
+        url = url or self.config["url"]
         response = fetch_public_source(
-            self.config["url"],
+            url,
             accept=accept,
+            **({"deadline": deadline} if deadline is not None else {}),
+            **({"allowed_origin": allowed_origin} if allowed_origin else {}),
             **(
                 {"authentication": self._authentication} if self._authentication else {}
             ),
@@ -271,6 +327,7 @@ class _PublicSource(BaseConnector):
             "origin": "external",
             "requested_url": self.config["url"],
             "final_url": str(response.url),
+            **({"page_request_url": url} if url != self.config["url"] else {}),
             "fetched_at": fetched_at.isoformat(),
             "response_version": hashlib.sha256(response.content).hexdigest(),
             "content_type": response.headers.get("content-type", ""),
@@ -286,7 +343,7 @@ class WebPageConnector(_PublicSource):
     display_name = "Web Page"
     required_capabilities = ("connector:web_page:read", "network:fetch")
 
-    def _documents(self) -> list[Document]:
+    def _documents(self, *, since=None, cursor=None) -> list[Document]:
         self.config = validate_web_config(self.config)
         response, fetched_at, metadata = self._fetch("text/html, text/plain;q=0.9")
         mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
@@ -330,9 +387,49 @@ class JsonAPIConnector(_PublicSource):
     display_name = "JSON API"
     required_capabilities = ("connector:json_api:read", "network:fetch")
 
-    def _documents(self) -> list[Document]:
-        self.config = validate_json_config(self.config)
-        response, fetched_at, metadata = self._fetch("application/json")
+    @staticmethod
+    def _token(value, *, terminal=False):
+        if terminal and value in (None, ""):
+            return None
+        if isinstance(value, bool) or not isinstance(value, (str, int)):
+            raise ValueError("Continuation values must be strings or integers")
+        text = str(value)
+        try:
+            encoded = text.encode("utf-8")
+        except UnicodeError:
+            raise ValueError("Continuation value must be valid UTF-8") from None
+        if (
+            not text
+            or len(encoded) > 2048
+            or any(ord(c) < 32 or ord(c) == 127 for c in text)
+        ):
+            raise ValueError("Continuation value exceeds limits or contains controls")
+        return text
+
+    @staticmethod
+    def _query(url, name, value):
+        parsed = urlparse(url)
+        pairs = [
+            (key, item)
+            for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+            if key != name
+        ]
+        pairs.append((name, value))
+        return normalize_source_url(urlunparse(parsed._replace(query=urlencode(pairs))))
+
+    def _identity(self, record_id):
+        if (
+            isinstance(record_id, bool)
+            or not isinstance(record_id, (str, int))
+            or record_id == ""
+        ):
+            raise ValueError("Record IDs must be nonempty strings or integers")
+        endpoint = hashlib.sha256(self.config["url"].encode()).hexdigest()
+        return (
+            endpoint + ":" + hashlib.sha256(_json_text(record_id).encode()).hexdigest()
+        )
+
+    def _decode(self, response):
         mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
         if mime != "application/json" and not (
             mime.startswith("application/") and mime.endswith("+json")
@@ -344,10 +441,135 @@ class JsonAPIConnector(_PublicSource):
                 object_pairs_hook=_strict_pairs,
                 parse_constant=_reject_constant,
             )
-            # Reject non-finite values including 1e999, not just literal NaN.
             _json_text(value)
         except (RecursionError, UnicodeError, ValueError) as exc:
             raise ValueError(f"JSON API returned invalid JSON: {exc}") from exc
+        return value
+
+    def _documents(self, *, since=None, cursor=None) -> list[Document]:
+        self.config = validate_json_config(self.config)
+        self.deleted_document_ids: set[str] = set()
+        incremental = self.config["sync_mode"] == "incremental"
+        base_url = self.config["url"]
+        if incremental and cursor is not None:
+            try:
+                saved = json.loads(cursor)
+                if set(saved) != {"v", "token"} or saved["v"] != 1:
+                    raise ValueError("Invalid token version")
+                token = self._token(saved["token"])
+            except (ValueError, TypeError, KeyError):
+                raise ValueError(
+                    "Stored API sync token is invalid; reset this source configuration"
+                ) from None
+            base_url = self._query(base_url, self.config["sync_token_parameter"], token)
+        pagination = self.config["pagination"]
+        deadline = time.monotonic() + 60
+        current = base_url
+        origin = source_origin(self.config["url"])
+        visited, page_tokens, document_ids = set(), set(), set()
+        documents, total_bytes = [], 0
+        for page in range(1, self.config["max_pages"] + 1):
+            if time.monotonic() >= deadline:
+                raise ValueError("Paginated source exceeded its fetch budget")
+            if current in visited:
+                raise ValueError("JSON API pagination loop detected")
+            visited.add(current)
+            if source_origin(current) != origin:
+                raise ValueError("Next page must stay on the configured origin")
+            response, fetched_at, metadata = self._fetch(
+                "application/json",
+                url=current,
+                deadline=deadline if pagination != "none" else None,
+                allowed_origin=origin if pagination != "none" else None,
+            )
+            if pagination != "none" and source_origin(str(response.url)) != origin:
+                raise ValueError("Paginated response left the configured origin")
+            total_bytes += len(response.content)
+            if total_bytes > 10 * 1024 * 1024:
+                raise ValueError("JSON API exceeds the 10 MiB total response limit")
+            value = self._decode(response)
+            if self._authentication:
+                self._reject_reflection(_json_text(value))
+            if pagination != "none":
+                metadata["page_number"] = page
+            page_documents = self._page_documents(value, response, fetched_at, metadata)
+            for document in page_documents:
+                if document.doc_id in document_ids:
+                    raise ValueError(
+                        "JSON API returned duplicate record IDs across pages"
+                    )
+                document_ids.add(document.doc_id)
+            documents.extend(page_documents)
+            if (
+                self.config["mode"] == "records"
+                and len(documents) > self.config["max_records"]
+            ):
+                raise ValueError("JSON API exceeds the configured total record limit")
+            if incremental and self.config["deleted_ids_pointer"]:
+                deleted = _pointer(value, self.config["deleted_ids_pointer"])
+                if (
+                    not isinstance(deleted, list)
+                    or len(deleted) > self.config["max_records"]
+                ):
+                    raise ValueError("Deletion IDs must be a bounded JSON array")
+                for identity in deleted:
+                    self.deleted_document_ids.add(
+                        "json_api:" + self._identity(identity)
+                    )
+                if (
+                    len(self.deleted_document_ids) + len(documents)
+                    > self.config["max_records"]
+                ):
+                    raise ValueError(
+                        "JSON API exceeds the total record and deletion limit"
+                    )
+            next_value = (
+                _pointer(value, self.config["next_pointer"])
+                if pagination != "none"
+                else None
+            )
+            if (
+                pagination == "next_url"
+                and next_value not in (None, "")
+                and not isinstance(next_value, str)
+            ):
+                raise ValueError("Next-page URLs must be strings")
+            continuation = self._token(next_value, terminal=True)
+            if continuation is None:
+                if incremental:
+                    token = self._token(
+                        _pointer(value, self.config["sync_token_pointer"])
+                    )
+                    if self._authentication:
+                        self._reject_reflection(token)
+                    self._query(
+                        self.config["url"], self.config["sync_token_parameter"], token
+                    )
+                    self._status.cursor = json.dumps(
+                        {"v": 1, "token": token}, ensure_ascii=False
+                    )
+                if document_ids & self.deleted_document_ids:
+                    raise ValueError(
+                        "A response cannot update and delete the same record"
+                    )
+                if time.monotonic() >= deadline:
+                    raise ValueError("Paginated source exceeded its fetch budget")
+                return documents
+            if continuation in page_tokens:
+                raise ValueError("JSON API repeated a page continuation")
+            page_tokens.add(continuation)
+            current = (
+                normalize_source_url(urljoin(str(response.url), continuation))
+                if pagination == "next_url"
+                else self._query(
+                    base_url, self.config["cursor_parameter"], continuation
+                )
+            )
+        raise ValueError(
+            "JSON API exceeded the configured page limit before completion"
+        )
+
+    def _page_documents(self, value, response, fetched_at, metadata):
         endpoint_id = hashlib.sha256(self.config["url"].encode()).hexdigest()
         if self.config["mode"] == "document":
             records = [(endpoint_id, str(response.url), _json_text(value), "")]

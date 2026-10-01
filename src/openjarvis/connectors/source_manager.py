@@ -249,13 +249,21 @@ class SourceManager:
             with SyncEngine(
                 IngestionPipeline(knowledge), state_db=str(self.store.path)
             ) as engine:
-                chunks = engine.sync(connector)
-            # A failed scan never removes documents that weren't reached.
-            if connector.full_snapshot:
-                knowledge.reconcile_document_prefix(
-                    self._prefix(connector.record),
-                    connector.seen,
-                )
+
+                def complete():
+                    # Readers stage/validate every page before yielding. Ingest
+                    # first, then apply explicit deletions or snapshot cleanup.
+                    if connector.full_snapshot:
+                        knowledge.reconcile_document_prefix(
+                            self._prefix(connector.record), connector.seen
+                        )
+                    deleted = getattr(connector.reader, "deleted_document_ids", set())
+                    knowledge.delete_documents(
+                        {f"source:{source_id}:{identity}" for identity in deleted}
+                    )
+                    return connector.reader.sync_status().cursor
+
+                chunks = engine.sync(connector, on_complete=complete)
         self.store.set_status(source_id, "idle")
         return chunks
 

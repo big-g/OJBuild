@@ -353,3 +353,37 @@ def test_authenticated_redirect_cannot_reflect_secret_into_url(monkeypatch):
             },
         )
     assert requests == ["https://api.example.com/start"]
+
+
+def test_pagination_origin_blocks_redirect_before_second_request(monkeypatch):
+    requests = []
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: object())
+
+    def request(url, target, **kwargs):
+        requests.append(url)
+        return httpx.Response(
+            302,
+            headers={"location": "https://other.example.com/data"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(public_http, "_request_source", request)
+    with pytest.raises(ValueError, match="configured origin"):
+        public_http.fetch_public_source(
+            "https://api.example.com/start",
+            accept="application/json",
+            allowed_origin="https://api.example.com:443",
+        )
+    assert len(requests) == 1
+
+
+def test_fetch_respects_shared_deadline_before_dns_or_connection(monkeypatch):
+    dns = MagicMock()
+    monkeypatch.setattr(public_http, "validate_public_url", dns)
+    with pytest.raises(ValueError, match="time budget"):
+        public_http.fetch_public_source(
+            "https://api.example.com/data",
+            accept="application/json",
+            deadline=public_http.time.monotonic() - 1,
+        )
+    dns.assert_not_called()

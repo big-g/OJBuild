@@ -281,15 +281,28 @@ def _request_source(
     raise ValueError("Source connection failed or timed out") from last_error
 
 
+def source_origin(url: str) -> str:
+    """Canonical origin for a normalized source URL, including effective port."""
+    parsed = urlparse(normalize_source_url(url))
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    return f"{parsed.scheme}://{parsed.hostname}:{port}"
+
+
 def fetch_public_source(
     url: str,
     *,
     accept: str,
     max_bytes: int = 2 * 1024 * 1024,
     authentication: dict | None = None,
+    deadline: float | None = None,
+    allowed_origin: str | None = None,
 ) -> httpx.Response:
     """Validate and pin each redirect; reject partial/empty/error responses."""
-    deadline = time.monotonic() + 60
+    deadline = (
+        min(deadline, time.monotonic() + 60)
+        if deadline is not None
+        else time.monotonic() + 60
+    )
     current = normalize_source_url(url)
     for _ in range(6):
         _remaining(deadline)
@@ -306,6 +319,8 @@ def fetch_public_source(
                 raise ValueError(
                     "Authenticated redirects must stay on the credential HTTPS origin"
                 )
+        if allowed_origin is not None and source_origin(current) != allowed_origin:
+            raise ValueError("Paginated redirects must stay on the configured origin")
         target = validate_public_url(current)
         response = _request_source(
             current,

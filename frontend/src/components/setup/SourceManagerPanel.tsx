@@ -16,17 +16,24 @@ export function SourceConfigurationFields({
   onChange: (config: SourceConfig) => void;
 }) {
   const fieldValue = (name: string) => config[name] ?? adapter.fields.find((field) => field.name === name)?.default_value ?? '';
+  const changeField = (field: SourceAdapter['fields'][number], value: string | number | boolean) => {
+    onChange({ ...config, ...field.value_updates?.[String(value)], [field.name]: value });
+  };
+  const visible = (field: SourceAdapter['fields'][number]) => {
+    const conditions = field.visible_when ? (Array.isArray(field.visible_when) ? field.visible_when : [field.visible_when]) : [];
+    return conditions.every((condition) => condition.one_of ? condition.one_of.includes(fieldValue(condition.field)) : fieldValue(condition.field) === condition.equals);
+  };
   return <>
-    {adapter.fields.filter((field) => !field.visible_when || fieldValue(field.visible_when.field) === field.visible_when.equals).map((field) => <label key={field.name} className="flex flex-col gap-1">
+    {adapter.fields.filter(visible).map((field) => <label key={field.name} className="flex flex-col gap-1">
       {field.label}
-      {field.type === 'credential' ? <select aria-label={field.label} value={String(fieldValue(field.name))} onChange={(event) => onChange({ ...config, [field.name]: event.target.value })}>
+      {field.type === 'credential' ? <select aria-label={field.label} value={String(fieldValue(field.name))} onChange={(event) => changeField(field, event.target.value)}>
         <option value="">No authentication</option>
         {credentials.filter((credential) => field.credential_kinds?.includes(credential.kind)).map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.origin}</option>)}
       </select> : field.type === 'select' ? <select
         aria-label={field.label}
         required={field.required}
         value={String(fieldValue(field.name))}
-        onChange={(event) => onChange({ ...config, [field.name]: event.target.value })}
+        onChange={(event) => changeField(field, event.target.value)}
       >
         <option value="">Choose…</option>
         {(field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -38,11 +45,8 @@ export function SourceConfigurationFields({
         min={field.min}
         max={field.max}
         {...(field.type === 'checkbox' ? { checked: Boolean(fieldValue(field.name)) } : { value: String(fieldValue(field.name)) })}
-        onChange={(event) => onChange({
-          ...config,
-          [field.name]: field.type === 'checkbox' ? event.target.checked
-            : field.type === 'number' ? Number(event.target.value) : event.target.value,
-        })}
+        onChange={(event) => changeField(field, field.type === 'checkbox' ? event.target.checked
+          : field.type === 'number' ? Number(event.target.value) : event.target.value)}
       />}
       {field.description && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{field.description}</span>}
     </label>)}

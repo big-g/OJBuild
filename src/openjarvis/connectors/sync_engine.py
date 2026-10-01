@@ -20,7 +20,7 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 from openjarvis.connectors._stubs import BaseConnector
 from openjarvis.connectors.pipeline import IngestionPipeline
@@ -88,6 +88,7 @@ class SyncEngine:
         connector: BaseConnector,
         *,
         cancel_event: Optional[threading.Event] = None,
+        on_complete: Optional[Callable[[], Optional[str]]] = None,
     ) -> int:
         """Run a full sync for *connector* and return the number of items ingested.
 
@@ -147,6 +148,12 @@ class SyncEngine:
             # Ingest any remaining documents.
             if batch and not (cancel_event is not None and cancel_event.is_set()):
                 items_ingested += self._pipeline.ingest(batch)
+            # Source-specific cleanup must finish before advancing its durable
+            # upstream token. Progress/error checkpoints retain the old token.
+            if on_complete is not None and not (
+                cancel_event is not None and cancel_event.is_set()
+            ):
+                current_cursor = on_complete()
 
         except Exception as exc:
             self._save_checkpoint(

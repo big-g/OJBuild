@@ -1,5 +1,11 @@
 import { apiFetch } from './api';
 
+export interface SourceFieldCondition {
+  field: string;
+  equals?: string | number | boolean;
+  one_of?: (string | number | boolean)[];
+}
+
 export interface SourceField {
   name: string;
   label: string;
@@ -11,7 +17,8 @@ export interface SourceField {
   description?: string;
   min?: number;
   max?: number;
-  visible_when?: { field: string; equals: string | number | boolean };
+  visible_when?: SourceFieldCondition | SourceFieldCondition[];
+  value_updates?: Record<string, SourceConfig>;
   options?: { value: string; label: string }[];
 }
 

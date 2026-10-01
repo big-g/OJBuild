@@ -42,7 +42,11 @@ Automatic model routing is deferred; explicit model selection remains supported.
    connections; encrypted server vault and web add/rotate/remove controls; immutable
    origin/header bindings; metadata-only APIs; same-origin authenticated redirects;
    credential-use capability requirements; in-use/reference-safe lifecycle checks.
-   **Next:** explicit pagination and incremental/deletion contracts. Private-network
+   **Implemented:** bounded same-origin next-URL/cursor pagination; server-issued
+   incremental sync tokens committed only after ingestion and cleanup; explicit
+   deletion-ID arrays scoped to one instance; complete-snapshot reconciliation
+   across all pages. Failed/truncated scans retain the prior token and watermark.
+   **Next:** durable scheduled jobs and observable sync lifecycle. Private-network
    services and OAuth authorization flows remain separate future integrations.
 3. **Pending:** durable scheduled jobs, cancellation/progress, configuration
    evolution across adapter versions, audit history, and migration of existing

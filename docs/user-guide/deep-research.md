@@ -224,7 +224,7 @@ document** mode indexes the response without guessing field meanings. Choose
 Pointers start with `/`; use `~1` for a slash in a key and `~0` for a tilde.
 Duplicate IDs, missing pointers, invalid JSON, duplicate object keys and non-finite
 numbers report errors before any new records are indexed. Without **Complete
-snapshot**, records absent from one response remain indexed. Automatic pagination remains roadmap work.
+snapshot**, records absent from one response remain indexed. Pagination and incremental sync are configured explicitly below.
 
 **Test connection** actually fetches and parses either source without
 saving/indexing it. Fetching accepts public HTTP/HTTPS addresses on ports 80/443,
@@ -248,7 +248,7 @@ reserved headers are rejected. Save it, then select the credential in the Web Pa
 or JSON API source form. **Test connection** uses that credential without indexing.
 The source URL must match its origin; authenticated redirects must remain on the
 same HTTPS origin. DNS pinning, private-address rejection and fetch limits still
-apply. OAuth flows, cookies, Basic auth and pagination are not yet implemented.
+apply. OAuth flows, cookies and Basic auth are not yet implemented.
 
 Credentials are encrypted with Fernet in `source_credentials.db`, alongside the
 source database. Only metadata and reference IDs are returned by the APIs. Secrets
@@ -283,3 +283,66 @@ prior successful watermark and do not reconcile missing documents.
 Tool reads require the selected adapter's `connector:web_page:read` or
 `connector:json_api:read` capability plus `network:fetch`. Saving a source grants
 none of these capabilities. Existing Local Files permissions are unchanged.
+
+
+### Paginated JSON collections
+
+In **Individual records**, select **Next-page URL in JSON** or **Page cursor in
+JSON** and provide the **Next-page value pointer**, such as `/next`. Every page
+must contain that field. `null` or an empty string explicitly finishes the scan;
+a missing field is an error. For cursor pagination, set the query parameter name
+(default `cursor`). OpenJarvis preserves the source URL's other query parameters.
+For URL pagination, the API's next URL is authoritative and may be relative to
+that page's final URL. All page URLs and redirects must stay on the configured
+origin, including scheme and effective port. Private-address and credential
+checks apply to every page. Credentials remain bound to their HTTPS origin.
+
+Set **Maximum pages** (default 10, maximum 50) and **Maximum records and deletion
+IDs per sync** (default 200, maximum 1,000). Limits apply to the entire scan. Each
+page is limited to 2 MiB, the total response data to 10 MiB, and all pages share a
+checked 60-second fetch budget. Repeated URLs/cursors, duplicate record IDs across
+pages, malformed pages, and an unfinished scan at a limit cause an error before
+any page is yielded for indexing. Pages are staged in memory within these bounds;
+mid-page resume, offset/page-number pagination and HTTP Link-header pagination
+are not yet supported.
+
+**Complete snapshot** removes absent records only after every page has finished
+and all documents have been ingested. Enable it only if the API provides a stable,
+complete collection throughout the scan. Concurrent changes between pages can
+otherwise make a collection incomplete; pagination alone does not guarantee a
+consistent snapshot. With this option off, missing records remain indexed.
+
+### Incremental API changes and explicit deletions
+
+Choose **Incremental changes with durable token** only for an API that defines
+this contract. Its initial request without a token must provide the bootstrap
+records you want indexed. Configure the **Final-page sync token pointer**, such
+as `/sync_token`, and the **Sync token query parameter**, default `since`.
+The final page must provide a nonempty string or integer token. On the next sync,
+OpenJarvis sends that token to the same source URL. Tokens are opaque, non-secret
+continuation state (maximum 2,048 UTF-8 bytes); do not use access tokens here.
+Authentication belongs in protected credentials. Page cursors and durable sync
+tokens use different query parameters. Pagination cursors are transient and are
+never saved as the durable token.
+
+Optionally configure **Deleted record IDs pointer**, such as `/deleted_ids`.
+Each page must then provide an array of string/integer IDs, including an empty
+array when nothing was deleted. IDs use the same typed identity as normal
+records. A scan cannot both update and delete the same ID. Explicit deletions
+remove only that connection's documents and FTS entries. Incremental mode always
+retains records absent from the response and cannot use complete-snapshot cleanup.
+
+The durable token advances only after all pages validate, ingestion succeeds and
+cleanup finishes. Empty successful deltas can advance the token. A failed scan,
+ingestion failure or cleanup failure retains the old token and successful
+watermark; retrying requests the same change window. Individual document refreshes
+are atomic, while a whole multi-document ingestion is not: an ingestion failure
+may leave some refreshed documents visible, and replaying the unchanged token
+safely retries them. Deletion batches are atomic. APIs must make token-based replay
+safe and retain change history long enough for retries.
+
+Source configuration changes reset its checkpoint and clear its indexed data;
+changing the sync contract therefore bootstraps again. **Test connection** validates
+the complete configured scan without saving its token or applying deletions.
+Tool-driven reads do not commit tokens or modify the index; they make an initial
+read and remain bounded by the same configuration and capability requirements.

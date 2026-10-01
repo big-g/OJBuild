@@ -162,6 +162,14 @@ register_adapter(
             _CREDENTIAL_FIELD,
             {
                 "name": "mode",
+                "value_updates": {
+                    "document": {
+                        "pagination": "none",
+                        "sync_mode": "snapshot",
+                        "complete_snapshot": False,
+                        "deleted_ids_pointer": "",
+                    }
+                },
                 "label": "Index as",
                 "type": "select",
                 "default_value": "document",
@@ -203,12 +211,118 @@ register_adapter(
             },
             {
                 "name": "max_records",
-                "label": "Maximum records",
+                "label": "Maximum records and deletion IDs per sync",
                 "type": "number",
                 "default_value": 200,
                 "min": 1,
                 "max": 1000,
                 "visible_when": _RECORDS,
+            },
+            {
+                "name": "pagination",
+                "label": "Pagination",
+                "type": "select",
+                "default_value": "none",
+                "visible_when": _RECORDS,
+                "options": [
+                    {"value": "none", "label": "Single response"},
+                    {"value": "next_url", "label": "Next-page URL in JSON"},
+                    {"value": "cursor", "label": "Page cursor in JSON"},
+                ],
+            },
+            {
+                "name": "next_pointer",
+                "required": True,
+                "label": "Next-page value pointer",
+                "type": "text",
+                "placeholder": "/next",
+                "visible_when": [
+                    _RECORDS,
+                    {"field": "pagination", "one_of": ["next_url", "cursor"]},
+                ],
+                "description": (
+                    "Required on every page; null or empty string marks the final page."
+                ),
+            },
+            {
+                "name": "cursor_parameter",
+                "label": "Page cursor query parameter",
+                "type": "text",
+                "default_value": "cursor",
+                "visible_when": [_RECORDS, {"field": "pagination", "equals": "cursor"}],
+            },
+            {
+                "name": "max_pages",
+                "label": "Maximum pages",
+                "type": "number",
+                "default_value": 10,
+                "min": 1,
+                "max": 50,
+                "visible_when": [
+                    _RECORDS,
+                    {"field": "pagination", "one_of": ["next_url", "cursor"]},
+                ],
+                "description": (
+                    "Exceeding a limit fails the scan without "
+                    "applying missing-record cleanup."
+                ),
+            },
+            {
+                "name": "sync_mode",
+                "value_updates": {
+                    "incremental": {"complete_snapshot": False},
+                    "snapshot": {"deleted_ids_pointer": ""},
+                },
+                "label": "Sync contract",
+                "type": "select",
+                "default_value": "snapshot",
+                "visible_when": _RECORDS,
+                "options": [
+                    {"value": "snapshot", "label": "Snapshot / append records"},
+                    {
+                        "value": "incremental",
+                        "label": "Incremental changes with durable token",
+                    },
+                ],
+            },
+            {
+                "name": "sync_token_pointer",
+                "required": True,
+                "label": "Final-page sync token pointer",
+                "type": "text",
+                "placeholder": "/sync_token",
+                "visible_when": [
+                    _RECORDS,
+                    {"field": "sync_mode", "equals": "incremental"},
+                ],
+                "description": (
+                    "Server-issued non-secret token. Saved only after "
+                    "successful ingestion and cleanup."
+                ),
+            },
+            {
+                "name": "sync_token_parameter",
+                "label": "Sync token query parameter",
+                "type": "text",
+                "default_value": "since",
+                "visible_when": [
+                    _RECORDS,
+                    {"field": "sync_mode", "equals": "incremental"},
+                ],
+            },
+            {
+                "name": "deleted_ids_pointer",
+                "label": "Deleted record IDs pointer",
+                "type": "text",
+                "placeholder": "/deleted_ids",
+                "visible_when": [
+                    _RECORDS,
+                    {"field": "sync_mode", "equals": "incremental"},
+                ],
+                "description": (
+                    "Optional array of explicitly deleted IDs. Missing "
+                    "records are retained in incremental mode."
+                ),
             },
             {
                 "name": "complete_snapshot",
@@ -218,9 +332,12 @@ register_adapter(
                 "default_value": False,
                 "description": (
                     "Remove missing records only when the response "
-                    "contains the complete collection."
+                    "contains the complete collection across all pages."
                 ),
-                "visible_when": _RECORDS,
+                "visible_when": [
+                    _RECORDS,
+                    {"field": "sync_mode", "equals": "snapshot"},
+                ],
             },
         ),
         validate=validate_json_config,

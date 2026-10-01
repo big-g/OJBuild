@@ -516,6 +516,20 @@ class KnowledgeStore(MemoryBackend):
         self._conn.commit()
         return cur.rowcount > 0
 
+    def delete_documents(self, doc_ids: Iterable[str]) -> int:
+        """Atomically remove an explicit set of document IDs and their FTS rows."""
+        try:
+            removed = 0
+            for identity in set(doc_ids):
+                removed += self._conn.execute(
+                    "DELETE FROM knowledge_chunks WHERE doc_id=?", (identity,)
+                ).rowcount
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+        return removed
+
     def delete_by_source(self, source: str) -> int:
         """Delete all chunks with the given *source*. Returns the count removed.
 
