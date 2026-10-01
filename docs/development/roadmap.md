@@ -46,8 +46,8 @@ Automatic model routing is deferred; explicit model selection remains supported.
    incremental sync tokens committed only after ingestion and cleanup; explicit
    deletion-ID arrays scoped to one instance; complete-snapshot reconciliation
    across all pages. Failed/truncated scans retain the prior token and watermark.
-   Private-network services and OAuth authorization flows remain separate future
-   integrations.
+   Private-network services and named-source OAuth adapters remain separate
+   future integrations.
 3. **Implemented:** persistent opt-in interval schedules and queued sync runs;
    authenticated web progress/cancellation controls; bounded per-source run history;
    restart recovery and cross-process worker leases with a global two-job limit.
@@ -58,8 +58,13 @@ Automatic model routing is deferred; explicit model selection remains supported.
    and transactional configuration audit events retained after source removal.
    Audit records exclude values and secrets; verified sessions identify users,
    while shared server access is recorded without claiming a personal identity.
-   **Next:** migration of existing
-   OAuth/token integrations into the instance model. Secret-bearing adapter fields
+   **Implemented:** authenticated OAuth start and one-use external-browser handoff;
+   expiring, encrypted attempt data in SQLite; exact callback/browser/state binding;
+   S256 PKCE for Google/Spotify; per-connector Google read-only consent with no
+   token fanout; attempt-specific status; redacted exchange/refresh errors and
+   OAuth access-log queries; bounded state-checked native callback handling.
+   **Next:** move legacy connector tokens into protected vault references and
+   migrate OAuth/token integrations into the instance model. Secret-bearing fields
    must use protected credential references; never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,
    followed by desktop/Android end-to-end validation of research and configuration.

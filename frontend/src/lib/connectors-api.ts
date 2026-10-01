@@ -42,26 +42,55 @@ export async function connectSource(id: string, req: ConnectRequest): Promise<Co
 /** Open the server-side OAuth consent flow in a popup and resolve once the
  *  connector reports connected (or reject on timeout). Reused for any OAuth
  *  connector whose /connect returned `oauth_required` (issue #512). */
-export function startServerOAuth(id: string, oauthStartPath?: string): Promise<void> {
-  const path = oauthStartPath || `/v1/connectors/${encodeURIComponent(id)}/oauth/start`;
-  window.open(`${getBase()}${path}`, '_blank', 'width=600,height=700');
+export async function startServerOAuth(id: string, oauthStartPath?: string): Promise<void> {
+  const prefix = `/v1/connectors/${encodeURIComponent(id)}/oauth`;
+  const path = `${prefix}/start`;
+  if (oauthStartPath && oauthStartPath !== path) throw new Error('Invalid authorization start address.');
+  const popup = window.open('about:blank', '_blank', 'width=600,height=700');
+  if (!popup) throw new Error('Allow popups to connect this account, then try again.');
+  popup.opener = null;
+  let attemptId: string;
+  try {
+    const res = await apiFetch(path, { method: 'POST' });
+    if (!res.ok) {
+      const error = await res.json().catch(() => ({}));
+      throw new Error(typeof error.detail === 'string' ? error.detail : 'Could not start authorization.');
+    }
+    const attempt = await res.json();
+    const ticket = typeof attempt.launch_path === 'string' ? attempt.launch_path.slice(`${prefix}/launch?ticket=`.length) : '';
+    if (!attempt.launch_path?.startsWith(`${prefix}/launch?ticket=`) || !/^[A-Za-z0-9_-]{43}$/.test(ticket) || !/^[a-f0-9-]{36}$/.test(attempt.attempt_id)) {
+      throw new Error('Invalid authorization handoff.');
+    }
+    attemptId = attempt.attempt_id;
+    popup.location.href = `${getBase()}${attempt.launch_path}`;
+  } catch (error) {
+    popup.close();
+    throw error;
+  }
   return new Promise((resolve, reject) => {
+    let settled = false;
+    let polling = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearInterval(interval); clearTimeout(timer);
+      popup.close();
+      if (error) reject(error); else resolve();
+    };
     const interval = setInterval(async () => {
+      if (settled || polling) return;
+      polling = true;
       try {
-        const info = await getConnector(id);
-        if (info.connected) {
-          clearInterval(interval);
-          clearTimeout(timer);
-          resolve();
-        }
+        const res = await apiFetch(`${prefix}/status?attempt_id=${encodeURIComponent(attemptId)}`);
+        if (!res.ok) { finish(new Error('Authorization expired or was cancelled. Please start again.')); return; }
+        const result = await res.json();
+        if (result.status === 'completed') finish();
+        else if (result.status === 'failed') finish(new Error('Authorization failed. Please start again.'));
       } catch {
-        // ignore transient polling errors
-      }
+        // Retry transient transport errors until the bounded deadline.
+      } finally { polling = false; }
     }, 2000);
-    const timer = setTimeout(() => {
-      clearInterval(interval);
-      reject(new Error('Authorization timed out — please try again.'));
-    }, 180000);
+    const timer = setTimeout(() => finish(new Error('Authorization timed out. Please start again.')), 600000);
   });
 }
 

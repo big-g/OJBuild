@@ -9,8 +9,10 @@ Provides:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
+import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -46,14 +48,15 @@ class OAuthProvider:
     callback_path: str = "/callback"
     token_auth: str = "body"  # "body" or "basic"
     extra_auth_params: Dict[str, str] = field(default_factory=dict)
-    # Which connector IDs this provider covers (one flow → all connected)
+    # Connector IDs supported by this provider; consent targets one connector.
     connector_ids: Tuple[str, ...] = ()
     # Filenames in ~/.openjarvis/connectors/ to save tokens to
     credential_files: Tuple[str, ...] = ()
+    pkce: bool = False
 
 
-# Combined scopes for all Google connectors so a single OAuth consent
-# authorises Drive, Calendar, Contacts, Gmail, and Tasks at once.
+# Legacy scope list retained for explicit callers. Interactive connector flows
+# now use connector_scopes() and never request this combined grant by default.
 GOOGLE_ALL_SCOPES: List[str] = [
     "openid",
     "email",
@@ -71,12 +74,16 @@ GOOGLE_ALL_SCOPES: List[str] = [
 OAUTH_PROVIDERS: Dict[str, OAuthProvider] = {
     "google": OAuthProvider(
         name="google",
+        pkce=True,
         display_name="Google",
         auth_endpoint="https://accounts.google.com/o/oauth2/v2/auth",
         token_endpoint="https://oauth2.googleapis.com/token",
         scopes=GOOGLE_ALL_SCOPES,
         setup_url="https://console.cloud.google.com/apis/credentials",
-        setup_hint="Create an OAuth 2.0 Client ID (Desktop app type)",
+        setup_hint=(
+            "Create a Web application client for server callbacks, "
+            "or a Desktop app client for native loopback flows"
+        ),
         extra_auth_params={"access_type": "offline", "prompt": "consent"},
         connector_ids=(
             "gdrive",
@@ -107,6 +114,7 @@ OAUTH_PROVIDERS: Dict[str, OAuthProvider] = {
     ),
     "spotify": OAuthProvider(
         name="spotify",
+        pkce=True,
         display_name="Spotify",
         auth_endpoint="https://accounts.spotify.com/authorize",
         token_endpoint="https://accounts.spotify.com/api/token",
@@ -127,6 +135,44 @@ def get_provider_for_connector(connector_id: str) -> Optional[OAuthProvider]:
         if connector_id in provider.connector_ids:
             return provider
     return None
+
+
+_GOOGLE_READ_SCOPES = {
+    "gdrive": "https://www.googleapis.com/auth/drive.readonly",
+    "gcalendar": "https://www.googleapis.com/auth/calendar.readonly",
+    "gcontacts": "https://www.googleapis.com/auth/contacts.readonly",
+    "gmail": "https://www.googleapis.com/auth/gmail.readonly",
+    "google_tasks": "https://www.googleapis.com/auth/tasks.readonly",
+}
+
+
+def connector_scopes(provider, connector_id):
+    if connector_id not in provider.connector_ids:
+        raise ValueError("Connector does not belong to this OAuth provider")
+    return (
+        [_GOOGLE_READ_SCOPES[connector_id]]
+        if provider.name == "google"
+        else list(provider.scopes)
+    )
+
+
+def connector_credential_file(provider, connector_id):
+    if connector_id not in provider.connector_ids:
+        raise ValueError("Connector does not belong to this OAuth provider")
+    filename = f"{connector_id}.json"
+    if filename not in provider.credential_files:
+        raise ValueError("No credential destination for this connector")
+    return filename
+
+
+def pkce_pair():
+    verifier = secrets.token_urlsafe(64)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
+        .decode()
+        .rstrip("=")
+    )
+    return verifier, challenge
 
 
 # ---------------------------------------------------------------------------
@@ -175,7 +221,7 @@ def save_client_credentials(
 
 
 # ---------------------------------------------------------------------------
-# Shared credentials file — one OAuth flow covers all Google connectors
+# Legacy shared Google credentials fallback; new consent writes one connector.
 # ---------------------------------------------------------------------------
 
 _SHARED_GOOGLE_CREDENTIALS_PATH: str = str(_CONNECTORS_DIR / "google.json")
@@ -194,6 +240,9 @@ def build_google_auth_url(
     client_id: str,
     redirect_uri: str = _DEFAULT_REDIRECT_URI,
     scopes: Optional[List[str]] = None,
+    *,
+    state: str = "",
+    code_challenge: str = "",
 ) -> str:
     """Build a Google OAuth2 consent URL.
 
@@ -224,6 +273,10 @@ def build_google_auth_url(
         "access_type": "offline",
         "prompt": "consent",
     }
+    if state:
+        params["state"] = state
+    if code_challenge:
+        params.update(code_challenge=code_challenge, code_challenge_method="S256")
     return f"{_GOOGLE_AUTH_ENDPOINT}?{urlencode(params)}"
 
 
@@ -279,6 +332,12 @@ def require_access_token(tokens: Any) -> str:
     access_token = tokens.get("access_token")
     if not isinstance(access_token, str) or not access_token.strip():
         raise RuntimeError("OAuth token response did not include an access_token")
+    if len(access_token) > 8192 or any(
+        ord(c) < 33 or ord(c) > 126 for c in access_token
+    ):
+        raise RuntimeError("OAuth token response included an invalid access_token")
+    if str(tokens.get("token_type", "Bearer")).lower() != "bearer":
+        raise RuntimeError("OAuth token response used an unsupported token_type")
     return access_token.strip()
 
 
@@ -290,64 +349,13 @@ def delete_tokens(path: str) -> None:
 
 
 def refresh_google_token(path: str) -> Optional[str]:
-    """Refresh a Google access token using the stored refresh token.
-
-    Reads the credentials file at *path*, exchanges its ``refresh_token``
-    (plus ``client_id``/``client_secret``) for a new ``access_token``
-    against Google's OAuth token endpoint, persists the refreshed payload
-    back to *path*, and returns the new access token.
-
-    Returns ``None`` if any required field is missing or the refresh call
-    fails (network error or Google returns a non-2xx response — typically
-    ``invalid_grant`` when the refresh token has been revoked).
-    """
-    import httpx
-
-    tokens = load_tokens(path)
-    if not tokens:
-        return None
-    refresh_token = tokens.get("refresh_token")
-    client_id = tokens.get("client_id")
-    client_secret = tokens.get("client_secret")
-    if not (refresh_token and client_id and client_secret):
-        return None
+    """Compatibility wrapper around the validated, redacted refresh implementation."""
+    from openjarvis.connectors.google_auth import GoogleAuthError, refresh_access_token
 
     try:
-        resp = httpx.post(
-            "https://oauth2.googleapis.com/token",
-            data={
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "refresh_token": refresh_token,
-                "grant_type": "refresh_token",
-            },
-            timeout=15.0,
-        )
-    except httpx.HTTPError:
+        return refresh_access_token(path)
+    except GoogleAuthError:
         return None
-    if resp.status_code >= 400:
-        return None
-
-    body = resp.json()
-    new_access = body.get("access_token")
-    if not new_access:
-        return None
-
-    tokens.update(
-        {
-            "access_token": new_access,
-            "token": new_access,  # legacy key used by some connectors
-            "token_type": body.get("token_type", tokens.get("token_type", "Bearer")),
-            "expires_in": body.get("expires_in", tokens.get("expires_in", 3600)),
-        }
-    )
-    save_tokens(path, tokens)
-    return new_access
-
-
-# ---------------------------------------------------------------------------
-# Token exchange & full OAuth flow
-# ---------------------------------------------------------------------------
 
 
 def exchange_google_token(
@@ -355,43 +363,18 @@ def exchange_google_token(
     client_id: str,
     client_secret: str,
     redirect_uri: str = _DEFAULT_REDIRECT_URI,
+    *,
+    code_verifier: str = "",
 ) -> Dict[str, Any]:
-    """Exchange an authorization code for access + refresh tokens.
-
-    Parameters
-    ----------
-    code:
-        The authorization code received from Google's consent redirect.
-    client_id:
-        OAuth 2.0 client ID.
-    client_secret:
-        OAuth 2.0 client secret.
-    redirect_uri:
-        Must match the redirect URI used when obtaining the auth code.
-
-    Returns
-    -------
-    dict
-        Token response containing ``access_token``, ``refresh_token``,
-        ``token_type``, and ``expires_in``.
-    """
-    import httpx
-
-    resp = httpx.post(
-        "https://oauth2.googleapis.com/token",
-        data={
-            "code": code,
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-            "grant_type": "authorization_code",
-        },
-        timeout=30.0,
+    """Compatibility exchange through the bounded, redacted provider helper."""
+    return _exchange_token(
+        OAUTH_PROVIDERS["google"],
+        code,
+        client_id,
+        client_secret,
+        redirect_uri,
+        code_verifier=code_verifier,
     )
-    resp.raise_for_status()
-    tokens = resp.json()
-    require_access_token(tokens)
-    return tokens
 
 
 def run_oauth_flow(
@@ -401,235 +384,144 @@ def run_oauth_flow(
     credentials_path: str,
     redirect_uri: str = _DEFAULT_REDIRECT_URI,
 ) -> Dict[str, Any]:
-    """Run the full OAuth flow: browser consent, callback, token exchange.
+    """Google native flow with S256 PKCE and an exact, bounded loopback callback."""
+    from urllib.parse import urlparse
 
-    Steps:
+    from openjarvis.connectors.oauth_state import validate_callback_uri
 
-    1. Build consent URL
-    2. Start localhost callback server
-    3. Open browser to consent URL
-    4. Wait for Google to redirect with ``?code=...``
-    5. Exchange code for ``access_token`` + ``refresh_token``
-    6. Save tokens to *credentials_path*
-    7. Return the tokens dict
-
-    Parameters
-    ----------
-    client_id:
-        OAuth 2.0 client ID.
-    client_secret:
-        OAuth 2.0 client secret.
-    scopes:
-        List of OAuth scopes to request.
-    credentials_path:
-        Where to persist the resulting tokens.
-    redirect_uri:
-        Local callback URI.  Defaults to ``http://localhost:8789/callback``.
-
-    Returns
-    -------
-    dict
-        Token response from Google (``access_token``, ``refresh_token``, etc.).
-
-    Raises
-    ------
-    RuntimeError
-        If the user denies authorization or the callback times out.
-    """
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-    from urllib.parse import parse_qs, urlparse
-
+    validate_callback_uri(redirect_uri)
+    parsed = urlparse(redirect_uri)
+    if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1"}:
+        raise ValueError("Native OAuth requires an HTTP loopback callback")
+    verifier, challenge = pkce_pair()
+    state = secrets.token_urlsafe(32)
     auth_url = build_google_auth_url(
-        client_id=client_id,
-        redirect_uri=redirect_uri,
-        scopes=scopes,
+        client_id, redirect_uri, scopes, state=state, code_challenge=challenge
     )
-
-    # Mutable containers used by the callback handler closure.
-    auth_code: List[str] = []
-    error: List[str] = []
-
-    class _CallbackHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802 — required override name
-            parsed = urlparse(self.path)
-            params = parse_qs(parsed.query)
-
-            if "code" in params:
-                auth_code.append(params["code"][0])
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    b"<html><body><h2>Authorization successful!</h2>"
-                    b"<p>You can close this tab and return to OpenJarvis.</p>"
-                    b"</body></html>"
-                )
-            elif "error" in params:
-                error.append(params["error"][0])
-                self.send_response(400)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    b"<html><body><h2>Authorization failed</h2>"
-                    b"<p>Please try again.</p></body></html>"
-                )
-            else:
-                self.send_response(400)
-                self.end_headers()
-
-        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-            pass  # Suppress HTTP request logs
-
-    # Parse port from redirect_uri
-    port = int(urlparse(redirect_uri).port or 8789)
-
-    # Kill any stale listener on the port before starting
-    import socket
-
-    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    try:
-        test_sock.bind(("127.0.0.1", port))
-        test_sock.close()
-    except OSError:
-        # Port in use — try to free it
-        test_sock.close()
-        import subprocess
-
-        subprocess.run(
-            ["lsof", "-t", "-i", f":{port}"],
-            capture_output=True,
-        )
-        # Wait briefly and retry
-        import time
-
-        time.sleep(1)
-
-    server = HTTPServer(("127.0.0.1", port), _CallbackHandler)
-    server.timeout = 120  # 2 minute timeout
-
-    # Open the consent page in the user's default browser
-    open_browser(auth_url)
-
-    # Wait for the callback (blocking, with per-request timeout)
-    while not auth_code and not error:
-        server.handle_request()
-
-    server.server_close()
-
-    if error:
-        raise RuntimeError(f"OAuth authorization failed: {error[0]}")
-    if not auth_code:
-        raise RuntimeError("OAuth authorization timed out")
-
-    # Exchange the authorization code for tokens
-    tokens = exchange_google_token(
-        code=auth_code[0],
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=redirect_uri,
+    code = _wait_for_callback_code(
+        host=parsed.hostname,
+        port=parsed.port or 8789,
+        path=parsed.path,
+        expected_state=state,
+        open_url=auth_url,
     )
-
-    # Persist tokens together with client credentials (needed for refresh)
-    token_payload = {
-        "access_token": tokens.get("access_token", ""),
-        "refresh_token": tokens.get("refresh_token", ""),
-        "token_type": tokens.get("token_type", "Bearer"),
-        "expires_in": tokens.get("expires_in", 3600),
-        "client_id": client_id,
-        "client_secret": client_secret,
-    }
-    save_tokens(credentials_path, token_payload)
-
-    # Also save to the shared Google credentials file so that all Google
-    # connectors can use this token without a separate OAuth flow.
-    if credentials_path != _SHARED_GOOGLE_CREDENTIALS_PATH:
-        save_tokens(_SHARED_GOOGLE_CREDENTIALS_PATH, token_payload)
-
+    tokens = _exchange_token(
+        OAUTH_PROVIDERS["google"],
+        code,
+        client_id,
+        client_secret,
+        redirect_uri,
+        code_verifier=verifier,
+    )
+    save_tokens(
+        credentials_path,
+        {
+            "access_token": require_access_token(tokens),
+            "refresh_token": tokens.get("refresh_token", ""),
+            "token_type": tokens.get("token_type", "Bearer"),
+            "expires_in": tokens.get("expires_in", 3600),
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "requested_scopes": scopes,
+        },
+    )
     return tokens
 
 
-# ---------------------------------------------------------------------------
-# Generic OAuth flow — works with any OAuthProvider
-# ---------------------------------------------------------------------------
-
-
 def _wait_for_callback_code(
+    *,
+    expected_state: str,
+    open_url: str,
     host: str = "127.0.0.1",
     port: int = 8789,
     path: str = "/callback",
     timeout: int = 120,
 ) -> str:
-    """Start a localhost HTTP server and wait for ``?code=`` on *path*.
-
-    Returns the authorization code received from the OAuth redirect.
-    """
+    """Listen before opening consent; reject invalid paths/state until deadline."""
+    import time
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from urllib.parse import parse_qs, urlparse
 
-    auth_code: List[str] = []
-    error: List[str] = []
+    if (
+        host not in {"127.0.0.1", "localhost"}
+        or not expected_state
+        or not path.startswith("/")
+    ):
+        raise ValueError("OAuth listener requires a loopback host, path and state")
+    deadline = time.monotonic() + timeout
+    code, denied = [], []
 
-    class _Handler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            params = parse_qs(urlparse(self.path).query)
-            if "code" in params:
-                auth_code.append(params["code"][0])
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html")
-                self.end_headers()
-                self.wfile.write(
-                    b"<html><body style='font-family:system-ui;text-align:center;"
-                    b"padding:60px'>"
-                    b"<h2 style='color:#22c55e'>Connected!</h2>"
-                    b"<p>You can close this tab and return to OpenJarvis.</p>"
-                    b"</body></html>"
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            parsed = urlparse(self.path)
+            try:
+                params = parse_qs(
+                    parsed.query, keep_blank_values=True, max_num_fields=20
                 )
-            elif "error" in params:
-                error.append(params.get("error", ["unknown"])[0])
+            except ValueError:
+                params = {}
+            valid = (
+                len(self.path) <= 8192
+                and parsed.path == path
+                and len(params.get("state", [])) == 1
+                and secrets.compare_digest(
+                    params["state"][0].encode(), expected_state.encode()
+                )
+                and (
+                    (len(params.get("code", [])) == 1 and not params.get("error"))
+                    or (len(params.get("error", [])) == 1 and not params.get("code"))
+                )
+            )
+            if not valid:
                 self.send_response(400)
-                self.send_header("Content-Type", "text/html")
                 self.end_headers()
-                self.wfile.write(
-                    b"<html><body style='font-family:system-ui;text-align:center;"
-                    b"padding:60px'>"
-                    b"<h2 style='color:#ef4444'>Authorization Failed</h2>"
-                    b"<p>Please close this tab and try again.</p>"
-                    b"</body></html>"
-                )
+                return
+            if params.get("error"):
+                denied.append(True)
+            elif params.get("code", [""])[0]:
+                code.append(params["code"][0])
             else:
                 self.send_response(400)
                 self.end_headers()
+                return
+            self.send_response(400 if denied else 200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header(
+                "Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'"
+            )
+            self.end_headers()
+            self.wfile.write(
+                b"<html><body>You can close this tab and return to "
+                b"OpenJarvis.</body></html>"
+            )
 
-        def log_message(self, *_args: Any) -> None:
+        def log_message(self, *_args):
             pass
 
-    # Ensure port is free
-    import socket
+    class CallbackServer(HTTPServer):
+        def get_request(self):
+            connection, address = super().get_request()
+            connection.settimeout(max(0.01, min(5, deadline - time.monotonic())))
+            return connection, address
 
-    test_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        def handle_error(self, *_args):
+            pass  # Never print a callback URL/code in request failure logs.
+
+    server = CallbackServer((host, port), Handler)
+    server.timeout = 0.5
     try:
-        test_sock.bind((host, port))
-    except OSError:
-        pass
+        open_browser(open_url)
+        while not code and not denied and time.monotonic() < deadline:
+            server.handle_request()
     finally:
-        test_sock.close()
-
-    import time
-
-    time.sleep(0.3)
-
-    server = HTTPServer((host, port), _Handler)
-    server.timeout = timeout
-
-    while not auth_code and not error:
-        server.handle_request()
-    server.server_close()
-
-    if error:
-        raise RuntimeError(f"OAuth authorization denied: {error[0]}")
-    if not auth_code:
+        server.server_close()
+    if denied:
+        raise RuntimeError("OAuth authorization denied")
+    if not code:
         raise RuntimeError("OAuth callback timed out")
-    return auth_code[0]
+    return code[0]
 
 
 def _exchange_token(
@@ -638,6 +530,8 @@ def _exchange_token(
     client_id: str,
     client_secret: str,
     redirect_uri: str,
+    *,
+    code_verifier: str = "",
 ) -> Dict[str, Any]:
     """Exchange an authorization *code* for tokens using *provider* config."""
     import httpx
@@ -649,16 +543,34 @@ def _exchange_token(
     }
     headers: Dict[str, str] = {}
 
-    if provider.token_auth == "basic":
+    if code_verifier:
+        data["code_verifier"] = code_verifier
+    if provider.name == "spotify" and code_verifier:
+        data["client_id"] = client_id
+    elif provider.token_auth == "basic":
         creds = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
         headers["Authorization"] = f"Basic {creds}"
     else:
         data["client_id"] = client_id
         data["client_secret"] = client_secret
 
-    resp = httpx.post(provider.token_endpoint, data=data, headers=headers, timeout=30.0)
-    resp.raise_for_status()
-    tokens = resp.json()
+    try:
+        resp = httpx.post(
+            provider.token_endpoint,
+            data=data,
+            headers=headers,
+            timeout=30.0,
+            follow_redirects=False,
+            trust_env=False,
+        )
+        resp.raise_for_status()
+        if len(resp.content) > 65536:
+            raise ValueError("Token response exceeds limit")
+        tokens = resp.json()
+    except Exception:
+        raise RuntimeError(
+            "OAuth token exchange failed; start authorization again"
+        ) from None
     require_access_token(tokens)
     return tokens
 
@@ -675,7 +587,7 @@ def run_connector_oauth(
     3. Build auth URL and open the user's browser
     4. Start localhost callback server and wait for the code
     5. Exchange the code for tokens
-    6. Save tokens to all relevant credential files
+    6. Save tokens only to the selected connector's credential file
 
     Returns the raw token response dict.
     """
@@ -700,26 +612,35 @@ def run_connector_oauth(
         f"{provider.callback_path}"
     )
 
+    state = secrets.token_urlsafe(32)
+    verifier, challenge = pkce_pair() if provider.pkce else ("", "")
+    scopes = connector_scopes(provider, connector_id)
     # Build auth URL
     params: Dict[str, str] = {
         "client_id": client_id,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": " ".join(provider.scopes),
+        "scope": " ".join(scopes),
         **provider.extra_auth_params,
+        "state": state,
     }
+    if challenge:
+        params.update(code_challenge=challenge, code_challenge_method="S256")
     auth_url = f"{provider.auth_endpoint}?{urlencode(params)}"
 
-    # Open browser and wait for callback
-    open_browser(auth_url)
+    # Listen before opening consent; bind callback to this request.
     code = _wait_for_callback_code(
         host=provider.callback_host,
         port=provider.callback_port,
         path=provider.callback_path,
+        expected_state=state,
+        open_url=auth_url,
     )
 
     # Exchange code for tokens
-    tokens = _exchange_token(provider, code, client_id, client_secret, redirect_uri)
+    tokens = _exchange_token(
+        provider, code, client_id, client_secret, redirect_uri, code_verifier=verifier
+    )
     access_token = require_access_token(tokens)
 
     # Build payload with client credentials included (needed for refresh)
@@ -732,8 +653,10 @@ def run_connector_oauth(
         "client_secret": client_secret,
     }
 
-    # Save to all credential files for this provider
-    for filename in provider.credential_files:
-        save_tokens(str(_CONNECTORS_DIR / filename), payload)
+    payload["requested_scopes"] = scopes
+    save_tokens(
+        str(_CONNECTORS_DIR / connector_credential_file(provider, connector_id)),
+        payload,
+    )
 
     return tokens

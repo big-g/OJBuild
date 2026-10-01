@@ -8,8 +8,7 @@ import {
   Loader2,
 } from 'lucide-react';
 import { SOURCE_CATALOG } from '../../types/connectors';
-import { connectSource, getConnector } from '../../lib/connectors-api';
-import { getBase } from '../../lib/api';
+import { connectSource, startServerOAuth } from '../../lib/connectors-api';
 import type { ConnectRequest, ConnectorMeta } from '../../types/connectors';
 
 // ---------------------------------------------------------------------------
@@ -153,35 +152,17 @@ function OAuthPanel({
 }) {
   const [waiting, setWaiting] = useState(false);
 
-  const startOAuth = () => {
-    // Open the server's OAuth start endpoint which redirects to the provider
-    const oauthUrl = `${getBase()}/v1/connectors/${encodeURIComponent(connectorId)}/oauth/start`;
-    window.open(oauthUrl, '_blank', 'width=600,height=700');
-    setWaiting(true);
-
-    // Poll for connection status
-    const interval = setInterval(async () => {
-      try {
-        const info = await getConnector(connectorId);
-        if (info.connected) {
-          clearInterval(interval);
-          setWaiting(false);
-          onConnect({});
-        }
-      } catch {
-        // ignore polling errors
-      }
-    }, 2000);
-
-    // Stop polling after 3 minutes
-    setTimeout(() => {
-      clearInterval(interval);
-      setWaiting(false);
-    }, 180000);
+  const [oauthError, setOAuthError] = useState('');
+  const startOAuth = async () => {
+    setWaiting(true); setOAuthError('');
+    try { await startServerOAuth(connectorId); onConnect({}); }
+    catch (error) { setOAuthError(error instanceof Error ? error.message : 'Authorization failed.'); }
+    finally { setWaiting(false); }
   };
 
   return (
     <div className="flex flex-col gap-4">
+      {oauthError && <p role="alert">{oauthError}</p>}
       <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
         {waiting
           ? `Waiting for ${displayName} authorization... Complete it in the browser window.`

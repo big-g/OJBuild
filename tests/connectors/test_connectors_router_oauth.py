@@ -14,7 +14,7 @@ Sources, and assert the fixed behaviour:
       ``Request`` import).
 (C-2) ``GET /oauth/callback`` must read ``request.base_url`` and exchange the
       code for tokens without crashing (regression: ``request`` defaulted to
-      ``None`` → ``AttributeError``), persisting the access token to every
+      ``None`` → ``AttributeError``), persisting the access token only to the selected
       Google credential file and flipping ``is_connected()`` to True.
 
 All tests are hermetic: the connectors directory, the shared Google
@@ -123,13 +123,45 @@ def hermetic_connectors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path
 
 
 @pytest.fixture()
-def client(hermetic_connectors: Path) -> Iterator[TestClient]:
+def client(
+    hermetic_connectors: Path, monkeypatch: pytest.MonkeyPatch
+) -> Iterator[TestClient]:
+    import httpx
+    import requests
+
     from openjarvis.server.connectors_router import create_connectors_router
 
+    original_send = httpx.Client.send
+
+    def no_network(client, *args, **kwargs):
+        if isinstance(client, TestClient):
+            return original_send(client, *args, **kwargs)
+        raise RuntimeError("Live HTTP is forbidden in this isolated test")
+
+    monkeypatch.setattr(httpx.Client, "send", no_network)
+    monkeypatch.setattr(requests.Session, "send", no_network)
+
+    from openjarvis.server.auth_middleware import AuthMiddleware
+
     app = FastAPI()
+    app.add_middleware(AuthMiddleware, api_key="test-key")
     app.include_router(create_connectors_router())
-    with TestClient(app) as c:
+    with TestClient(
+        app, base_url="https://testserver", headers={"Authorization": "Bearer test-key"}
+    ) as c:
         yield c
+
+
+def _start_state(client, connector_id="gdrive"):
+    from urllib.parse import parse_qs, urlparse
+
+    pair = _CLIENT_PAIR if connector_id not in {"spotify", "strava"} else "id:secret"
+    client.post(f"/v1/connectors/{connector_id}/connect", json={"code": pair})
+    start = client.get(
+        f"/v1/connectors/{connector_id}/oauth/start", follow_redirects=False
+    )
+    assert start.status_code == 307
+    return parse_qs(urlparse(start.headers["location"]).query)["state"][0]
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +194,7 @@ def test_connect_client_pair_returns_oauth_required_no_browser(
     mock_browser.assert_not_called()
 
     # Client credentials persisted to EVERY Google credential file so a single
-    # consent covers all Google connectors.
+    # client registration is available to all Google connectors; consent is separate.
     for filename in _ALL_GOOGLE_FILES:
         path = hermetic_connectors / filename
         assert path.exists(), f"{filename} not written"
@@ -301,17 +333,24 @@ def test_oauth_callback_exchanges_and_connects(
         "expires_in": 3600,
     }
     with patch.object(oauth_mod, "_exchange_token", return_value=fake_tokens) as ex:
-        resp = client.get("/v1/connectors/gdrive/oauth/callback?code=authcode123")
+        resp = client.get(
+            "/v1/connectors/gdrive/oauth/callback",
+            params={"code": "authcode123", "state": _start_state(client)},
+            headers={"Authorization": ""},
+        )
 
     assert resp.status_code == 200, resp.text
     assert "Connected!" in resp.text
     ex.assert_called_once()
 
-    # Access token written to ALL Google credential files.
+    # Service consent must not silently connect unrelated Google products.
     for filename in _ALL_GOOGLE_FILES:
         saved = json.loads((hermetic_connectors / filename).read_text())
-        assert saved["access_token"] == "ya29.REAL"
-        assert saved["refresh_token"] == "1//REAL"
+        if filename == "gdrive.json":
+            assert saved["access_token"] == "ya29.REAL"
+            assert saved["refresh_token"] == "1//REAL"
+        else:
+            assert "access_token" not in saved
 
     # The connector now reports connected, and GET /connectors agrees.
     from openjarvis.connectors.gdrive import GDriveConnector
@@ -324,9 +363,13 @@ def test_oauth_callback_exchanges_and_connects(
 
 
 def test_oauth_callback_error_param_renders_failure(client: TestClient) -> None:
-    resp = client.get("/v1/connectors/gdrive/oauth/callback?error=access_denied")
+    resp = client.get(
+        "/v1/connectors/gdrive/oauth/callback",
+        params={"error": "access_denied", "state": _start_state(client)},
+    )
     assert resp.status_code == 400
-    assert "access_denied" in resp.text
+    assert "Authorization Failed" in resp.text
+    assert "access_denied" not in resp.text
 
 
 def test_oauth_callback_exchange_failure_renders_error(
@@ -340,7 +383,10 @@ def test_oauth_callback_exchange_failure_renders_error(
         raise RuntimeError("token endpoint 400")
 
     with patch.object(oauth_mod, "_exchange_token", side_effect=_boom):
-        resp = client.get("/v1/connectors/gdrive/oauth/callback?code=bad")
+        resp = client.get(
+            "/v1/connectors/gdrive/oauth/callback",
+            params={"code": "bad", "state": _start_state(client)},
+        )
 
     assert resp.status_code == 500
     assert "Token Exchange Failed" in resp.text
@@ -359,7 +405,10 @@ def test_oauth_callback_rejects_missing_access_token_without_false_success(
         "_exchange_token",
         return_value={"refresh_token": "refresh-only"},
     ):
-        resp = client.get("/v1/connectors/spotify/oauth/callback?code=bad-payload")
+        resp = client.get(
+            "/v1/connectors/spotify/oauth/callback",
+            params={"code": "bad-payload", "state": _start_state(client, "spotify")},
+        )
 
     assert resp.status_code == 500
     assert "Token Exchange Failed" in resp.text
@@ -370,3 +419,133 @@ def test_oauth_callback_rejects_missing_access_token_without_false_success(
     from openjarvis.connectors.spotify import SpotifyConnector
 
     assert SpotifyConnector().is_connected() is False
+
+
+def test_browser_handoff_requires_authentication_then_sets_cookie(client):
+    from urllib.parse import parse_qs, urlparse
+
+    client.post("/v1/connectors/gdrive/connect", json={"code": _CLIENT_PAIR})
+    base = "/v1/connectors/gdrive/oauth"
+    assert (
+        client.post(base + "/start", headers={"Authorization": ""}).status_code == 401
+    )
+    start = client.post(base + "/start")
+    assert start.status_code == 200
+    attempt = start.json()
+    assert _CLIENT_PAIR not in str(attempt) and "code_verifier" not in str(attempt)
+    launch = client.get(
+        attempt["launch_path"], headers={"Authorization": ""}, follow_redirects=False
+    )
+    assert launch.status_code == 307
+    query = parse_qs(urlparse(launch.headers["location"]).query)
+    assert query["scope"] == ["https://www.googleapis.com/auth/drive.readonly"]
+    assert query["code_challenge_method"] == ["S256"] and query["state"][0]
+    cookie = launch.headers["set-cookie"]
+    assert "HttpOnly" in cookie and "Secure" in cookie and "SameSite=lax" in cookie
+    assert launch.headers["referrer-policy"] == "no-referrer"
+    assert client.get(attempt["launch_path"], follow_redirects=False).status_code == 400
+    assert (
+        client.get(
+            base + "/status",
+            params={"attempt_id": attempt["attempt_id"]},
+            headers={"Authorization": ""},
+        ).status_code
+        == 401
+    )
+    assert client.get(
+        base + "/status", params={"attempt_id": attempt["attempt_id"]}
+    ).json() == {"status": "issued"}
+
+
+def test_callbacks_require_browser_binding_and_cannot_replay(client):
+    import openjarvis.connectors.oauth as oauth_mod
+
+    state = _start_state(client)
+    url = "/v1/connectors/gdrive/oauth/callback"
+    with patch.object(
+        oauth_mod, "_exchange_token", return_value={"access_token": "test-access"}
+    ) as exchange:
+        assert (
+            client.get(
+                url, params={"code": "injected"}, headers={"Authorization": ""}
+            ).status_code
+            == 400
+        )
+        cookies = list(client.cookies.jar)
+        client.cookies.clear()
+        assert (
+            client.get(url, params={"code": "injected", "state": state}).status_code
+            == 400
+        )
+        assert exchange.call_count == 0
+        for cookie in cookies:
+            client.cookies.jar.set_cookie(cookie)
+        assert (
+            client.get(
+                url,
+                params={"code": "valid", "state": state},
+                headers={"Authorization": ""},
+            ).status_code
+            == 200
+        )
+        assert (
+            client.get(url, params={"code": "replayed", "state": state}).status_code
+            == 400
+        )
+        assert exchange.call_count == 1
+        assert exchange.call_args.kwargs["code_verifier"]
+
+
+def test_callback_rejects_duplicate_state_and_unexpected_permissions(client):
+    import openjarvis.connectors.oauth as oauth_mod
+
+    state = _start_state(client)
+    url = "/v1/connectors/gdrive/oauth/callback"
+    with patch.object(
+        oauth_mod,
+        "_exchange_token",
+        return_value={
+            "access_token": "test-access",
+            "scope": "https://www.googleapis.com/auth/gmail.modify",
+        },
+    ) as exchange:
+        assert (
+            client.get(
+                url, params=[("state", state), ("state", state), ("code", "code")]
+            ).status_code
+            == 400
+        )
+        exchange.assert_not_called()
+        response = client.get(url, params={"state": state, "code": "code"})
+        assert response.status_code == 500 and "gmail.modify" not in response.text
+        assert "test-access" not in response.text
+
+
+def test_exchange_and_denial_errors_never_reflect_html_or_secrets(client):
+    import openjarvis.connectors.oauth as oauth_mod
+
+    state = _start_state(client)
+    error = "<script>reflected-sensitive-value</script>"
+    response = client.get(
+        "/v1/connectors/gdrive/oauth/callback", params={"state": state, "error": error}
+    )
+    assert response.status_code == 400 and error not in response.text
+    assert "reflected-sensitive" not in response.text
+    state = _start_state(client)
+    with patch.object(oauth_mod, "_exchange_token", side_effect=RuntimeError(error)):
+        response = client.get(
+            "/v1/connectors/gdrive/oauth/callback",
+            params={"state": state, "code": "code"},
+        )
+    assert response.status_code == 500 and "reflected-sensitive" not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "default-src 'none'" in response.headers["content-security-policy"]
+
+
+def test_disconnect_invalidates_pending_oauth_attempt(client):
+    state = _start_state(client)
+    assert client.post("/v1/connectors/gdrive/disconnect").status_code == 200
+    response = client.get(
+        "/v1/connectors/gdrive/oauth/callback", params={"state": state, "code": "code"}
+    )
+    assert response.status_code == 400

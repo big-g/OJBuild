@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import logging
 import os
+import re
 import secrets
 
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -17,6 +18,7 @@ _WS_AUTH_PROTOCOL = "openjarvis.auth.v1"
 _WS_KEY_PROTOCOL_PREFIX = "openjarvis.key.b64url."
 _WS_SESSION_PROTOCOL = "openjarvis.session.v1"
 _WS_SESSION_PROTOCOL_PREFIX = "openjarvis.session.b64url."
+
 
 def _api_keys_match(presented: str, expected: str) -> bool:
     """Compare API keys as bytes so non-ASCII values do not raise ``TypeError``."""
@@ -49,9 +51,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if self._api_key and self._requires_auth(request.url.path):
             # Human session authentication is an alternative to the
             # master server API key for normal authenticated API routes.
-            session_token = request.headers.get(
-                "X-OpenJarvis-Session", ""
-            ).strip()
+            session_token = request.headers.get("X-OpenJarvis-Session", "").strip()
 
             if session_token:
                 from openjarvis.server.auth_store import AuthStore
@@ -77,16 +77,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
             scheme, _, token = auth.partition(" ")
 
-            if (
-                scheme.lower() != "bearer"
-                or not _api_keys_match(token, self._api_key)
-            ):
+            if scheme.lower() != "bearer" or not _api_keys_match(token, self._api_key):
                 return JSONResponse(
                     {"detail": "Invalid API key"},
                     status_code=401,
                 )
 
-        return await call_next(request)    
+        return await call_next(request)
+
     @staticmethod
     def _is_cors_preflight(request: Request) -> bool:
         return (
@@ -101,9 +99,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         ``/v1/auth/login`` must be reachable without the master API key so
         normal users can exchange their username/password for a session token.
-        Other ``/v1`` routes remain protected by the server API key.
+        OAuth launch/callback routes validate single-use, browser-bound attempts.
+        Other ``/v1`` routes remain protected by API-key/session authentication.
         """
         if path in {"/v1/auth/login", "/v1/auth/logout", "/v1/auth/me"}:
+            return False
+        # These two endpoints authenticate with single-use OAuth attempts,
+        # not API headers (provider redirects cannot send those headers).
+        if re.fullmatch(r"/v1/connectors/[A-Za-z0-9_-]+/oauth/(launch|callback)", path):
             return False
 
         return (
@@ -112,6 +115,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             or path == "/metrics"
             or path.startswith("/metrics/")
         )
+
 
 def generate_api_key() -> str:
     """Generate a new API key with ``oj_sk_`` prefix."""
@@ -178,11 +182,7 @@ def _offered_websocket_auth(
     selected_protocols = [
         protocol for protocol in offered if protocol in stable_protocols
     ]
-    credentials = [
-        protocol
-        for protocol in offered
-        if protocol not in stable_protocols
-    ]
+    credentials = [protocol for protocol in offered if protocol not in stable_protocols]
 
     if len(selected_protocols) != 1 or len(credentials) != 1:
         return "", "", None
@@ -206,6 +206,7 @@ def _offered_websocket_auth(
 
     return "", "", None
 
+
 def authenticate_websocket(
     websocket,  # noqa: ANN001
     expected_key: str,
@@ -225,8 +226,8 @@ def authenticate_websocket(
         ``user_id`` is populated only when the connection is authenticated
         using a human session. Master API-key authentication returns ``None``.
     """
-    credential_type, credential_protocol, selected_protocol = (
-        _offered_websocket_auth(websocket)
+    credential_type, credential_protocol, selected_protocol = _offered_websocket_auth(
+        websocket
     )
 
     # Programmatic human-session authentication.
@@ -256,13 +257,13 @@ def authenticate_websocket(
     if credential_type == "session":
         expected_prefix = _WS_SESSION_PROTOCOL_PREFIX
         if credential_protocol.startswith(expected_prefix):
-            encoded = credential_protocol[len(expected_prefix):]
+            encoded = credential_protocol[len(expected_prefix) :]
 
             try:
                 padding = "=" * (-len(encoded) % 4)
-                session_token = base64.urlsafe_b64decode(
-                    encoded + padding
-                ).decode("utf-8")
+                session_token = base64.urlsafe_b64decode(encoded + padding).decode(
+                    "utf-8"
+                )
             except (ValueError, UnicodeDecodeError):
                 session_token = ""
 
@@ -305,6 +306,7 @@ def authenticate_websocket(
         return True, selected_protocol, None
 
     return False, selected_protocol, None
+
 
 def websocket_authorized(websocket, expected_key: str) -> bool:  # noqa: ANN001
     """Return ``True`` if a WebSocket connection is authenticated.

@@ -340,7 +340,9 @@ reserved headers are rejected. Save it, then select the credential in the Web Pa
 or JSON API source form. **Test connection** uses that credential without indexing.
 The source URL must match its origin; authenticated redirects must remain on the
 same HTTPS origin. DNS pinning, private-address rejection and fetch limits still
-apply. OAuth flows, cookies and Basic auth are not yet implemented.
+apply. These named Web Page/JSON API adapters use bearer/API-key references;
+they do not automatically refresh OAuth credentials or send cookies/Basic auth.
+Account-specific OAuth controls are described below.
 
 Credentials are encrypted with Fernet in `source_credentials.db`, alongside the
 source database. Only metadata and reference IDs are returned by the APIs. Secrets
@@ -438,3 +440,69 @@ changing the sync contract therefore bootstraps again. **Test connection** valid
 the complete configured scan without saving its token or applying deletions.
 Tool-driven reads do not commit tokens or modify the index; they make an initial
 read and remain bounded by the same configuration and capability requirements.
+
+### Account-specific OAuth connection security
+
+OAuth here grants access to an external service; it is separate from your Jarvis
+login and requires neither Active Directory nor centralized authentication.
+Existing Google, Spotify and Strava account controls start authorization through
+an authenticated `POST /v1/connectors/{id}/oauth/start`. The response contains an
+opaque attempt ID and a launch path. The frontend opens a blank popup during the
+user's click, then navigates it to that handoff. Jarvis API keys and session tokens
+are sent only through authenticated API headers, never in the popup URL.
+
+The one-use launch ticket expires after one minute. Launch sets an HttpOnly,
+SameSite=Lax cookie in the actual external browser, then redirects to the provider.
+The callback must match that browser, connector, provider, state and exact server
+callback URI. State is consumed atomically before token exchange, so replay and
+parallel callbacks cannot exchange twice. The callback itself needs no Jarvis API
+header: the valid, browser-bound attempt authorizes it. A callback without that
+attempt is rejected even if the caller sends a Jarvis API key. Disconnecting the
+connector cancels pending attempts.
+
+Launch/callback attempts are persisted in `oauth_attempts.db` with 0600 permissions;
+sensitive payloads, including the PKCE verifier, are encrypted using the server's
+`source_credentials.key`. Raw handoff tickets, callback state and browser secrets
+are not stored. Unused handoffs expire after one minute; issued callbacks expire
+after ten minutes. At most 100 active attempts are accepted, expired rows are
+pruned on the next start, and recent terminal status rows are bounded. A restart
+can preserve an unused or issued attempt when the database and key are intact.
+A process interruption during an already consumed exchange requires a new attempt.
+The frontend polls the authenticated status of its own attempt, rather than
+mistaking an already-connected account for successful new consent.
+
+Google and Spotify use S256 PKCE to bind authorization codes to a server-held
+verifier. Spotify's PKCE exchange uses its public-client request format; Google
+also sends its registered client credentials. Strava uses its documented client
+secret flow with browser/state binding; no unsupported PKCE behavior is assumed.
+Token exchanges and Google refresh calls reject redirects and disable environment
+proxy inheritance. Response/token validation failures do not overwrite the
+previous valid credentials. Token endpoint bodies, exceptions and provider denial
+text are excluded from callback pages and refresh errors. Callback pages send
+no-store, no-referrer and restrictive content-security headers.
+
+A Google connection requests only the selected service's read-only scope:
+Drive, Calendar, Contacts, Gmail or Tasks. Its resulting tokens are saved only to
+that connector's file; consent does not silently connect the other Google products.
+Client application registration can still be shared across those products.
+Previously granted permissions are not remotely revoked by this update. New
+read-only consent does not authorize email modification or calendar writes; any
+future write integration needs an explicit additional consent design, as well as
+Jarvis's existing tool capability/approval checks. Successful consent grants no
+Jarvis tool capabilities. Named source instances and encrypted storage for these
+legacy account tokens remain the next migration step.
+
+Register the exact `/v1/connectors/{id}/oauth/callback` URI with the provider. Server
+callbacks require HTTPS, except for HTTP loopback addresses. An HTTP LAN hostname
+or address is rejected. For Google server callbacks use a Web application OAuth
+client; native loopback flows use a Desktop app client. Native callback listeners
+bind before opening consent, validate state and exact path, suppress callback
+request logs, and have a total two-minute deadline plus bounded socket reads.
+
+OpenJarvis's standard Uvicorn access logger redacts OAuth launch/callback query
+strings. Reverse proxies and other logging systems must likewise omit those
+queries, since handoff tickets and authorization codes are short-lived secrets.
+Legacy connector token/client-secret files still use owner-only JSON storage;
+this batch does not convert them to the encrypted source credential vault or
+claim to revoke old backups. OAuth is optional: local folders, public sources and
+manually configured bearer/API-key source connections continue independently.

@@ -154,14 +154,16 @@ describe('connectors-api sends the Bearer auth header', () => {
     expect(authHeaderSent()).toBe('Bearer sk-local-123');
   });
 
-  it('OAuth polling waits for a real connected state before resolving', async () => {
+  it('OAuth starts with authenticated POST and polls the specific attempt before resolving', async () => {
     vi.useFakeTimers();
-    const open = vi.fn();
+    const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+    const open = vi.fn(() => popup);
     vi.stubGlobal('window', { open });
     try {
       fetchMock
-        .mockResolvedValueOnce(okJson({ connected: false }))
-        .mockResolvedValueOnce(okJson({ connected: true }));
+        .mockResolvedValueOnce(okJson({ launch_path: '/v1/connectors/spotify/oauth/launch?ticket=' + 'a'.repeat(43), attempt_id: '00000000-0000-4000-8000-000000000001' }))
+        .mockResolvedValueOnce(okJson({ status: 'issued' }))
+        .mockResolvedValueOnce(okJson({ status: 'completed' }));
       const { startServerOAuth } = await freshConnectorsApi();
 
       let resolved = false;
@@ -174,11 +176,55 @@ describe('connectors-api sends the Bearer auth header', () => {
       await flow;
 
       expect(resolved).toBe(true);
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(fetchMock.mock.calls[0][1]?.method).toBe('POST');
+      expect(authHeaderSent()).toBe('Bearer sk-local-123');
+      expect(fetchMock.mock.calls[1][0]).toContain('/oauth/status?attempt_id=');
+      expect(popup.opener).toBeNull();
+      expect(popup.location.href).toContain('/oauth/launch?ticket=');
+      expect(popup.location.href).not.toContain('sk-local-123');
+      expect(popup.close).toHaveBeenCalledOnce();
       expect(open).toHaveBeenCalledOnce();
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();
     }
   });
+});
+
+it('OAuth rejects popup blocking without making a start request', async () => {
+  vi.stubGlobal('window', { open: vi.fn(() => null) });
+  try {
+    const { startServerOAuth } = await freshConnectorsApi();
+    await expect(startServerOAuth('spotify')).rejects.toThrow('Allow popups');
+    expect(fetchMock).not.toHaveBeenCalled();
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('OAuth never navigates a popup to an arbitrary handoff URL', async () => {
+  const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+  vi.stubGlobal('window', { open: vi.fn(() => popup) });
+  fetchMock.mockResolvedValue(okJson({ launch_path: 'https://evil.example.test', attempt_id: 'id' }));
+  try {
+    const { startServerOAuth } = await freshConnectorsApi();
+    await expect(startServerOAuth('spotify')).rejects.toThrow('Invalid authorization handoff');
+    expect(popup.location.href).toBe('');
+    expect(popup.close).toHaveBeenCalledOnce();
+  } finally { vi.unstubAllGlobals(); }
+});
+
+it('OAuth stops polling on failed authorization and surfaces a fixed error', async () => {
+  vi.useFakeTimers();
+  const popup = { opener: {}, location: { href: '' }, close: vi.fn() };
+  vi.stubGlobal('window', { open: vi.fn(() => popup) });
+  fetchMock.mockResolvedValueOnce(okJson({ launch_path: '/v1/connectors/spotify/oauth/launch?ticket=' + 'a'.repeat(43), attempt_id: '00000000-0000-4000-8000-000000000001' })).mockResolvedValueOnce(okJson({ status: 'failed' }));
+  try {
+    const { startServerOAuth } = await freshConnectorsApi();
+    const failure = startServerOAuth('spotify').catch(error => error);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect((await failure).message).toContain('Authorization failed');
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(popup.close).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); vi.unstubAllGlobals(); }
 });

@@ -19,7 +19,7 @@ from typing import Any, Callable, Dict
 
 import httpx
 
-from openjarvis.connectors.oauth import load_tokens, save_tokens
+from openjarvis.connectors.oauth import load_tokens, require_access_token, save_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -59,26 +59,32 @@ def refresh_access_token(credentials_path: str) -> str:
             "client_secret; re-run the connector OAuth flow to mint a full token."
         )
 
-    resp = httpx.post(
-        _GOOGLE_TOKEN_ENDPOINT,
-        data={
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        },
-        timeout=30.0,
-    )
+    try:
+        resp = httpx.post(
+            _GOOGLE_TOKEN_ENDPOINT,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=30.0,
+            follow_redirects=False,
+            trust_env=False,
+        )
+    except httpx.HTTPError:
+        raise GoogleAuthError("Google token refresh failed; authorize again") from None
     if resp.status_code != 200:
+        raise GoogleAuthError("Google token refresh failed; authorize again")
+    try:
+        if len(resp.content) > 65536:
+            raise ValueError
+        payload = resp.json()
+        new_token = require_access_token(payload)
+    except (ValueError, RuntimeError):
         raise GoogleAuthError(
-            f"Google token refresh failed ({resp.status_code}): {resp.text[:200]}"
-        )
-    payload = resp.json()
-    new_token = payload.get("access_token", "")
-    if not new_token:
-        raise GoogleAuthError(
-            "Google token refresh returned 200 but no access_token in payload."
-        )
+            "Google token refresh returned an invalid access_token payload"
+        ) from None
 
     tokens["access_token"] = new_token
     # Keep the legacy "token" key in sync for older code paths that read it.
@@ -86,9 +92,7 @@ def refresh_access_token(credentials_path: str) -> str:
     if "expires_in" in payload:
         tokens["expires_in"] = payload["expires_in"]
     save_tokens(credentials_path, tokens)
-    logger.info(
-        "Refreshed Google access token (expires_in=%s)", payload.get("expires_in")
-    )
+    logger.info("Refreshed Google access token")
     return new_token
 
 
