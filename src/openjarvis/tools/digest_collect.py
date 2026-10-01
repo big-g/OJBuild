@@ -468,7 +468,7 @@ class DigestCollectTool(BaseTool):
             },
             category="data",
             timeout_seconds=60.0,
-            required_capabilities=["connector:*:read"],
+            required_capabilities=["connector:*:read", "file:read"],
         )
 
     def resolve_required_capabilities(

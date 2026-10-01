@@ -96,14 +96,14 @@ function FilesystemPanel({
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm" style={{ color: 'var(--color-text-secondary)' }}>
-        Enter the path to your local {displayName} folder.
+        Enter the path to your {displayName} folder on the OpenJarvis server.
       </p>
       <div className="flex gap-2">
         <input
           type="text"
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder="/Users/you/Documents/..."
+          placeholder="/home/you/Documents/..."
           className="flex-1 px-3 py-2 rounded-lg text-sm outline-none"
           style={{
             background: 'var(--color-surface)',

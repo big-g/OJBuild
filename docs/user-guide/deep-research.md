@@ -163,3 +163,22 @@ Smaller chunk sizes work better for code, where each function or class is a natu
 **Web search not working** -- The `web_search` tool requires the Tavily API. Install with `uv sync --extra tools-search` and set `TAVILY_API_KEY`.
 
 **Wrong chunks retrieved** -- Try re-indexing with different chunk sizes. For technical documents, smaller chunks (`256`) often retrieve more precisely. For narrative text, larger chunks (`1024`) preserve more context.
+
+## General local-document sources
+
+Select **Local Files** in Data Sources and enter a folder path on the OpenJarvis
+server, such as `/mnt/ai/documents`. This indexes ordinary UTF-8 text, Markdown,
+CSV, TSV, JSON, HTML, and PDFs with extractable text. PDF support requires the
+`memory-pdf` extra; scanned PDFs require OCR and are not supported by this source.
+
+Configuration survives a server restart. Sync refreshes changed documents and
+retains file/version provenance for citations and conflict checks. Hidden files,
+hidden directories, and symlinks are excluded. Each file is limited to 8 MiB,
+PDFs to 200 pages, and each scan to 2,000 supported files; exceeding these limits
+reports an error rather than silently truncating data. Disconnect before changing
+folders so the old source's index and sync checkpoint are cleared.
+
+Deleting a file does not yet automatically remove its existing indexed content.
+Disconnect/reconnect the source to clear and rebuild it after deleting files.
+Connector reads by tools require both `connector:local_files:read` and `file:read`;
+connecting a folder does not itself grant these tool permissions.

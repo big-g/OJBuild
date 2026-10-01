@@ -534,8 +534,12 @@ def test_connect_granola_invalid_key_returns_400_keeps_existing(
 ) -> None:
     """A bad Granola key is rejected 400 and the existing credential survives."""
     import json
-    from unittest.mock import patch
+    from unittest.mock import Mock, patch
 
+    from openjarvis.server.connectors_router import _ensure_connectors_registered
+
+    # Populate the registry before mocking: lazy registration reloads modules.
+    _ensure_connectors_registered()
     from openjarvis.connectors.granola import GranolaConnector, GranolaKeyError
     from openjarvis.server.connectors_router import _instances
 
@@ -543,11 +547,14 @@ def test_connect_granola_invalid_key_returns_400_keeps_existing(
     creds.write_text(json.dumps({"token": "grl_real_existing_key"}))
     _instances["granola"] = GranolaConnector(credentials_path=str(creds))
     try:
-        with patch(
-            "openjarvis.connectors.granola._granola_api_validate_key",
-            side_effect=GranolaKeyError(
+        # Registry restoration can reload connector modules in a combined
+        # suite. Patch the callback's actual globals so this test never falls
+        # through to a live credential-verification request.
+        with patch.dict(
+            _instances["granola"].handle_callback.__func__.__globals__,
+            {"_granola_api_validate_key": Mock(side_effect=GranolaKeyError(
                 "Invalid API key. Check your key in Granola Settings → API."
-            ),
+            ))},
         ):
             resp = app.post(
                 "/v1/connectors/granola/connect",

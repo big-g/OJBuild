@@ -517,7 +517,12 @@ def create_connectors_router():
 
             if auth_type == "filesystem":
                 # Filesystem connectors accept a vault / directory path.
-                if req.path:
+                configure_path = getattr(instance, "configure_path", None)
+                if callable(configure_path):
+                    if not req.path:
+                        raise ValueError("A directory path on the server is required")
+                    configure_path(req.path)
+                elif req.path:
                     instance._vault_path = req.path
                     from pathlib import Path
 

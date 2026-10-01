@@ -21,6 +21,7 @@ __all__ = [
 ]
 
 # Auto-register built-in connectors
+import openjarvis.connectors.local_files  # noqa: F401
 import openjarvis.connectors.obsidian  # noqa: F401
 
 try:

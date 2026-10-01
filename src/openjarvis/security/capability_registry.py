@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Iterable
 
@@ -163,7 +163,7 @@ BUILTIN_CAPABILITIES: tuple[tuple[str, str, str, str, RiskLevel], ...] = (
         "Allows reading calendar data.",
         "calendar",
         "read",
-	RiskLevel.MEDIUM,
+        RiskLevel.MEDIUM,
     ),
     (
         "channel:read",
@@ -230,6 +230,7 @@ BUILTIN_CONNECTOR_IDS: tuple[str, ...] = (
     "granola",
     "hackernews",
     "imap",
+    "local_files",
     "imessage",
     "news_rss",
     "notion",
