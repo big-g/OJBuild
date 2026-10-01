@@ -113,3 +113,67 @@ def test_background_sync_endpoint_indexes_source(client, tmp_path):
         time.sleep(0.01)
     else:
         pytest.fail("Background source sync did not finish")
+
+
+def test_credentials_authenticated_metadata_only_and_rotation(client):
+    payload = {
+        "name": "API",
+        "kind": "bearer",
+        "origin": "https://api.example.com",
+        "secret": "protected-token-123456789",
+    }
+    assert (
+        client.post(
+            "/v1/sources/credentials", json=payload, headers={"Authorization": ""}
+        ).status_code
+        == 401
+    )
+    result = client.post("/v1/sources/credentials", json=payload)
+    assert result.status_code == 201
+    assert payload["secret"] not in result.text
+    record = result.json()
+    listing = client.get("/v1/sources/credentials")
+    assert payload["secret"] not in listing.text
+    assert "sealed" not in listing.text
+    rotation = client.put(
+        f"/v1/sources/credentials/{record['id']}",
+        json={"revision": 1, "secret": "replacement-protected-token"},
+    )
+    assert rotation.status_code == 200
+    assert "replacement-protected-token" not in rotation.text
+    assert (
+        client.put(
+            f"/v1/sources/credentials/{record['id']}",
+            json={"revision": 1, "secret": "stale-token"},
+        ).status_code
+        == 409
+    )
+    assert (
+        client.delete(f"/v1/sources/credentials/{record['id']}?revision=2").status_code
+        == 204
+    )
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "",
+        "secret\nwith-newline",
+        ["protected-validation-marker"],
+        {"token": "protected-validation-marker"},
+    ],
+)
+def test_credential_validation_never_echoes_secret(client, secret):
+    response = client.post(
+        "/v1/sources/credentials",
+        json={
+            "name": "Test",
+            "kind": "bearer",
+            "origin": "https://api.example.com",
+            "secret": secret,
+        },
+    )
+    assert response.status_code in (400, 422)
+    assert "protected-validation-marker" not in response.text
+    assert "secret\\nwith-newline" not in response.text
+    assert client.get("/v1/sources/credentials").json()["credentials"] == []

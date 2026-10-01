@@ -1,7 +1,7 @@
 """Public HTTP targets and pinned connections shared by source adapters.
 
 DNS validation is followed by IP pinning while retaining HTTP Host and TLS SNI.
-Redirects never carry cookies, credentials or custom headers.
+Authenticated redirects carry only the bound header on the same HTTPS origin.
 """
 
 from __future__ import annotations
@@ -207,7 +207,13 @@ def _remaining(deadline: float) -> float:
 
 
 def _request_source(
-    url: str, target: PublicTarget, *, max_bytes: int, deadline: float, accept: str
+    url: str,
+    target: PublicTarget,
+    *,
+    max_bytes: int,
+    deadline: float,
+    accept: str,
+    credential_headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Read a bounded, uncompressed response from verified public addresses."""
     last_error = None
@@ -231,6 +237,7 @@ def _request_source(
                     "Accept-Encoding": "identity",
                     "Connection": "close",
                     "User-Agent": "OpenJarvis-Sources/1.0",
+                    **(credential_headers or {}),
                 },
             )
             response = connection.getresponse()
@@ -275,16 +282,42 @@ def _request_source(
 
 
 def fetch_public_source(
-    url: str, *, accept: str, max_bytes: int = 2 * 1024 * 1024
+    url: str,
+    *,
+    accept: str,
+    max_bytes: int = 2 * 1024 * 1024,
+    authentication: dict | None = None,
 ) -> httpx.Response:
     """Validate and pin each redirect; reject partial/empty/error responses."""
     deadline = time.monotonic() + 60
     current = normalize_source_url(url)
     for _ in range(6):
         _remaining(deadline)
+        if authentication:
+            from openjarvis.connectors.source_credentials import credential_origin
+
+            secret = authentication.get("secret")
+            if secret:
+                from urllib.parse import quote, unquote
+
+                if secret in unquote(current) or quote(secret, safe="") in current:
+                    raise ValueError("Authenticated source URL reflects a credential")
+            if credential_origin(current) != authentication["origin"]:
+                raise ValueError(
+                    "Authenticated redirects must stay on the credential HTTPS origin"
+                )
         target = validate_public_url(current)
         response = _request_source(
-            current, target, max_bytes=max_bytes, deadline=deadline, accept=accept
+            current,
+            target,
+            max_bytes=max_bytes,
+            deadline=deadline,
+            accept=accept,
+            **(
+                {"credential_headers": authentication["headers"]}
+                if authentication
+                else {}
+            ),
         )
         if response.status_code in {301, 302, 303, 307, 308}:
             location = response.headers.get("location")

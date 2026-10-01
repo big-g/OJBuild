@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  createSourceInstance, listSourceAdapters, listSourceInstances,
+  createSourceInstance, listSourceAdapters, listSourceInstances, listSourceCredentials,
   removeSourceInstance, syncSourceInstance, testSourceConfiguration, updateSourceInstance,
 } from '../../lib/sources-api';
-import type { SourceAdapter, SourceConfig, SourceInstance } from '../../lib/sources-api';
+import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } from '../../lib/sources-api';
 import './SourceManagerPanel.css';
+import { CredentialManagerPanel } from './CredentialManagerPanel';
 
 export function SourceConfigurationFields({
-  adapter, config, onChange,
+  adapter, config, onChange, credentials = [],
 }: {
+  credentials?: SourceCredential[];
   adapter: SourceAdapter;
   config: SourceConfig;
   onChange: (config: SourceConfig) => void;
@@ -17,7 +19,10 @@ export function SourceConfigurationFields({
   return <>
     {adapter.fields.filter((field) => !field.visible_when || fieldValue(field.visible_when.field) === field.visible_when.equals).map((field) => <label key={field.name} className="flex flex-col gap-1">
       {field.label}
-      {field.type === 'select' ? <select
+      {field.type === 'credential' ? <select aria-label={field.label} value={String(fieldValue(field.name))} onChange={(event) => onChange({ ...config, [field.name]: event.target.value })}>
+        <option value="">No authentication</option>
+        {credentials.filter((credential) => field.credential_kinds?.includes(credential.kind)).map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.origin}</option>)}
+      </select> : field.type === 'select' ? <select
         aria-label={field.label}
         required={field.required}
         value={String(fieldValue(field.name))}
@@ -45,6 +50,7 @@ export function SourceConfigurationFields({
 }
 
 export function SourceManagerPanel() {
+  const [credentials, setCredentials] = useState<SourceCredential[]>([]);
   const [adapters, setAdapters] = useState<SourceAdapter[]>([]);
   const [sources, setSources] = useState<SourceInstance[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -60,8 +66,9 @@ export function SourceManagerPanel() {
 
   const refresh = useCallback(async () => {
     const requestGeneration = ++generation.current;
-    const [definitions, connections] = await Promise.all([listSourceAdapters(), listSourceInstances()]);
+    const [definitions, connections, protectedValues] = await Promise.all([listSourceAdapters(), listSourceInstances(), listSourceCredentials()]);
     if (requestGeneration !== generation.current) return;
+    setCredentials(protectedValues.credentials);
     setAdapters(definitions.adapters);
     setSources(connections.sources);
     setLoaded(true);
@@ -140,6 +147,7 @@ export function SourceManagerPanel() {
         }}>Remove</button>
       </div>
     </article>)}
+    <CredentialManagerPanel credentials={credentials} refresh={refresh} />
     {editing !== undefined && adapter && <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy} className="flex flex-col gap-3">
         <legend>{editing ? 'Edit source' : 'Add source'}</legend>
@@ -148,7 +156,7 @@ export function SourceManagerPanel() {
         }}>{adapters.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}</select></label>
         <p>{adapter.description}</p>
         <label>Name <input aria-label="Source name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)} /></label>
-        <SourceConfigurationFields adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); }} />
+        <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); }} />
         {editing && <p>Changing the configuration clears this connection’s indexed documents. Sync again after saving.</p>}
         <div className="flex gap-3">
           <button type="button" onClick={() => void perform(async () => {

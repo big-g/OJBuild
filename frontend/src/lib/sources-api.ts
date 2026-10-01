@@ -3,7 +3,8 @@ import { apiFetch } from './api';
 export interface SourceField {
   name: string;
   label: string;
-  type: 'text' | 'number' | 'checkbox' | 'select';
+  type: 'text' | 'number' | 'checkbox' | 'select' | 'credential';
+  credential_kinds?: string[];
   required?: boolean;
   placeholder?: string;
   default_value?: string | number | boolean;
@@ -67,3 +68,15 @@ export const removeSourceInstance = (source: SourceInstance) =>
   request<void>(`/${encodeURIComponent(source.id)}?revision=${source.revision}`, 'DELETE');
 export const syncSourceInstance = (id: string) =>
   request<{ status: string }>(`/${encodeURIComponent(id)}/sync`, 'POST');
+
+export interface SourceCredential {
+  id: string; name: string; kind: 'bearer' | 'api_key'; origin: string;
+  header_name: string; revision: number; created_at: string; updated_at: string;
+}
+export const listSourceCredentials = () => request<{ credentials: SourceCredential[] }>('/credentials');
+export const createSourceCredential = (input: { name: string; kind: string; origin: string; header_name: string; secret: string }) =>
+  request<SourceCredential>('/credentials', 'POST', input);
+export const rotateSourceCredential = (credential: SourceCredential, secret: string) =>
+  request<SourceCredential>(`/credentials/${encodeURIComponent(credential.id)}`, 'PUT', { revision: credential.revision, secret });
+export const removeSourceCredential = (credential: SourceCredential) =>
+  request<void>(`/credentials/${encodeURIComponent(credential.id)}?revision=${credential.revision}`, 'DELETE');

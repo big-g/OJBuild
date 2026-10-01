@@ -252,3 +252,104 @@ def test_fetch_pins_the_single_validated_dns_answer(monkeypatch):
     assert resolve.call_count == 1
     assert factory.call_args.kwargs["pinned_ip"] == "93.184.216.34"
     assert connection.request.call_args.kwargs["headers"]["Host"] == "example.test"
+
+
+@pytest.mark.parametrize(
+    "destination",
+    [
+        "https://other.example.com/data",
+        "http://api.example.com/data",
+        "https://api.example.com:80/data",
+        "https://127.0.0.1/data",
+    ],
+)
+def test_authenticated_redirect_rejected_before_second_request(
+    monkeypatch, destination
+):
+    requests = []
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: object())
+
+    def request(url, target, **kwargs):
+        requests.append((url, kwargs))
+        return httpx.Response(
+            302, headers={"location": destination}, request=httpx.Request("GET", url)
+        )
+
+    monkeypatch.setattr(public_http, "_request_source", request)
+    with pytest.raises(ValueError):
+        public_http.fetch_public_source(
+            "https://api.example.com/start",
+            accept="application/json",
+            authentication={
+                "origin": "https://api.example.com",
+                "headers": {"Authorization": "Bearer protected"},
+            },
+        )
+    assert len(requests) == 1
+    assert requests[0][1]["credential_headers"] == {"Authorization": "Bearer protected"}
+
+
+def test_same_origin_authenticated_redirect_preserves_header(monkeypatch):
+    requests = []
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: object())
+
+    def request(url, target, **kwargs):
+        requests.append(kwargs["credential_headers"])
+        if len(requests) == 1:
+            return httpx.Response(
+                302, headers={"location": "/final"}, request=httpx.Request("GET", url)
+            )
+        return httpx.Response(200, content=b"{}", request=httpx.Request("GET", url))
+
+    monkeypatch.setattr(public_http, "_request_source", request)
+    result = public_http.fetch_public_source(
+        "https://api.example.com/start",
+        accept="application/json",
+        authentication={
+            "origin": "https://api.example.com",
+            "headers": {"X-API-Key": "protected"},
+        },
+    )
+    assert str(result.url) == "https://api.example.com/final"
+    assert requests == [{"X-API-Key": "protected"}] * 2
+
+
+def test_pinned_transport_sends_credential_as_header(monkeypatch):
+    connection, _factory, target = transport(monkeypatch, Response(b"{}"))
+    public_http._request_source(
+        "https://example.test/data",
+        target,
+        max_bytes=100,
+        deadline=public_http.time.monotonic() + 60,
+        accept="application/json",
+        credential_headers={"Authorization": "Bearer protected"},
+    )
+    headers = connection.request.call_args.kwargs["headers"]
+    assert headers["Authorization"] == "Bearer protected"
+    assert headers["Host"] == target.host_header
+
+
+def test_authenticated_redirect_cannot_reflect_secret_into_url(monkeypatch):
+    requests = []
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: object())
+
+    def request(url, target, **kwargs):
+        requests.append(url)
+        return httpx.Response(
+            302,
+            headers={"location": "/echo/protected-secret"},
+            request=httpx.Request("GET", url),
+        )
+
+    monkeypatch.setattr(public_http, "_request_source", request)
+    with pytest.raises(ValueError, match="reflects a credential"):
+        public_http.fetch_public_source(
+            "https://api.example.com/start",
+            accept="application/json",
+            authentication={
+                "origin": "https://api.example.com",
+                "headers": {"Authorization": "Bearer protected-secret"},
+                "secret": "protected-secret",
+            },
+        )
+    assert requests == ["https://api.example.com/start"]

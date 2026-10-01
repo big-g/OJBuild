@@ -468,7 +468,7 @@ class DigestCollectTool(BaseTool):
             },
             category="data",
             timeout_seconds=60.0,
-            required_capabilities=["connector:*:read", "file:read", "network:fetch"],
+            required_capabilities=["connector:*:read", "file:read", "network:fetch", "credential:use"],
         )
 
     def resolve_required_capabilities(
@@ -492,7 +492,12 @@ class DigestCollectTool(BaseTool):
             if not is_source_adapter(source) and not ConnectorRegistry.contains(source):
                 raise ValueError(f"Unknown connector: {source}")
             if is_source_adapter(source):
-                capabilities.extend(get_adapter(source).required_capabilities)
+                adapter = get_adapter(source)
+                capabilities.extend(adapter.required_capabilities)
+                # An adapter that can use credentials always requires the grant.
+                # This closes configuration-change races between resolve and execute.
+                if adapter.credential_kinds:
+                    capabilities.append("credential:use")
                 continue
             connector_cls = ConnectorRegistry.get(source)
             resolver = getattr(connector_cls, "capability_requirements", None)

@@ -38,9 +38,12 @@ Automatic model routing is deferred; explicit model selection remains supported.
    response sizes and record counts are bounded; JSON mapping supports stable IDs
    and explicit complete-snapshot reconciliation. Connection tests fetch/parse
    without indexing; evidence retains actual fetch time and original/final URLs.
-   **Next:** protected credential references and authenticated API connections,
-   followed by explicit pagination and incremental/deletion contracts. Public
-   adapters accept no credentials and do not access private-network services.
+   **Implemented:** protected credential references for bearer/API-key HTTPS GET
+   connections; encrypted server vault and web add/rotate/remove controls; immutable
+   origin/header bindings; metadata-only APIs; same-origin authenticated redirects;
+   credential-use capability requirements; in-use/reference-safe lifecycle checks.
+   **Next:** explicit pagination and incremental/deletion contracts. Private-network
+   services and OAuth authorization flows remain separate future integrations.
 3. **Pending:** durable scheduled jobs, cancellation/progress, configuration
    evolution across adapter versions, audit history, and migration of existing
    OAuth/token integrations into the instance model. Secret-bearing adapter fields

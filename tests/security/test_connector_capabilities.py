@@ -76,7 +76,7 @@ def test_public_source_requires_network_access_and_selected_adapter_access():
         policy = CapabilityPolicy(default_deny=True)
         assert policy.resolve_effective_tool_capabilities(
             DigestCollectTool(), {"sources": [adapter_id]}
-        ) == (f"connector:{adapter_id}:read", "network:fetch")
+        ) == (f"connector:{adapter_id}:read", "network:fetch", "credential:use")
         policy.grant("reader", f"connector:{adapter_id}:read")
         result = ToolExecutor(
             [DigestCollectTool()],
@@ -108,4 +108,20 @@ def test_adapter_capabilities_do_not_depend_on_legacy_connector_registration(
     assert CapabilityPolicy().resolve_effective_tool_capabilities(
         DigestCollectTool(),
         {"sources": [adapter.adapter_id]},
-    ) == ("connector:web_page:read", "network:fetch")
+    ) == ("connector:web_page:read", "network:fetch", "credential:use")
+
+
+def test_credential_use_is_separate_from_network_and_connector_grants():
+    from openjarvis.core.types import ToolCall
+    from openjarvis.tools._stubs import ToolExecutor
+
+    policy = CapabilityPolicy(default_deny=True)
+    policy.grant("reader", "connector:json_api:read")
+    policy.grant("reader", "network:fetch")
+    result = ToolExecutor(
+        [DigestCollectTool()], capability_policy=policy, agent_id="reader"
+    ).execute(
+        ToolCall(id="auth", name="digest_collect", arguments='{"sources":["json_api"]}')
+    )
+    assert not result.success
+    assert "credential:use" in result.content

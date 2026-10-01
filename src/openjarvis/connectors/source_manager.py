@@ -81,6 +81,7 @@ class SourceManager:
     def __init__(self, store: SourceStore | None = None, *, knowledge_path: str = ""):
         self.store = store or SourceStore()
         self.knowledge_path = knowledge_path
+        self._credentials = None
         self.lock_dir = self.store.path.parent / "source-locks"
         self.lock_dir.mkdir(mode=0o700, exist_ok=True)
 
@@ -107,27 +108,76 @@ class SourceManager:
             raise ValueError("Source name must contain 1–120 characters")
         return name.strip()
 
+    @property
+    def credentials(self):
+        if self._credentials is None:
+            from openjarvis.connectors.source_credentials import CredentialStore
+
+            self._credentials = CredentialStore(
+                self.store.path.with_name("source_credentials.db")
+            )
+        return self._credentials
+
+    def delete_credential(self, identity: str, revision: int):
+        return self.credentials.delete(identity, revision, self.store)
+
+    @contextmanager
+    def _credential(self, adapter, config, *, unlock=False):
+        identity = config.get("credential_id")
+        if not identity:
+            yield None
+            return
+        if not adapter.credential_kinds or adapter.bind_credential is None:
+            raise ValueError("Adapter does not support protected credentials")
+        with self.credentials.bound(
+            identity, config["url"], adapter.credential_kinds
+        ) as row:
+            yield self.credentials.material(row) if unlock else None
+
     def create(self, adapter_id: str, name: str, config: dict) -> dict:
         adapter = get_adapter(adapter_id)
         config = adapter.validate_config(config)
-        return self.store.create(
-            adapter_id, self._name(name), config, adapter.config_version
-        )
+        with self._credential(adapter, config):
+            return self.store.create(
+                adapter_id, self._name(name), config, adapter.config_version
+            )
 
     def _connector(self, record: dict) -> _InstanceConnector:
         if not record["enabled"]:
             raise SourceConflict("Source is disabled; enable it before syncing")
         return _InstanceConnector(record)
 
+    @contextmanager
+    def _reading(self, record):
+        adapter = get_adapter(record["adapter_id"])
+        with self._credential(adapter, record["config"], unlock=True) as material:
+            connector = self._connector(record)
+            if material:
+                adapter.bind_credential(connector.reader, material)
+            try:
+                yield connector
+            finally:
+                if material:
+                    adapter.bind_credential(connector.reader, None)
+                    material.clear()
+
     def test(self, adapter_id: str, config: dict) -> dict:
         adapter = get_adapter(adapter_id)
         validated = adapter.validate_config(config)
-        if adapter.probe is not None:
-            return {"ok": True, "config": validated, **adapter.probe(validated)}
-        reader = adapter.factory(validated)
-        if not reader.is_connected():
-            raise ValueError("Source is unavailable")
-        return {"ok": True, "config": validated}
+        with self._credential(adapter, validated, unlock=True) as material:
+            reader = adapter.factory(validated)
+            if material:
+                adapter.bind_credential(reader, material)
+            try:
+                if adapter.probe is not None:
+                    return {"ok": True, "config": validated, **adapter.probe(reader)}
+                if not reader.is_connected():
+                    raise ValueError("Source is unavailable")
+                return {"ok": True, "config": validated}
+            finally:
+                if material:
+                    adapter.bind_credential(reader, None)
+                    material.clear()
 
     def update(
         self, source_id: str, revision: int, *, name: str, config: dict, enabled: bool
@@ -146,13 +196,14 @@ class SourceManager:
             # the directory only when its configuration changes or it is enabled.
             if config != old["config"] or (enabled and not old["enabled"]):
                 config = adapter.validate_config(config)
-            if config != old["config"]:
-                self._reset_and_purge(old)
-            result = self.store.update(
-                source_id, revision, name=name, config=config, enabled=enabled
-            )
-            self.store.set_status(source_id, "idle")
-            return {**result, "state": "idle", "error": None}
+            with self._credential(adapter, config):
+                if config != old["config"]:
+                    self._reset_and_purge(old)
+                result = self.store.update(
+                    source_id, revision, name=name, config=config, enabled=enabled
+                )
+                self.store.set_status(source_id, "idle")
+                return {**result, "state": "idle", "error": None}
 
     @staticmethod
     def _prefix(record: dict) -> str:
@@ -186,23 +237,27 @@ class SourceManager:
     def _sync_locked(self, source_id: str) -> int:
         self.store.set_status(source_id, "syncing")
         try:
-            connector = self._connector(self.store.get(source_id))
-            with KnowledgeStore(self.knowledge_path) as knowledge:
-                with SyncEngine(
-                    IngestionPipeline(knowledge), state_db=str(self.store.path)
-                ) as engine:
-                    chunks = engine.sync(connector)
-                # A failed scan never removes documents that weren't reached.
-                if connector.full_snapshot:
-                    knowledge.reconcile_document_prefix(
-                        self._prefix(connector.record),
-                        connector.seen,
-                    )
-            self.store.set_status(source_id, "idle")
-            return chunks
+            with self._reading(self.store.get(source_id)) as connector:
+                return self._ingest(connector)
         except Exception as exc:
             self.store.set_status(source_id, "error", str(exc))
             raise
+
+    def _ingest(self, connector):
+        source_id = connector.record["id"]
+        with KnowledgeStore(self.knowledge_path) as knowledge:
+            with SyncEngine(
+                IngestionPipeline(knowledge), state_db=str(self.store.path)
+            ) as engine:
+                chunks = engine.sync(connector)
+            # A failed scan never removes documents that weren't reached.
+            if connector.full_snapshot:
+                knowledge.reconcile_document_prefix(
+                    self._prefix(connector.record),
+                    connector.seen,
+                )
+        self.store.set_status(source_id, "idle")
+        return chunks
 
     def start_sync(self, source_id: str) -> None:
         # Hold the same OS lock from acceptance until the worker finishes so a
@@ -265,12 +320,12 @@ class SourceManager:
                 continue
             with self._locked(record["id"]):
                 current = self.store.get(record["id"])
-                connector = self._connector(current)
-                for doc in connector.sync():
-                    if since is None or doc.timestamp.replace(
-                        tzinfo=None
-                    ) >= since.replace(tzinfo=None):
-                        yield doc
+                with self._reading(current) as connector:
+                    for doc in connector.sync():
+                        if since is None or doc.timestamp.replace(
+                            tzinfo=None
+                        ) >= since.replace(tzinfo=None):
+                            yield doc
 
 
 class ManagedSourcesReader:

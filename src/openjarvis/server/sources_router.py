@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool
 
 from openjarvis.connectors.source_adapters import list_adapters
 from openjarvis.connectors.source_manager import SourceManager
@@ -31,9 +33,43 @@ class SourceTest(BaseModel):
     config: dict
 
 
+class SafeSourceRoute(APIRoute):
+    """Validation errors must not echo credential input values."""
+
+    def get_route_handler(self):
+        original = super().get_route_handler()
+
+        async def handler(request):
+            try:
+                return await original(request)
+            except RequestValidationError:
+                raise HTTPException(
+                    422, "Invalid source or credential request"
+                ) from None
+
+        return handler
+
+
+class CredentialInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+    kind: str
+    origin: str
+    secret: SecretStr
+    header_name: str = ""
+
+
+class CredentialRotation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    secret: SecretStr
+
+
 def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     manager = manager or SourceManager()
-    router = APIRouter(prefix="/v1/sources", tags=["sources"])
+    router = APIRouter(
+        prefix="/v1/sources", tags=["sources"], route_class=SafeSourceRoute
+    )
 
     def invoke(operation, *args, **kwargs):
         try:
@@ -44,6 +80,34 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
             raise HTTPException(409, str(exc)) from exc
         except (ValueError, OSError) as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @router.get("/credentials")
+    def credentials():
+        return {"credentials": invoke(manager.credentials.list)}
+
+    @router.post("/credentials", status_code=201)
+    def create_credential(req: CredentialInput):
+        return invoke(
+            manager.credentials.create,
+            req.name,
+            req.kind,
+            req.origin,
+            req.secret.get_secret_value(),
+            req.header_name,
+        )
+
+    @router.put("/credentials/{credential_id}")
+    def rotate_credential(credential_id: str, req: CredentialRotation):
+        return invoke(
+            manager.credentials.rotate,
+            credential_id,
+            req.revision,
+            req.secret.get_secret_value(),
+        )
+
+    @router.delete("/credentials/{credential_id}", status_code=204)
+    def remove_credential(credential_id: str, revision: int):
+        invoke(manager.delete_credential, credential_id, revision)
 
     @router.get("/adapters")
     def adapters():

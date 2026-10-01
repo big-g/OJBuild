@@ -131,6 +131,13 @@ BUILTIN_CAPABILITIES: tuple[tuple[str, str, str, str, RiskLevel], ...] = (
         RiskLevel.HIGH,
     ),
     (
+        "credential:use",
+        "Use protected credentials for configured API connections.",
+        "credential",
+        "use",
+        RiskLevel.HIGH,
+    ),
+    (
         "network:fetch",
         "Retrieve data from network resources.",
         "network",

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from dataclasses import asdict
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Iterator
@@ -42,7 +43,20 @@ def _pointer(value, pointer: str):
 
 
 def validate_web_config(config: dict) -> dict:
-    return {"url": normalize_source_url(config.get("url", ""))}
+    result = {"url": normalize_source_url(config.get("url", ""))}
+    reference = config.get("credential_id", "")
+    if reference:
+        import uuid
+
+        if not isinstance(reference, str):
+            raise ValueError("Credential reference must be a UUID")
+        try:
+            result["credential_id"] = str(uuid.UUID(reference))
+        except ValueError:
+            raise ValueError("Credential reference must be a UUID") from None
+    elif reference not in ("", None):
+        raise ValueError("Credential reference must be a UUID")
+    return result
 
 
 def validate_json_config(config: dict) -> dict:
@@ -175,6 +189,10 @@ class _PublicSource(BaseConnector):
     def __init__(self, *, config: dict | None = None):
         self.config = config or {}
         self._status = SyncStatus()
+        self._authentication = None
+
+    def bind_credential(self, material: dict) -> None:
+        self._authentication = material
 
     def is_connected(self) -> bool:
         return bool(self.config.get("url"))
@@ -191,7 +209,17 @@ class _PublicSource(BaseConnector):
     def sync(self, *, since=None, cursor=None) -> Iterator[Document]:
         self._status = SyncStatus(state="syncing")
         try:
+            if self.config.get("credential_id") and not self._authentication:
+                raise ValueError(
+                    "Source credential must be unlocked through SourceManager"
+                )
             documents = self._documents()
+            if self._authentication:
+                self._reject_reflection(
+                    json.dumps(
+                        [asdict(document) for document in documents], default=str
+                    )
+                )
             self._status.items_total = len(documents)
             for document in documents:
                 yield document
@@ -200,11 +228,41 @@ class _PublicSource(BaseConnector):
             self._status.last_sync = datetime.now(timezone.utc)
         except Exception as exc:
             self._status.state = "error"
+            if self._authentication:
+                self._status.error = (
+                    "Authenticated source fetch or parsing failed; "
+                    "check credentials, scope and response"
+                )
+                raise ValueError(self._status.error) from None
             self._status.error = str(exc)
             raise
 
+    def _reject_reflection(self, text: str):
+        import base64
+        import html
+        from urllib.parse import quote
+
+        secret = self._authentication["secret"]
+        variants = (
+            secret,
+            quote(secret, safe=""),
+            html.escape(secret),
+            json.dumps(secret)[1:-1],
+            base64.b64encode(secret.encode()).decode(),
+        )
+        if any(value in text for value in variants):
+            raise ValueError("Authenticated response reflects protected credentials")
+
     def _fetch(self, accept: str):
-        response = fetch_public_source(self.config["url"], accept=accept)
+        response = fetch_public_source(
+            self.config["url"],
+            accept=accept,
+            **(
+                {"authentication": self._authentication} if self._authentication else {}
+            ),
+        )
+        if self._authentication:
+            self._reject_reflection(response.content.decode("utf-8", errors="replace"))
         if len(response.content) > 2 * 1024 * 1024:
             raise ValueError("Source response exceeds the 2 MiB limit")
         fetched_at = datetime.now(timezone.utc)
@@ -217,6 +275,8 @@ class _PublicSource(BaseConnector):
             "response_version": hashlib.sha256(response.content).hexdigest(),
             "content_type": response.headers.get("content-type", ""),
         }
+        if self._authentication:
+            self._reject_reflection(json.dumps(metadata))
         return response, fetched_at, metadata
 
 
@@ -349,10 +409,10 @@ class JsonAPIConnector(_PublicSource):
         return documents
 
 
-def probe_public_source(config: dict, *, reader_class) -> dict:
-    documents = list(reader_class(config=config).sync())
+def probe_public_source(reader) -> dict:
+    documents = list(reader.sync())
     return {
         "documents": len(documents),
         "sample_titles": [document.title for document in documents[:3]],
-        "final_url": documents[0].url if documents else config["url"],
+        "final_url": documents[0].url if documents else reader.config["url"],
     }

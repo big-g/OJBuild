@@ -48,3 +48,16 @@ it('uses adapter defaults and displays dependent fields only in their mode', () 
   expect(records).toContain('Removes missing records');
   expect(records).not.toContain('checked=""');
 });
+
+it('renders protected credential references from adapter metadata without secret fields', () => {
+  const definition: SourceAdapter = { ...adapter, fields: [{ name: 'credential_id', label: 'Credential', type: 'credential', credential_kinds: ['bearer'] }] };
+  const html = renderToStaticMarkup(<SourceConfigurationFields adapter={definition} config={{ credential_id: 'credential-one' }} onChange={() => {}} credentials={[
+    { id: 'credential-one', name: 'API token', kind: 'bearer', origin: 'https://api.example.com', header_name: 'Authorization', revision: 1, created_at: '', updated_at: '' },
+    { id: 'wrong-kind', name: 'Other key', kind: 'api_key', origin: 'https://api.example.com', header_name: 'X-API-Key', revision: 1, created_at: '', updated_at: '' },
+  ]} />);
+  expect(html).toContain('value="credential-one" selected=""');
+  expect(html).toContain('API token');
+  expect(html).toContain('No authentication');
+  expect(html).not.toContain('Other key');
+  expect(html).not.toContain('type="password"');
+});

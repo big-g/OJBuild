@@ -1,7 +1,6 @@
 """Versioned adapter definitions, separate from saved connection instances.
 
-Only non-secret configuration is supported by this first adapter contract.
-Credential-bearing adapters must add protected credential references before use.
+Secrets live in the server vault; adapter configuration carries references only.
 """
 
 from __future__ import annotations
@@ -33,7 +32,9 @@ class SourceAdapter:
     config_version: int = 1
     full_snapshot: bool = False
     snapshot_config_field: str | None = None
-    probe: Callable[[dict[str, Any]], dict[str, Any]] | None = None
+    probe: Callable[[BaseConnector], dict[str, Any]] | None = None
+    credential_kinds: tuple[str, ...] = ()
+    bind_credential: Callable[[BaseConnector, dict], None] | None = None
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -42,6 +43,7 @@ class SourceAdapter:
             "description": self.description,
             "config_version": self.config_version,
             "fields": self.fields,
+            "credential_kinds": self.credential_kinds,
             "required_capabilities": self.required_capabilities,
             "operations": ["test", "sync", "remove"],
             "full_snapshot": self.full_snapshot,
@@ -117,10 +119,18 @@ register_adapter(
 
 _URL_FIELD = {
     "name": "url",
-    "label": "Public URL",
+    "label": "URL",
     "type": "text",
     "required": True,
     "placeholder": "https://example.org/resource",
+}
+_CREDENTIAL_FIELD = {
+    "name": "credential_id",
+    "label": "Credential",
+    "type": "credential",
+    "required": False,
+    "description": "Optional protected credential for this HTTPS origin.",
+    "credential_kinds": ["bearer", "api_key"],
 }
 _RECORDS = {"field": "mode", "equals": "records"}
 
@@ -128,13 +138,15 @@ register_adapter(
     SourceAdapter(
         adapter_id="web_page",
         display_name="Web Page",
-        description="Index one public HTML or text page. JavaScript is not executed.",
-        fields=(_URL_FIELD,),
+        description="Index one HTML or text page. JavaScript is not executed.",
+        fields=(_URL_FIELD, _CREDENTIAL_FIELD),
         validate=validate_web_config,
         factory=lambda config: WebPageConnector(config=config),
         required_capabilities=WebPageConnector.capability_requirements(),
         full_snapshot=True,
-        probe=lambda config: probe_public_source(config, reader_class=WebPageConnector),
+        probe=probe_public_source,
+        credential_kinds=("bearer", "api_key"),
+        bind_credential=lambda reader, material: reader.bind_credential(material),
     )
 )
 
@@ -143,11 +155,11 @@ register_adapter(
         adapter_id="json_api",
         display_name="JSON API",
         description=(
-            "Read a public JSON GET response as one document "
-            "or map an array to records."
+            "Read a JSON GET response as one document or map an array to records."
         ),
         fields=(
             _URL_FIELD,
+            _CREDENTIAL_FIELD,
             {
                 "name": "mode",
                 "label": "Index as",
@@ -216,6 +228,8 @@ register_adapter(
         required_capabilities=JsonAPIConnector.capability_requirements(),
         full_snapshot=True,
         snapshot_config_field="complete_snapshot",
-        probe=lambda config: probe_public_source(config, reader_class=JsonAPIConnector),
+        probe=probe_public_source,
+        credential_kinds=("bearer", "api_key"),
+        bind_credential=lambda reader, material: reader.bind_credential(material),
     )
 )

@@ -4575,6 +4575,7 @@ dashboard = [
     { name = "textual" },
 ]
 desktop = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "faster-whisper" },
     { name = "numpy" },
@@ -4695,6 +4696,7 @@ security-signing = [
     { name = "cryptography" },
 ]
 server = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "python-multipart" },
@@ -4735,7 +4737,9 @@ requires-dist = [
     { name = "click", specifier = ">=8" },
     { name = "colbert-ai", marker = "extra == 'memory-colbert'", specifier = ">=0.2" },
     { name = "croniter", marker = "extra == 'scheduler'", specifier = ">=2.0" },
+    { name = "cryptography", marker = "extra == 'desktop'", specifier = ">=43" },
     { name = "cryptography", marker = "extra == 'security-signing'", specifier = ">=43" },
+    { name = "cryptography", marker = "extra == 'server'", specifier = ">=43" },
     { name = "datasets", specifier = ">=4.5.0" },
     { name = "ddgs", specifier = ">=9.11.4" },
     { name = "ddgs", marker = "extra == 'tools-search'", specifier = ">=9.11.4" },

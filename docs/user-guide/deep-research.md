@@ -197,18 +197,18 @@ restarts; an interrupted sync is reported and can be retried.
 Tool reads still require `connector:local_files:read` and `file:read`. Configuring
 a source grants no tool permissions. Adapter discovery supplies versioned fields
 and operation metadata for the frontend; unsupported config versions are rejected.
-These adapters contain no secret fields. Protected credential references,
-scheduled jobs, cancellation/progress, and authenticated APIs remain roadmap work.
+These adapters contain no secret fields. Credentials use protected references;
+scheduled jobs and cancellation/progress remain roadmap work.
 
-### Public Web Page and JSON API sources
+### Web Page and JSON API sources
 
-**Web Page** indexes one public HTML, plain-text or Markdown URL. It extracts
+**Web Page** indexes one HTML, plain-text or Markdown URL. It extracts
 readable HTML text and a page title, excludes script/style/template and explicitly
 hidden elements, and does not execute JavaScript or follow page links. Add one
 named connection per page. For browser-rendered sites and crawling, the existing
 Playwright/Scrapy tools remain separate governed operations.
 
-**JSON API** fetches a public JSON endpoint with GET. The default **Whole JSON
+**JSON API** fetches a JSON endpoint with GET. The default **Whole JSON
 document** mode indexes the response without guessing field meanings. Choose
 **Individual records** to map an array to documents:
 
@@ -224,10 +224,9 @@ document** mode indexes the response without guessing field meanings. Choose
 Pointers start with `/`; use `~1` for a slash in a key and `~0` for a tilde.
 Duplicate IDs, missing pointers, invalid JSON, duplicate object keys and non-finite
 numbers report errors before any new records are indexed. Without **Complete
-snapshot**, records absent from one response remain indexed. Automatic pagination
-and authenticated endpoints are not supported in this step.
+snapshot**, records absent from one response remain indexed. Automatic pagination remains roadmap work.
 
-**Test connection** actually fetches and parses either public source without
+**Test connection** actually fetches and parses either source without
 saving/indexing it. Fetching accepts public HTTP/HTTPS addresses on ports 80/443,
 pins verified DNS addresses while keeping TLS hostname verification, revalidates
 redirects, and rejects private/metadata addresses and HTTPS-to-HTTP downgrades.
@@ -235,9 +234,46 @@ There are at most five redirects, four address attempts per destination, a 2 MiB
 response limit, 20-second I/O timeouts and a checked 60-second fetch budget.
 Compressed, partial, failed and unsupported-format responses report errors.
 Private services belong in explicitly scoped integrations rather than these
-public adapters. These sources send no credentials, cookies or custom headers;
+adapters. Unauthenticated connections send no credentials or cookies. With a
+protected credential selected, only its configured authorization header is sent;
 credential-bearing URLs and recognized credential query parameters are rejected.
-Do not put secrets into a public URL.
+Do not put secrets into a URL or source configuration.
+
+### Protected credentials and authenticated connections
+
+In **Protected credentials**, choose **Add credential**, name it, enter the HTTPS
+origin (for example `https://api.example.com`), choose **Bearer token** or **API key
+header**, and enter the secret. API keys require a header name such as `X-API-Key`;
+reserved headers are rejected. Save it, then select the credential in the Web Page
+or JSON API source form. **Test connection** uses that credential without indexing.
+The source URL must match its origin; authenticated redirects must remain on the
+same HTTPS origin. DNS pinning, private-address rejection and fetch limits still
+apply. OAuth flows, cookies, Basic auth and pagination are not yet implemented.
+
+Credentials are encrypted with Fernet in `source_credentials.db`, alongside the
+source database. Only metadata and reference IDs are returned by the APIs. Secrets
+are entered in password fields and are never prefilled or persisted in browser
+storage by OpenJarvis. Responses reflecting the active secret (including common
+encodings) are rejected before indexing; authenticated parsing errors are generic
+to keep response data out of status messages.
+
+Keep `source_credentials.db` and its original `source_credentials.key` together in
+protected server backups. Both are restricted to the server account (0600). The
+key is separate from the database, but remains on the same server: anyone with
+access to both can decrypt the credentials. Losing the key makes existing values
+unreadable; OpenJarvis will not silently create a replacement key for existing
+records. Use **Rotate** to replace a secret with a revision check. Rotation and
+removal are rejected during active use; detach a credential from every source,
+including disabled sources, before removing it. The origin and header binding are
+immutable; create a new credential to change them.
+
+Install/update the server dependencies with `uv sync --extra server` (or the
+existing desktop extra) and restart `openjarvis-api.service`. Authenticated source
+management uses the server API authentication already configured. Tool-driven reads
+from credential-capable adapters additionally require `credential:use`, even for a
+currently public instance, so a later configuration change cannot bypass that
+grant. Network and connector grants remain required; configuring a source does not
+grant tool access.
 
 Indexing records the original URL, final URL, response hash, fetch time and source
 instance identity. Search evidence retains the actual fetch timestamp, so a search

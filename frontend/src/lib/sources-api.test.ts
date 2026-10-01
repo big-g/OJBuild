@@ -45,3 +45,16 @@ describe('source instance API', () => {
     await expect(removeSourceInstance(source)).resolves.toBeUndefined();
   });
 });
+
+it('uses the authenticated transport for credential lifecycle and sends revisions', async () => {
+  const { listSourceCredentials, createSourceCredential, rotateSourceCredential, removeSourceCredential } = await import('./sources-api');
+  const credential = { id: 'credential-one', name: 'API', kind: 'bearer' as const, origin: 'https://api.example.com', header_name: 'Authorization', revision: 2, created_at: '', updated_at: '' };
+  await listSourceCredentials();
+  await createSourceCredential({ name: 'API', kind: 'bearer', origin: credential.origin, header_name: '', secret: 'new-token' });
+  await rotateSourceCredential(credential, 'replacement-token');
+  await removeSourceCredential(credential);
+  expect(apiFetch.mock.calls.map(([url]) => url)).toEqual([
+    '/v1/sources/credentials', '/v1/sources/credentials', '/v1/sources/credentials/credential-one', '/v1/sources/credentials/credential-one?revision=2',
+  ]);
+  expect(JSON.parse(String(apiFetch.mock.calls[2][1]?.body))).toEqual({ revision: 2, secret: 'replacement-token' });
+});
