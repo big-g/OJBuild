@@ -67,8 +67,14 @@ Automatic model routing is deferred; explicit model selection remains supported.
    secret-free, connector-bound file references; on-read legacy migration plus a
    bounded one-time migration helper; refresh revision checks that reject stale
    writes after disconnect; fail-closed key loss and ciphertext validation.
-   **Next:** migrate OAuth/token integrations into the instance model. Secret-bearing fields
-   must use protected credential references; never return credentials in source APIs.
+   **Implemented:** named Notion page instances using protected, origin-bound
+   bearer credentials; adapter-driven web configuration; isolated indexes and
+   checkpoints; bounded search/block pagination and nested text reads; generic
+   authenticated errors and no deletion inference from search omissions.
+   **Next:** move the remaining token/OAuth integrations into named instances,
+   including explicit legacy-instance import and per-instance OAuth consent.
+   Secret-bearing fields must use protected references; never return credentials
+   in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,
    followed by desktop/Android end-to-end validation of research and configuration.
 

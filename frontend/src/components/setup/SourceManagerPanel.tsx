@@ -28,9 +28,9 @@ export function SourceConfigurationFields({
   return <>
     {adapter.fields.filter(visible).map((field) => <label key={field.name} className="flex flex-col gap-1">
       {field.label}
-      {field.type === 'credential' ? <select aria-label={field.label} value={String(fieldValue(field.name))} onChange={(event) => changeField(field, event.target.value)}>
-        <option value="">No authentication</option>
-        {credentials.filter((credential) => field.credential_kinds?.includes(credential.kind)).map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.origin}</option>)}
+      {field.type === 'credential' ? <select aria-label={field.label} required={field.required} value={String(fieldValue(field.name))} onChange={(event) => changeField(field, event.target.value)}>
+        <option value="">{field.required ? 'Choose a protected credential…' : 'No authentication'}</option>
+        {credentials.filter((credential) => field.credential_kinds?.includes(credential.kind) && (!field.credential_origin || credential.origin === field.credential_origin)).map((credential) => <option key={credential.id} value={credential.id}>{credential.name} · {credential.origin}</option>)}
       </select> : field.type === 'select' ? <select
         aria-label={field.label}
         required={field.required}

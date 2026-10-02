@@ -46,6 +46,7 @@ class SourceAdapter:
     credential_kinds: tuple[str, ...] = ()
     bind_credential: Callable[[BaseConnector, dict], None] | None = None
     migrations: tuple[ConfigMigration, ...] = ()
+    credential_url: Callable[[dict[str, Any]], str] | None = None
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -395,5 +396,73 @@ register_adapter(
         probe=probe_public_source,
         credential_kinds=("bearer", "api_key"),
         bind_credential=lambda reader, material: reader.bind_credential(material),
+    )
+)
+
+
+# Provider adapters keep their trusted endpoints outside saved configuration.
+from openjarvis.connectors.notion_sources import (  # noqa: E402
+    NOTION_ORIGIN,
+    NotionSource,
+    validate_notion_config,
+)
+
+register_adapter(
+    SourceAdapter(
+        adapter_id="notion_pages",
+        display_name="Notion pages",
+        description=(
+            "Read pages shared with a Notion integration. Add a protected bearer "
+            "credential for https://api.notion.com and select it here."
+        ),
+        fields=(
+            {
+                "name": "credential_id",
+                "label": "Notion integration credential",
+                "type": "credential",
+                "required": True,
+                "credential_kinds": ["bearer"],
+                "credential_origin": NOTION_ORIGIN,
+                "description": "Share the desired pages with this Notion integration.",
+            },
+            {
+                "name": "query",
+                "label": "Title filter",
+                "type": "text",
+                "description": "Optional title search; empty means accessible pages.",
+            },
+            {
+                "name": "max_pages",
+                "label": "Page limit",
+                "type": "number",
+                "default_value": 100,
+                "min": 1,
+                "max": 500,
+            },
+            {
+                "name": "max_requests",
+                "label": "Request limit",
+                "type": "number",
+                "default_value": 300,
+                "min": 1,
+                "max": 1000,
+            },
+            {
+                "name": "max_blocks",
+                "label": "Block limit",
+                "type": "number",
+                "default_value": 5000,
+                "min": 1,
+                "max": 20000,
+                "description": "Scan limits fail without advancing sync state.",
+            },
+        ),
+        validate=validate_notion_config,
+        factory=lambda config: NotionSource(config=config),
+        required_capabilities=NotionSource.capability_requirements(),
+        credential_kinds=("bearer",),
+        credential_url=lambda config: NOTION_ORIGIN,
+        bind_credential=lambda reader, material: reader.bind_credential(material),
+        probe=lambda reader: reader.probe(),
     )
 )

@@ -29,6 +29,46 @@ def test_source_api_rejects_unauthenticated_access(client):
     assert client.get("/v1/sources").status_code == 200
 
 
+def test_named_notion_configuration_is_discovered_and_keeps_credentials_private(client):
+    definitions = client.get("/v1/sources/adapters").json()["adapters"]
+    notion = next(item for item in definitions if item["adapter_id"] == "notion_pages")
+    assert notion["credential_kinds"] == ["bearer"]
+    assert "credential:use" in notion["required_capabilities"]
+    assert notion["fields"][0]["credential_origin"] == "https://api.notion.com"
+    credential = client.post(
+        "/v1/sources/credentials",
+        json={
+            "name": "Notion",
+            "kind": "bearer",
+            "origin": "https://api.notion.com",
+            "secret": "protected-notion-integration-token",
+            "header_name": "",
+        },
+    ).json()
+    response = client.post(
+        "/v1/sources",
+        json={
+            "adapter_id": "notion_pages",
+            "name": "Work pages",
+            "config": {"credential_id": credential["id"]},
+        },
+    )
+    assert response.status_code == 201
+    assert response.json()["config"]["credential_id"] == credential["id"]
+    for path in ("/v1/sources", "/v1/sources/credentials", "/v1/sources/audit"):
+        assert "protected-notion-integration-token" not in client.get(path).text
+    rejected = client.post(
+        "/v1/sources",
+        json={
+            "adapter_id": "notion_pages",
+            "name": "Bad",
+            "config": {"token": "protected-notion-integration-token"},
+        },
+    )
+    assert rejected.status_code == 400
+    assert "protected-notion-integration-token" not in rejected.text
+
+
 def test_adapter_fields_test_configuration_and_crud(client, tmp_path):
     root = tmp_path / "documents"
     root.mkdir()

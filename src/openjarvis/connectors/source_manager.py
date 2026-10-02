@@ -186,7 +186,9 @@ class SourceManager:
         if not adapter.credential_kinds or adapter.bind_credential is None:
             raise ValueError("Adapter does not support protected credentials")
         with self.credentials.bound(
-            identity, config["url"], adapter.credential_kinds
+            identity,
+            adapter.credential_url(config) if adapter.credential_url else config["url"],
+            adapter.credential_kinds,
         ) as row:
             yield self.credentials.material(row) if unlock else None
 

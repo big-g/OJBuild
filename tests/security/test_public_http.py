@@ -82,6 +82,64 @@ def test_public_transport_pins_address_and_preserves_tls_hostname(monkeypatch):
     context.wrap_socket.assert_called_once_with(sock, server_hostname="example.test")
 
 
+@pytest.mark.parametrize("status", [301, 302, 303, 307, 308])
+def test_provider_post_never_follows_redirects(monkeypatch, status):
+    target = public_http.PublicTarget(
+        "https",
+        "api.notion.com",
+        443,
+        "/v1/search",
+        "api.notion.com",
+        ("93.184.216.34",),
+    )
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: target)
+    request = MagicMock(
+        return_value=httpx.Response(
+            status,
+            headers={"Location": "https://attacker.example/"},
+        )
+    )
+    monkeypatch.setattr(public_http, "_request_source", request)
+    with pytest.raises(ValueError, match="POST redirects"):
+        public_http.fetch_public_source(
+            "https://api.notion.com/v1/search",
+            accept="application/json",
+            authentication={
+                "origin": "https://api.notion.com",
+                "secret": "protected-token",
+                "headers": {"Authorization": "Bearer protected-token"},
+            },
+            method="POST",
+            body=b"{}",
+        )
+    assert request.call_count == 1
+    assert request.call_args.kwargs["method"] == "POST"
+    assert request.call_args.kwargs["body"] == b"{}"
+
+
+@pytest.mark.parametrize(
+    "method,body",
+    [
+        ("DELETE", None),
+        ("PUT", b"{}"),
+        ("GET", b"{}"),
+        ("POST", "not-bytes"),
+        ("POST", b"x" * 65537),
+    ],
+)
+def test_provider_method_and_body_rejected_before_dns(method, body, monkeypatch):
+    resolve = MagicMock()
+    monkeypatch.setattr(public_http, "validate_public_url", resolve)
+    with pytest.raises(ValueError, match="method or body"):
+        public_http.fetch_public_source(
+            "https://api.notion.com/v1/search",
+            accept="application/json",
+            method=method,
+            body=body,
+        )
+    resolve.assert_not_called()
+
+
 class Response:
     status = 200
 
@@ -129,6 +187,23 @@ def test_response_size_is_bounded_before_materializing_body(monkeypatch):
     assert response.read_sizes == [6]
     assert factory.call_args.kwargs["pinned_ip"] == "93.184.216.34"
     connection.close.assert_called_once()
+
+
+def test_pinned_transport_sends_provider_post_body_and_preserves_host(monkeypatch):
+    connection, _, target = transport(monkeypatch, Response(body=b"{}"))
+    response = public_http._request_source(
+        "http://example.test/page",
+        target,
+        max_bytes=100,
+        deadline=public_http.time.monotonic() + 30,
+        accept="application/json",
+        method="POST",
+        body=b'{"page_size":1}',
+    )
+    assert connection.request.call_args.args == ("POST", "/page")
+    assert connection.request.call_args.kwargs["body"] == b'{"page_size":1}'
+    assert connection.request.call_args.kwargs["headers"]["Host"] == "example.test"
+    assert response.request.method == "POST"
 
 
 @pytest.mark.parametrize(

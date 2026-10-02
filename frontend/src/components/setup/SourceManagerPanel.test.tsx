@@ -62,6 +62,24 @@ it('renders protected credential references from adapter metadata without secret
   expect(html).not.toContain('type="password"');
 });
 
+it('requires a provider credential and filters choices to its declared origin', () => {
+  const definition: SourceAdapter = { ...adapter, fields: [{
+    name: 'credential_id', label: 'Notion integration credential', type: 'credential',
+    required: true, credential_kinds: ['bearer'], credential_origin: 'https://api.notion.com',
+  }] };
+  const credentials = [
+    { id: 'notion-work', name: 'Work integration', kind: 'bearer' as const, origin: 'https://api.notion.com', header_name: 'Authorization', revision: 1, created_at: '', updated_at: '' },
+    { id: 'other-provider', name: 'Unrelated integration', kind: 'bearer' as const, origin: 'https://api.other.com', header_name: 'Authorization', revision: 1, created_at: '', updated_at: '' },
+  ];
+  const html = renderToStaticMarkup(<SourceConfigurationFields adapter={definition}
+    config={{}} onChange={() => {}} credentials={credentials} />);
+  expect(html).toContain('required=""');
+  expect(html).toContain('Choose a protected credential');
+  expect(html).toContain('Work integration');
+  expect(html).not.toContain('Unrelated integration');
+  expect(html).not.toContain('No authentication');
+});
+
 it('supports compound conditions and mode-specific field values from metadata', () => {
   const fields: SourceAdapter = { ...adapter, fields: [
     { name: 'mode', label: 'Mode', type: 'select', default_value: 'records', options: [{ value: 'records', label: 'Records' }, { value: 'document', label: 'Document' }], value_updates: { document: { pagination: 'none', sync_mode: 'snapshot', complete_snapshot: false } } },

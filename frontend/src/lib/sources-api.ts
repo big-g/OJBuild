@@ -11,6 +11,7 @@ export interface SourceField {
   label: string;
   type: 'text' | 'number' | 'checkbox' | 'select' | 'credential';
   credential_kinds?: string[];
+  credential_origin?: string;
   required?: boolean;
   placeholder?: string;
   default_value?: string | number | boolean;

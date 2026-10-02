@@ -215,6 +215,8 @@ def _request_source(
     accept: str,
     credential_headers: dict[str, str] | None = None,
     cancel_event=None,
+    method: str = "GET",
+    body: bytes | None = None,
 ) -> httpx.Response:
     """Read a bounded, uncompressed response from verified public addresses."""
     last_error = None
@@ -231,8 +233,9 @@ def _request_source(
         )
         try:
             connection.request(
-                "GET",
+                method,
                 target.request_target,
+                **({"body": body} if body is not None else {}),
                 headers={
                     "Host": target.host_header,
                     "Accept": accept,
@@ -249,7 +252,7 @@ def _request_source(
                 return httpx.Response(
                     response.status,
                     headers=response.getheaders(),
-                    request=httpx.Request("GET", url),
+                    request=httpx.Request(method, url),
                 )
             if response.getheader("Content-Encoding", "identity").lower() != "identity":
                 raise ValueError("Source returned unsupported compressed content")
@@ -275,7 +278,7 @@ def _request_source(
                 response.status,
                 headers=response.getheaders(),
                 content=bytes(data),
-                request=httpx.Request("GET", url),
+                request=httpx.Request(method, url),
             )
         except (OSError, http.client.HTTPException) as exc:
             last_error = exc
@@ -307,8 +310,18 @@ def fetch_public_source(
     deadline: float | None = None,
     allowed_origin: str | None = None,
     cancel_event=None,
+    method: str = "GET",
+    body: bytes | None = None,
 ) -> httpx.Response:
-    """Validate and pin each redirect; reject partial/empty/error responses."""
+    """Bounded, pinned reads. Trusted adapters may use a nonredirecting POST.
+
+    Method/body are server-code arguments, never user-configured source fields.
+    """
+    if method not in {"GET", "POST"} or (
+        body is not None
+        and (method != "POST" or not isinstance(body, bytes) or len(body) > 65536)
+    ):
+        raise ValueError("Unsupported source request method or body")
     deadline = (
         min(deadline, time.monotonic() + 60)
         if deadline is not None
@@ -340,6 +353,7 @@ def fetch_public_source(
             max_bytes=max_bytes,
             deadline=deadline,
             accept=accept,
+            **({"method": method, "body": body} if method != "GET" else {}),
             **({"cancel_event": cancel_event} if cancel_event is not None else {}),
             **(
                 {"credential_headers": authentication["headers"]}
@@ -348,6 +362,8 @@ def fetch_public_source(
             ),
         )
         if response.status_code in {301, 302, 303, 307, 308}:
+            if method != "GET":
+                raise ValueError("Source POST redirects are not allowed")
             location = response.headers.get("location")
             if not location:
                 raise ValueError("Source redirect has no destination")

@@ -539,3 +539,51 @@ so restoring the complete configuration under a new home preserves references.
 Vault bundles are internal and do not appear in the metadata-only credential APIs
 or browser storage. OAuth remains optional: local folders, public sources and
 manually configured bearer/API-key source connections continue independently.
+
+
+### Named Notion page connections
+
+In **Data Sources → Configured sources**, add a protected **Bearer token**
+credential with HTTPS origin `https://api.notion.com`. Use a Notion internal
+integration token with permission to read the desired content, and share the
+relevant pages with that integration in Notion. Then choose **Add source → Notion
+pages**, give the connection a name, and select that credential. Only compatible
+Notion bearer credentials appear in the selector; authentication is required.
+
+Each connection can use a different integration/workspace and optional title
+filter. **Test connection** makes one small read-only search request and does not
+save or index anything. Save, then **Sync**, or enable an interval schedule. The
+existing edit, enable/disable, job history, cancel, remove, and credential rotation
+controls apply. Tokens stay in the vault; saved source configuration and APIs
+contain only the credential ID and non-secret scan settings.
+
+Page IDs are scoped to the named instance, so the same provider page can appear
+in two connections without sharing indexes or checkpoints. Editing settings resets
+only that instance's index. Removing a source removes its indexed documents while
+retaining its reusable credential; detach all sources before deleting a credential.
+The adapter declares Notion read, network fetch and credential-use capabilities;
+configuring it does not grant an agent permission to read it.
+
+Reads use a pinned page/block API contract (`Notion-Version: 2022-06-28`) and the
+fixed `https://api.notion.com` origin. Search POST redirects are rejected; block
+GETs retain the protected same-origin and public-address checks. Both search and
+block lists paginate, and child blocks are traversed to a maximum nesting depth
+of eight. Supported text blocks render as Markdown. Files, image contents and
+linked database contents are not downloaded by this reader.
+
+The default scan limits are 100 pages, 300 requests and 5,000 blocks; the form can
+adjust them within server bounds. Responses are capped at 2 MiB each and 16 MiB
+per scan, with a two-minute deadline. Cyclic/malformed pagination, inaccessible
+content, cancellation and exceeded limits fail without advancing the checkpoint.
+The reader validates the scan before yielding documents for indexing. Provider
+modification time, actual fetch time, content version and source-instance identity
+remain attached to the evidence.
+
+Notion search is not a reliable complete workspace inventory. This adapter
+therefore does not delete indexed pages merely because a later search omits them;
+explicit source removal or configuration reset remains available for cleanup.
+The old single-account Notion connector retains its separate identity and setup.
+It is not automatically imported or disabled by creating a named instance; avoid
+syncing both against the same pages if you want to avoid duplicate legacy evidence.
+Other token integrations, explicit legacy imports and per-instance OAuth consent
+remain subsequent Phase 2 work.
