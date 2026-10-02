@@ -577,8 +577,11 @@ def test_handle_callback_persists_after_auth_test_succeeds(
     connector.handle_callback("xoxp-valid-user-token")
 
     mock_auth.assert_called_once_with("xoxp-valid-user-token")
-    stored = json.loads(Path(connector._credentials_path).read_text())
+    from openjarvis.connectors.oauth import load_tokens
+
+    stored = load_tokens(connector._credentials_path)
     assert stored["token"] == "xoxp-valid-user-token"
+    assert "xoxp-valid-user-token" not in Path(connector._credentials_path).read_text()
 
 
 @patch("openjarvis.connectors.slack_connector._slack_api_auth_test")

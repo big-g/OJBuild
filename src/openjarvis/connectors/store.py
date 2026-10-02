@@ -188,7 +188,9 @@ class KnowledgeStore(MemoryBackend):
 
     def _setup(self) -> None:
         """Create tables, FTS virtual table, triggers and indexes."""
-        self._conn.execute("PRAGMA journal_mode=WAL;")
+        from openjarvis.connectors._sqlite import initialize_wal
+
+        initialize_wal(self._conn)
         self._conn.execute("PRAGMA foreign_keys=ON;")
         self._conn.executescript(
             _CREATE_MAIN_TABLE + _CREATE_FTS_TABLE + _CREATE_TRIGGERS

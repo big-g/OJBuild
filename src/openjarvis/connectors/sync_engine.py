@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from openjarvis.connectors._sqlite import initialize_wal
 from openjarvis.connectors._stubs import BaseConnector
 from openjarvis.connectors.pipeline import IngestionPipeline
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
@@ -69,7 +70,7 @@ class SyncEngine:
 
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL;")
+        initialize_wal(self._conn)
         self._conn.execute(_CREATE_STATE_TABLE)
         self._conn.commit()
 

@@ -57,6 +57,10 @@ def token_path(directory, identity):
 
 
 def validate_config(service, config):
+    if service == "slack":
+        from openjarvis.connectors.slack_sources import validate_slack_config
+
+        return validate_slack_config(config)
     if service in {"spotify", "strava"}:
         from openjarvis.connectors.activity_sources import validate_activity_config
 
@@ -137,6 +141,12 @@ class AccountSource(BaseConnector):
             importlib.import_module(f"openjarvis.connectors.{module}"), cls
         )
         self.reader = reader_type(**{argument: str(self.path)})
+        if service == "slack":
+            from openjarvis.connectors.slack_sources import SlackSource
+
+            self.reader = SlackSource(
+                credentials_path=str(self.path), config=record["config"]
+            )
         if service in {"spotify", "strava"}:
             from openjarvis.connectors.activity_sources import ActivitySource
 
@@ -223,6 +233,20 @@ def register_instance_adapters(register, adapter_type):
                     "max": maximum,
                 }
                 for field, (default, maximum) in SCAN_LIMITS.items()
+            )
+        if service == "slack":
+            from openjarvis.connectors.slack_sources import SLACK_LIMITS
+
+            fields = tuple(
+                {
+                    "name": field,
+                    "label": field.replace("_", " ").title(),
+                    "type": "number",
+                    "default_value": default,
+                    "min": 10 if field == "timeout_seconds" else 1,
+                    "max": maximum,
+                }
+                for field, (default, maximum) in SLACK_LIMITS.items()
             )
         register(
             adapter_type(

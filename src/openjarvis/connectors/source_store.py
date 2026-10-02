@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
+from openjarvis.connectors._sqlite import initialize_wal
 from openjarvis.connectors.source_audit import append_event
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
 
@@ -27,7 +28,7 @@ class SourceStore:
         os.fchmod(fd, 0o600)
         os.close(fd)
         with self.connection() as conn:
-            conn.execute("PRAGMA journal_mode=WAL")
+            initialize_wal(conn)
             version = conn.execute("PRAGMA user_version").fetchone()[0]
             if version > 4:
                 raise ValueError("Source database uses an unsupported schema version")

@@ -96,7 +96,16 @@ Automatic model routing is deferred; explicit model selection remains supported.
    successful checkpoints. Spotify labels provider-available recent history;
    Strava rereads accessible historical activities to capture edits and late
    uploads. Missing records never imply deletion.
-   **Next:** strengthen the remaining provider scan contracts (Google, Slack,
+   **Implemented:** strict named Slack scans: bounded, staged pagination of the
+   user directory, conversations, history and thread replies; archived channels
+   included; accessible history reread to capture older edits. Failed channels,
+   malformed/unfinished pagination, rate limits and cancellation fail the entire
+   scan without advancing its successful checkpoint. Web-configured limits,
+   retention/coverage metadata and stable per-message identities; no deletion
+   inference from missing or permission-filtered messages.
+   **Implemented:** bounded SQLite WAL initialization retries for concurrent
+   source-list and sync startup, with real reader-lock/concurrent-open tests.
+   **Next:** strengthen the remaining provider scan contracts (Google,
    Dropbox, Granola, Oura, GitHub Notifications and Weather), then add
    password-based IMAP instances.
    OAuth security and encrypted credential storage are complete foundations;

@@ -703,6 +703,33 @@ Legacy connector endpoints retain their existing behavior.
 Provider contracts: [Spotify recent history](https://developer.spotify.com/documentation/web-api/reference/get-recently-played)
 and [Strava activities](https://developers.strava.com/docs/reference/#api-Activities-getLoggedInAthleteActivities).
 
+Named Slack sources now use a strict reader too. Configure **Max conversations**
+(default 200, maximum 2,000), **Max requests** (default 500, maximum 2,000),
+**Max documents** (default 5,000, maximum 10,000), and **Timeout seconds**
+(default 120, range 10–300) in the source web form. Empty saved configurations
+use these defaults. Responses are limited to 2 MiB each / 16 MiB per scan;
+the user directory has a fixed 10,000-user limit.
+
+Each sync enumerates users and accessible public/private channels, DMs and group
+DMs, including archived conversations, then reads history and thread replies.
+It rereads available history rather than filtering by creation time, so edits to
+older messages can replace their indexed version. Human, bot and block/file-only
+message content is retained; file bodies are not downloaded. A failure in any
+channel or thread, unfinished pagination, repeated cursor/record, rate limit,
+cancellation or limit breach fails the whole read before indexing. Retry after
+the rate limit clears or raise a configured limit as needed.
+
+Coverage is **provider-available conversation history and threads**; workspace
+retention and token scopes can limit it. A provider-reported history limit is
+recorded as `provider_history_limited` on that conversation's documents. These
+are not atomic provider snapshots, and omitted messages do not imply deletion.
+Message identities, thread links, fetch time, scan bound and content versions
+remain available for evidence attribution. Legacy Slack endpoints retain their
+existing behavior. Pagination follows Slack's
+[collection contract](https://docs.slack.dev/apis/web-api/pagination/) and
+[history](https://docs.slack.dev/reference/methods/conversations.history/) /
+[thread](https://docs.slack.dev/reference/methods/conversations.replies/) methods.
+
 
 ### Import other existing account connections
 
