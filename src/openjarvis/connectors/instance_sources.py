@@ -57,6 +57,10 @@ def token_path(directory, identity):
 
 
 def validate_config(service, config):
+    if service in {"spotify", "strava"}:
+        from openjarvis.connectors.activity_sources import validate_activity_config
+
+        return validate_activity_config(config)
     if service == "weather":
         location = config.get("location", "")
         if not isinstance(location, str) or not 1 <= len(location.strip()) <= 200:
@@ -133,6 +137,12 @@ class AccountSource(BaseConnector):
             importlib.import_module(f"openjarvis.connectors.{module}"), cls
         )
         self.reader = reader_type(**{argument: str(self.path)})
+        if service in {"spotify", "strava"}:
+            from openjarvis.connectors.activity_sources import ActivitySource
+
+            self.reader = ActivitySource(
+                service=service, token_path=str(self.path), config=record["config"]
+            )
         if service == "weather":
             original = self.reader._load_config
             self.reader._load_config = lambda: {**original(), **record["config"]}
@@ -200,6 +210,20 @@ def register_instance_adapters(register, adapter_type):
             if service == "weather"
             else ()
         )
+        if service in {"spotify", "strava"}:
+            from openjarvis.connectors.activity_sources import SCAN_LIMITS
+
+            fields = tuple(
+                {
+                    "name": field,
+                    "label": field.replace("_", " ").title(),
+                    "type": "number",
+                    "default_value": default,
+                    "min": 10 if field == "timeout_seconds" else 1,
+                    "max": maximum,
+                }
+                for field, (default, maximum) in SCAN_LIMITS.items()
+            )
         register(
             adapter_type(
                 adapter_id=f"{service}_account",

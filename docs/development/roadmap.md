@@ -90,8 +90,15 @@ Automatic model routing is deferred; explicit model selection remains supported.
    stable reserved vault bindings recover interrupted imports without overwriting
    changed credentials. OAuth reviews disclose preserved grants and refresh-token
    sharing; imports neither contact providers nor reuse legacy indexes.
-   **Next:** strengthen individual provider scan contracts and add password-based
-   IMAP instances.
+   **Implemented:** strict named Spotify/Strava scan contracts: staged bounded
+   pagination, configurable page/document/deadline limits, origin-bound bounded
+   HTTP, malformed/repeated-page rejection and cancellation without advancing
+   successful checkpoints. Spotify labels provider-available recent history;
+   Strava rereads accessible historical activities to capture edits and late
+   uploads. Missing records never imply deletion.
+   **Next:** strengthen the remaining provider scan contracts (Google, Slack,
+   Dropbox, Granola, Oura, GitHub Notifications and Weather), then add
+   password-based IMAP instances.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,

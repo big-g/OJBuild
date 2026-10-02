@@ -669,7 +669,7 @@ connections and original provider data are unaffected. Disconnect removes local
 authorization; it does not revoke the provider-wide grant. Removing the source
 also removes its encrypted bundle and pending consent attempts.
 
-These adapters reuse the existing provider readers and retain their read limits
+Most adapters reuse the existing provider readers and retain their read limits
 and incremental behavior. They do not infer provider deletions from omitted
 items. Named reads stage up to 10,000 documents / 32 MiB of text before indexing;
 an error propagated by a reader or a staging limit fails the scan without
@@ -678,6 +678,30 @@ bridge preserves that behavior until their scan contracts are strengthened.
 Full provider-specific snapshot/deletion contracts and named IMAP password
 connections remain separate roadmap items. No legacy connection is silently
 converted or disconnected.
+
+Named Spotify and Strava sources use stricter readers. Each source's web form
+lets you set **Max pages** (default 100, maximum 250), **Max documents** (default
+5,000, maximum 10,000) and **Timeout seconds** (default 120, range 10–300).
+Each response is limited to 2 MiB and the whole scan to 16 MiB. A rate limit,
+failed page, malformed response, repeated record, unsafe cursor, cancellation or
+limit breach fails the entire read before indexing and preserves the previous
+successful checkpoint. Increase a limit and retry when the account exceeds it.
+Existing saved sources with empty configuration use these defaults.
+
+Spotify walks older pages using the provider's exclusive millisecond `before`
+cursor, stopping at the prior successful scan time with a one-second overlap;
+the first scan starts with a one-day window. Coverage is **provider-available
+recent history**, not a lifetime listening archive. Strava reads every accessible
+activity page on every sync, including older activities: activity start dates
+cannot identify later edits or uploads. Its page-number inventory is not an
+atomic snapshot; later scans can pick up changes made during a traversal.
+An empty Strava page ends enumeration; a short page does not. Provider permission
+filters still apply, and neither reader treats omitted records as deletions.
+Documents carry coverage, fetch time, scan bound and content-version metadata.
+Legacy connector endpoints retain their existing behavior.
+
+Provider contracts: [Spotify recent history](https://developer.spotify.com/documentation/web-api/reference/get-recently-played)
+and [Strava activities](https://developers.strava.com/docs/reference/#api-Activities-getLoggedInAthleteActivities).
 
 
 ### Import other existing account connections
