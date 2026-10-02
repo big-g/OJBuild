@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.fernet import InvalidToken
@@ -114,6 +115,26 @@ class TokenVault:
 
     def _marker(self):
         secure_write_json(self.path, {_REFERENCE: {"version": 1, "id": self.identity}})
+
+    @contextmanager
+    def inspect(self):
+        """Internal snapshot held against refresh/disconnect; do not migrate JSON.
+
+        Callers must never expose yielded values in public records or responses.
+        """
+        with self.store._lock(self.identity, blocking=True):
+            value = self._read()
+            if value is not None and self._reference(value):
+                with self.store._connection() as conn:
+                    row = self._row(conn)
+                if row is None:
+                    raise ValueError("Connector credential reference does not exist")
+                value = self._material(row, self.store._cipher())
+            try:
+                yield value
+            finally:
+                if value is not None:
+                    value.clear()
 
     def load(self):
         with self.store._lock(self.identity, exclusive=True, blocking=True):

@@ -51,6 +51,16 @@ class SafeSourceRoute(APIRoute):
         return handler
 
 
+class LegacyImportPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+
+
+class LegacyImportApply(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_token: str = Field(min_length=1, max_length=4096)
+
+
 class CredentialInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str
@@ -109,6 +119,26 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     def actor(request):
         user_id = getattr(request.state, "auth_user_id", None)
         return f"user:{user_id}" if user_id is not None else "server_access"
+
+    from openjarvis.connectors.source_imports import SourceImports
+
+    imports = SourceImports(manager)
+
+    @router.get("/imports")
+    def legacy_imports():
+        return {"imports": invoke(imports.list)}
+
+    @router.post("/imports/{import_id}/preview")
+    def preview_legacy_import(
+        import_id: str, req: LegacyImportPreview, request: Request
+    ):
+        return invoke(imports.preview, import_id, req.name, actor=actor(request))
+
+    @router.post("/imports/{import_id}")
+    def apply_legacy_import(import_id: str, req: LegacyImportApply, request: Request):
+        result = invoke(imports.apply, import_id, req.plan_token, actor=actor(request))
+        result.pop("legacy_document_ids")
+        return result
 
     @router.get("/audit")
     def audit(before_id: int | None = Query(None, ge=1)):

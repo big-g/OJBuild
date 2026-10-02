@@ -71,8 +71,12 @@ Automatic model routing is deferred; explicit model selection remains supported.
    bearer credentials; adapter-driven web configuration; isolated indexes and
    checkpoints; bounded search/block pagination and nested text reads; generic
    authenticated errors and no deletion inference from search omissions.
+   **Implemented:** explicit web preview/apply import of legacy Notion tokens;
+   expiring, identity-bound plans checked against current credentials and adapter
+   version; recoverable reserved identities; import audit events; original
+   connection retained and no automatic fetch or index reuse.
    **Next:** move the remaining token/OAuth integrations into named instances,
-   including explicit legacy-instance import and per-instance OAuth consent.
+   extend legacy imports to those adapters, and add per-instance OAuth consent.
    Secret-bearing fields must use protected references; never return credentials
    in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,

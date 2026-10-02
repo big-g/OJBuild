@@ -125,3 +125,21 @@ export const applySourceMigration = (plan: SourceMigrationPlan) =>
   request<SourceInstance>(`/${encodeURIComponent(plan.source_id)}/migration`, 'POST', { revision: plan.revision, plan_token: plan.plan_token });
 export const listSourceAudit = (id?: string, beforeId?: number) =>
   request<{ events: SourceAuditEvent[] }>(`${id ? `/${encodeURIComponent(id)}` : ''}/audit${beforeId === undefined ? '' : `?before_id=${beforeId}`}`);
+
+
+export interface LegacySourceImport {
+  import_id: string; display_name: string; adapter_id: string;
+  state: 'available' | 'unavailable' | 'imported' | 'removed'; source_id: string | null;
+}
+export interface LegacySourceImportPlan {
+  import_id: string; adapter_id: string; name: string; credential_origin: string;
+  fresh_index: boolean; legacy_connection_kept: boolean; expires_in_seconds: number;
+  config_version: number; config: SourceConfig;
+  settings: { label: string; value: string | number | boolean }[];
+  plan_token: string;
+}
+export const listLegacySourceImports = () => request<{ imports: LegacySourceImport[] }>('/imports');
+export const previewLegacySourceImport = (id: string, name: string) =>
+  request<LegacySourceImportPlan>(`/imports/${encodeURIComponent(id)}/preview`, 'POST', { name });
+export const applyLegacySourceImport = (plan: LegacySourceImportPlan) =>
+  request<SourceInstance>(`/imports/${encodeURIComponent(plan.import_id)}`, 'POST', { plan_token: plan.plan_token });

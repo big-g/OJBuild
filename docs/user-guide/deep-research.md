@@ -585,5 +585,46 @@ explicit source removal or configuration reset remains available for cleanup.
 The old single-account Notion connector retains its separate identity and setup.
 It is not automatically imported or disabled by creating a named instance; avoid
 syncing both against the same pages if you want to avoid duplicate legacy evidence.
-Other token integrations, explicit legacy imports and per-instance OAuth consent
-remain subsequent Phase 2 work.
+Other token integrations and per-instance OAuth consent remain subsequent
+Phase 2 work. The Notion import flow below can reuse an existing server token.
+
+
+### Import an existing Notion connection
+
+Under **Data Sources → Configured sources → Import existing connections**, choose
+**Import Notion**, enter a name, and select **Preview import**. The preview shows
+the named adapter's default scan settings, protected credential origin and import
+effects. Select **Apply import** to create the named connection without entering
+or displaying its token in the browser. The token is copied server-side to a new
+origin-bound bearer credential in the encrypted vault.
+
+Preview does not create a source, copy a credential, rewrite legacy JSON or
+contact Notion. Applying the import also performs no provider request and does not
+start syncing. A valid plaintext legacy credential file is upgraded to a vault
+reference during apply. Existing vault references and the original connection are
+kept. The named instance starts with its own empty index and checkpoint; existing
+legacy documents are neither copied nor deleted. Choose **Sync** when ready.
+
+Preview tickets expire after ten minutes and bind to the verified session identity
+(or shared server-access context), adapter version, chosen name, settings and
+current legacy credential snapshot. If the old token changes or is disconnected,
+preview again. Tickets are sent in authenticated request bodies, never URL query
+strings; source and audit responses contain no tokens or secret fingerprints.
+
+Imports reserve persistent source and credential IDs before copying the token.
+If the process stops after saving a credential but before committing the source,
+retry with a valid preview to reuse those IDs. Source creation, the completed
+import marker and its audit event commit together. A retry after completion returns
+the existing source; it does not copy another credential or reset edited settings.
+A pending credential that was independently rotated is never silently overwritten.
+
+Each legacy Notion connection can be imported once. Removing the imported source
+keeps a record of that import, so replaying an old request cannot recreate it. Use
+**Add source** for a deliberate new connection. New named sources and legacy
+connections have independent credentials; changing one token does not rotate the
+other. After checking the named source, use the existing connection controls to
+retire the old integration if you want to stop indexing the same pages twice.
+
+Only trusted, server-defined import recipes are supported. Clients cannot choose
+arbitrary credential paths or provider origins. Notion is the first recipe; the
+registry and persistent import tracking support subsequent token adapters.

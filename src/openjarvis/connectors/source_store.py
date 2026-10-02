@@ -29,7 +29,7 @@ class SourceStore:
         with self.connection() as conn:
             conn.execute("PRAGMA journal_mode=WAL")
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version > 3:
+            if version > 4:
                 raise ValueError("Source database uses an unsupported schema version")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sources (
@@ -43,12 +43,16 @@ class SourceStore:
                 CREATE TABLE IF NOT EXISTS source_migrations (
                     name TEXT PRIMARY KEY
                 );
+                CREATE TABLE IF NOT EXISTS source_imports (
+                    name TEXT PRIMARY KEY, source_id TEXT NOT NULL UNIQUE,
+                    credential_id TEXT NOT NULL UNIQUE, completed INTEGER NOT NULL
+                );
 
             """)
             from openjarvis.connectors.source_audit import SCHEMA as AUDIT_SCHEMA
             from openjarvis.connectors.source_jobs import SCHEMA
 
-            conn.executescript(SCHEMA + AUDIT_SCHEMA + "PRAGMA user_version=3;")
+            conn.executescript(SCHEMA + AUDIT_SCHEMA + "PRAGMA user_version=4;")
         legacy = (
             Path(legacy_path)
             if legacy_path
@@ -95,27 +99,41 @@ class SourceStore:
         self, adapter_id: str, name: str, config: dict, version: int, *, actor="system"
     ) -> dict:
         source_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc).isoformat()
         with self.connection() as conn:
-            conn.execute(
-                "INSERT INTO sources (id,adapter_id,name,config,config_version,"
-                "revision,enabled,legacy_document_ids,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,1,1,0,?,?)",
-                (source_id, adapter_id, name, json.dumps(config), version, now, now),
-            )
-            record = self._record(
-                conn.execute(
-                    "SELECT * FROM sources WHERE id=?", (source_id,)
-                ).fetchone()
-            )
-            append_event(
-                conn,
-                record,
-                "created",
-                actor=actor,
-                fields=("name", "config", "enabled"),
+            self._insert_source(
+                conn, source_id, adapter_id, name, config, version, actor
             )
         return self.get(source_id)
+
+    def _insert_source(
+        self,
+        conn,
+        source_id,
+        adapter_id,
+        name,
+        config,
+        version,
+        actor,
+        *,
+        action="created",
+    ):
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO sources (id,adapter_id,name,config,config_version,"
+            "revision,enabled,legacy_document_ids,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,1,1,0,?,?)",
+            (source_id, adapter_id, name, json.dumps(config), version, now, now),
+        )
+        record = self._record(
+            conn.execute("SELECT * FROM sources WHERE id=?", (source_id,)).fetchone()
+        )
+        append_event(
+            conn,
+            record,
+            action,
+            actor=actor,
+            fields=("name", "config", "enabled"),
+        )
 
     def update(
         self,

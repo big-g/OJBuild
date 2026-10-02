@@ -5,6 +5,7 @@ import {
 } from '../../lib/sources-api';
 import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } from '../../lib/sources-api';
 import './SourceManagerPanel.css';
+import { LegacySourceImportsPanel } from './LegacySourceImportsPanel';
 import { CredentialManagerPanel } from './CredentialManagerPanel';
 import { SourceSyncControls } from './SourceSyncControls';
 import { SourceAuditHistory, SourceEvolutionControls } from './SourceEvolutionControls';
@@ -155,6 +156,7 @@ export function SourceManagerPanel() {
         }}>Remove</button>
       </div>
     </article>)}
+    <LegacySourceImportsPanel refresh={refresh} />
     <SourceAuditHistory />
     <CredentialManagerPanel credentials={credentials} refresh={refresh} />
     {editing !== undefined && adapter && <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>

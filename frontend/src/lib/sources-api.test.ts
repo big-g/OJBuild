@@ -77,3 +77,20 @@ it('uses authenticated migration preview/apply and cursor audit routes', async (
   expect(apiFetch.mock.calls.map(([url]) => url)).toEqual(['/v1/sources/instance-1/migration/preview', '/v1/sources/instance-1/migration', '/v1/sources/instance-1/audit?before_id=20', '/v1/sources/audit']);
   expect(JSON.parse(String(apiFetch.mock.calls[1][1]?.body))).toEqual({ revision: 7, plan_token: 'a'.repeat(64) });
 });
+
+it('keeps legacy import tickets in authenticated request bodies', async () => {
+  const { listLegacySourceImports, previewLegacySourceImport, applyLegacySourceImport } = await import('./sources-api');
+  await listLegacySourceImports();
+  await previewLegacySourceImport('provider/name', 'Work');
+  await applyLegacySourceImport({
+    import_id: 'provider/name', adapter_id: 'notion_pages', name: 'Work',
+    credential_origin: 'https://api.notion.com', config_version: 1, config: {}, settings: [],
+    fresh_index: true, legacy_connection_kept: true, expires_in_seconds: 600,
+    plan_token: 'private-import-ticket',
+  });
+  expect(apiFetch.mock.calls.map(([url]) => url)).toEqual([
+    '/v1/sources/imports', '/v1/sources/imports/provider%2Fname/preview', '/v1/sources/imports/provider%2Fname',
+  ]);
+  expect(JSON.parse(String(apiFetch.mock.calls[2][1]?.body))).toEqual({ plan_token: 'private-import-ticket' });
+  expect(apiFetch.mock.calls.map(([url]) => String(url)).join(' ')).not.toContain('private-import-ticket');
+});

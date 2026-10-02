@@ -29,6 +29,81 @@ def test_source_api_rejects_unauthenticated_access(client):
     assert client.get("/v1/sources").status_code == 200
 
 
+def test_legacy_import_preview_apply_and_replay_are_authenticated_and_secret_free(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    import httpx
+
+    from openjarvis.connectors.oauth import save_tokens
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Legacy import must not contact a provider")
+
+    monkeypatch.setattr(httpx, "get", forbidden)
+    monkeypatch.setattr(httpx, "post", forbidden)
+    save_tokens(
+        str(tmp_path / "connectors" / "notion.json"),
+        {"token": "legacy-protected-notion-api-token"},
+    )
+    paths = [
+        "/v1/sources/imports",
+        "/v1/sources/imports/notion/preview",
+        "/v1/sources/imports/notion",
+    ]
+    assert client.get(paths[0], headers={"Authorization": ""}).status_code == 401
+    assert (
+        client.post(
+            paths[1], json={"name": "Work"}, headers={"Authorization": ""}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            paths[2], json={"plan_token": "invalid"}, headers={"Authorization": ""}
+        ).status_code
+        == 401
+    )
+    status = client.get(paths[0])
+    assert status.json()["imports"][0]["state"] == "available"
+    preview = client.post(paths[1], json={"name": "Work"})
+    assert preview.status_code == 200
+    assert client.get("/v1/sources").json()["sources"] == []
+    payload = {"plan_token": preview.json()["plan_token"]}
+    applied = client.post(paths[2], json=payload)
+    assert applied.status_code == 200
+    assert client.post(paths[2], json=payload).json()["id"] == applied.json()["id"]
+    for response in (
+        status,
+        preview,
+        applied,
+        client.get("/v1/sources/credentials"),
+        client.get("/v1/sources/audit"),
+    ):
+        assert "legacy-protected-notion-api-token" not in response.text
+    assert "legacy_document_ids" not in applied.json()
+
+
+def test_import_api_rejects_arbitrary_fields_without_echoing_them(client):
+    response = client.post(
+        "/v1/sources/imports/notion/preview",
+        json={
+            "name": "Work",
+            "token": "protected-invalid-import-token",
+            "path": "/other/file",
+        },
+    )
+    assert response.status_code == 422
+    assert "protected-invalid-import-token" not in response.text
+    assert (
+        client.post(
+            "/v1/sources/imports/unknown/preview", json={"name": "Work"}
+        ).status_code
+        == 400
+    )
+
+
 def test_named_notion_configuration_is_discovered_and_keeps_credentials_private(client):
     definitions = client.get("/v1/sources/adapters").json()["adapters"]
     notion = next(item for item in definitions if item["adapter_id"] == "notion_pages")

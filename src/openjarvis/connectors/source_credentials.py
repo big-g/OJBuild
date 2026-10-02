@@ -177,6 +177,9 @@ class CredentialStore:
         ).encode()
 
     def create(self, name: str, kind: str, origin: str, secret: str, header_name=""):
+        return self._create(name, kind, origin, secret, header_name, str(uuid.uuid4()))
+
+    def _create(self, name, kind, origin, secret, header_name, identity):
         secret = _secret(secret)
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
             raise ValueError("Credential name must contain 1–120 characters")
@@ -196,7 +199,7 @@ class CredentialStore:
             raise ValueError("API key header must be a non-reserved HTTP header name")
         now = datetime.now(timezone.utc).isoformat()
         row = dict(
-            id=str(uuid.uuid4()),
+            id=identity,
             name=name.strip(),
             kind=kind,
             origin=normalized,
@@ -222,6 +225,37 @@ class CredentialStore:
                 ),
             )
         return self._public(row)
+
+    @contextmanager
+    def imported_bearer(self, identity, name, origin, secret):
+        """Recover a reserved import credential and hold it through source commit."""
+        import hmac
+
+        identity = str(uuid.UUID(identity))
+        secret = _secret(secret)
+        with self._lock(identity, exclusive=True):
+            with self._connection() as conn:
+                exists = conn.execute(
+                    "SELECT 1 FROM credentials WHERE id=?", (identity,)
+                ).fetchone()
+            if exists:
+                row = self._row(identity)
+                material = self.material(row)
+                try:
+                    if (
+                        row["kind"] != "bearer"
+                        or row["origin"] != credential_origin(origin)
+                        or not hmac.compare_digest(material["secret"], secret)
+                    ):
+                        raise SourceConflict(
+                            "Import credential changed; review it before retrying"
+                        )
+                finally:
+                    material.clear()
+                public = self._public(row)
+            else:
+                public = self._create(name, "bearer", origin, secret, "", identity)
+            yield public
 
     @contextmanager
     def bound(self, identity: str, url: str, kinds: tuple[str, ...]):
