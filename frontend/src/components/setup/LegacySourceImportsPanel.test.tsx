@@ -19,3 +19,32 @@ it('reviews import effects and expiry without rendering its control ticket', () 
   expect(html).not.toContain('private-preview-ticket');
   expect(html).not.toContain('type="password"');
 });
+
+it('describes OAuth bundles without claiming an origin restriction or narrower permissions', () => {
+  const html = renderToStaticMarkup(<LegacySourceImportReview plan={{
+    import_id: 'gmail', adapter_id: 'gmail_account', name: 'Work mail',
+    credential_origin: 'https://www.googleapis.com', credential_storage: 'bundle',
+    oauth_grant_preserved: true, refresh_available: true,
+    config_version: 1, config: {}, settings: [], fresh_index: true,
+    legacy_connection_kept: true, expires_in_seconds: 600, plan_token: 'private-import-ticket',
+  }} />);
+  expect(html).toContain('encrypted account credential bundle');
+  expect(html).toContain('does not narrow');
+  expect(html).toContain('Refresh credentials will be copied');
+  expect(html).toContain('refresh-token rotation can affect both');
+  expect(html).not.toContain('restricted to');
+  expect(html).not.toContain('private-import-ticket');
+});
+
+it('explains that access-only imports will need new authorization', () => {
+  const html = renderToStaticMarkup(<LegacySourceImportReview plan={{
+    import_id: 'spotify', adapter_id: 'spotify_account', name: 'Music',
+    credential_origin: 'https://api.spotify.com', credential_storage: 'bundle',
+    oauth_grant_preserved: true, refresh_available: false,
+    config_version: 1, config: {}, settings: [], fresh_index: true,
+    legacy_connection_kept: true, expires_in_seconds: 600, plan_token: 'private-ticket',
+  }} />);
+  expect(html).toContain('No refresh credentials are available');
+  expect(html).toContain('access token expires');
+  expect(html).not.toContain('private-ticket');
+});

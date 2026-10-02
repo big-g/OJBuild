@@ -4,8 +4,12 @@ import type { LegacySourceImport, LegacySourceImportPlan } from '../../lib/sourc
 
 export function LegacySourceImportReview({ plan }: { plan: LegacySourceImportPlan }) {
   return <div aria-label="Import preview">
-    <p>Import as <strong>{plan.name}</strong> using a protected credential restricted to {plan.credential_origin}.</p>
-    <p>Settings: {plan.settings.map(({ label, value }) => `${label}: ${String(value) || 'Not set'}`).join(' · ')}</p>
+    <p>Import as <strong>{plan.name}</strong> using {plan.credential_storage === 'bundle' ? 'an encrypted account credential bundle for' : 'a protected credential restricted to'} {plan.credential_origin}.</p>
+    {plan.oauth_grant_preserved && <>
+      <p>The existing OAuth grant is preserved. Import does not narrow its permissions. Reauthorize the named account to request its current read permissions.</p>
+      <p>{plan.refresh_available ? 'Refresh credentials will be copied. Both connections may share a provider grant; provider revocation or refresh-token rotation can affect both.' : 'No refresh credentials are available. Authorize the named account again when its access token expires.'}</p>
+    </>}
+    <p>Settings: {plan.settings.length ? plan.settings.map(({ label, value }) => `${label}: ${String(value) || 'Not set'}`).join(' · ') : 'Provider defaults'}</p>
     <p>A new, independent index will be created when you choose Sync. Existing documents and the original connection will be kept.</p>
     <p>Import does not contact the provider or start syncing. This preview expires in {Math.floor(plan.expires_in_seconds / 60)} minutes.</p>
   </div>;

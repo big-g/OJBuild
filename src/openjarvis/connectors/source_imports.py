@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 
 from cryptography.fernet import InvalidToken
 
+from openjarvis.connectors.instance_sources import ACCOUNT_READERS, token_path
+from openjarvis.connectors.oauth import (
+    GOOGLE_ALL_SCOPES,
+    connector_scopes,
+    get_provider_for_connector,
+)
 from openjarvis.connectors.source_adapters import get_adapter
 from openjarvis.connectors.source_credentials import _secret
 from openjarvis.connectors.source_store import SourceConflict
@@ -24,6 +32,8 @@ class LegacyImport:
     filename: str
     origin: str
     token_field: str = "token"
+    storage: str = "bearer"
+    fallback_filename: str = ""
 
 
 # Trusted definitions only: clients cannot supply files, origins or token fields.
@@ -32,6 +42,153 @@ _IMPORTS = {
         "notion", "Notion", "notion_pages", "notion.json", "https://api.notion.com"
     ),
 }
+
+
+# Primary names match the legacy readers. Google falls back only when the
+# product-specific file is absent, exactly as the legacy credential resolver.
+_ACCOUNT_ORIGINS = {
+    "gmail": "https://www.googleapis.com",
+    "gdrive": "https://www.googleapis.com",
+    "gcalendar": "https://www.googleapis.com",
+    "gcontacts": "https://people.googleapis.com",
+    "google_tasks": "https://tasks.googleapis.com",
+    "spotify": "https://api.spotify.com",
+    "strava": "https://www.strava.com",
+    "slack": "https://slack.com",
+    "dropbox": "https://api.dropboxapi.com",
+    "granola": "https://public-api.granola.ai",
+    "oura": "https://api.ouraring.com",
+    "github_notifications": "https://api.github.com",
+    "weather": "https://api.openweathermap.org",
+}
+for _service, (_, _, _, _auth) in ACCOUNT_READERS.items():
+    _provider = get_provider_for_connector(_service)
+    _filename = (
+        "github.json" if _service == "github_notifications" else f"{_service}.json"
+    )
+    _fallback = (
+        "google.json"
+        if _provider and _provider.name == "google"
+        else "github_notifications.json"
+        if _service == "github_notifications"
+        else ""
+    )
+    _IMPORTS[_service] = LegacyImport(
+        _service,
+        _service.replace("_", " ").title(),
+        f"{_service}_account",
+        _filename,
+        _ACCOUNT_ORIGINS[_service],
+        "access_token"
+        if _auth == "oauth"
+        else "api_key"
+        if _service == "weather"
+        else "token",
+        "bundle",
+        _fallback,
+    )
+
+
+def _account_payload(definition, values):
+    """Normalize trusted reader fields only; never copy URLs or arbitrary keys."""
+    adapter = get_adapter(definition.adapter_id)
+    service = adapter.connection_service
+    if not service:
+        raise ValueError("Missing account adapter")
+    config = adapter.validate_config(
+        {"location": values.get("location")} if service == "weather" else {}
+    )
+    if adapter.connection_auth == "token":
+        token = _secret(values.get(definition.token_field))
+        if service == "slack" and not token.startswith("xoxp-"):
+            raise ValueError("Slack requires a user token")
+        if service == "weather" and token in config["location"]:
+            raise ValueError("Location contains protected credential material")
+        return config, {definition.token_field: token}
+
+    # Old Google readers accept a pasted token under "token". Normalize it to
+    # the named-account key; a minimal access-only grant remains importable.
+    access = values.get("access_token", values.get("token"))
+    bundle = {"access_token": _secret(access)}
+    for key in ("refresh_token", "client_id", "client_secret"):
+        if values.get(key) not in (None, ""):
+            bundle[key] = _secret(values[key])
+    if bool(bundle.get("client_id")) != bool(bundle.get("client_secret")):
+        raise ValueError("Incomplete application registration")
+    if bundle.get("refresh_token") and not bundle.get("client_id"):
+        raise ValueError("Refresh requires an application registration")
+    for key in ("expires_at", "expires_in"):
+        if key in values:
+            value = values[key]
+            if type(value) not in (int, float) or (
+                type(value) is float and not math.isfinite(value)
+            ):
+                raise ValueError("Invalid token expiry")
+            if key == "expires_in" and not 0 < value <= 31536000:
+                raise ValueError("Invalid token expiry")
+            if key == "expires_at" and not 0 <= value <= 253402300799:
+                raise ValueError("Invalid token expiry")
+            bundle[key] = value
+    if values.get("token_type") is not None:
+        if values["token_type"] != "Bearer":
+            raise ValueError("Unsupported token type")
+        bundle["token_type"] = "Bearer"
+    provider = get_provider_for_connector(service)
+    if provider is None:
+        raise ValueError("Missing OAuth provider")
+    allowed = set(provider.scopes)
+    if provider.name == "google":
+        allowed.update(GOOGLE_ALL_SCOPES)
+        allowed.update(
+            {
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/userinfo.profile",
+            }
+        )
+        for product in provider.connector_ids:
+            allowed.update(connector_scopes(provider, product))
+    scopes = values.get("requested_scopes")
+    if scopes is None and values.get("scope") is not None:
+        if not isinstance(values["scope"], str):
+            raise ValueError("Invalid grant metadata")
+        scopes = values["scope"].split()
+    if scopes is not None:
+        if (
+            not isinstance(scopes, list)
+            or not scopes
+            or len(scopes) > 30
+            or any(
+                not isinstance(scope, str) or scope not in allowed for scope in scopes
+            )
+        ):
+            raise ValueError("Invalid grant metadata")
+        needed = set(connector_scopes(provider, service))
+        # Preserve older Google write grants that contain the requested read
+        # access. Import never upgrades, narrows or claims to verify a grant.
+        equivalents = {
+            "https://www.googleapis.com/auth/calendar.readonly": "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/gmail.readonly": "https://www.googleapis.com/auth/gmail.modify",
+        }
+        if any(
+            scope not in scopes and equivalents.get(scope) not in scopes
+            for scope in needed
+        ):
+            raise ValueError("Legacy grant does not cover this product")
+        preserved = set(scopes)
+        if provider.name == "google":
+            for short, full in (
+                ("email", "https://www.googleapis.com/auth/userinfo.email"),
+                ("profile", "https://www.googleapis.com/auth/userinfo.profile"),
+            ):
+                if short in preserved or full in preserved:
+                    preserved.update((short, full))
+        bundle["requested_scopes"] = sorted(preserved)
+    else:
+        # This is a refresh response allowlist, not a claim about actual grants.
+        # Missing grant metadata cannot prove least privilege; the web review
+        # explicitly recommends new consent for all imported OAuth grants.
+        bundle["requested_scopes"] = sorted(allowed)
+    return config, bundle
 
 
 class SourceImports:
@@ -45,9 +202,22 @@ class SourceImports:
             raise ValueError("Unsupported legacy integration import") from None
 
     def _vault(self, definition):
-        return TokenVault(
-            self.manager.store.path.parent / "connectors" / definition.filename
-        )
+        directory = self.manager.store.path.parent / "connectors"
+        path = directory / definition.filename
+        if not path.exists() and not path.is_symlink() and definition.fallback_filename:
+            path = directory / definition.fallback_filename
+        return TokenVault(path)
+
+    def _prepared(self, definition, values):
+        if not values:
+            raise ValueError("Missing legacy connection")
+        if definition.storage == "bundle":
+            return _account_payload(definition, values)
+        _secret(values.get(definition.token_field))
+        adapter = get_adapter(definition.adapter_id)
+        config = adapter.validate_config({"credential_id": str(uuid.uuid4())})
+        config.pop("credential_id")
+        return config, None
 
     @staticmethod
     def _fingerprint(values):
@@ -88,8 +258,8 @@ class SourceImports:
             else:
                 try:
                     with self._vault(definition).inspect() as values:
-                        if values and _secret(values.get(definition.token_field)):
-                            state = "available"
+                        self._prepared(definition, values)
+                        state = "available"
                 except (ValueError, OSError):
                     pass
             result.append(
@@ -108,15 +278,13 @@ class SourceImports:
         name = self.manager._name(name)
         existing = self._completed(self._mapping(identity))
         adapter = get_adapter(definition.adapter_id)
-        defaults = adapter.validate_config({"credential_id": str(uuid.uuid4())})
-        defaults.pop("credential_id")
         if existing:
             raise SourceConflict("This integration has already been imported")
         try:
-            with self._vault(definition).inspect() as values:
-                if not values:
-                    raise ValueError("Missing legacy connection")
-                _secret(values.get(definition.token_field))
+            vault = self._vault(definition)
+            with vault.inspect() as values:
+                defaults, bundle = self._prepared(definition, values)
+                binding = vault.binding
                 # The secret-derived digest is encrypted inside the ticket.
                 # The public preview contains no credential value or fingerprint.
                 ticket = (
@@ -132,6 +300,7 @@ class SourceImports:
                                 "adapter_version": adapter.config_version,
                                 "config": defaults,
                                 "fingerprint": self._fingerprint(values),
+                                "legacy_binding": binding,
                             }
                         ).encode()
                     )
@@ -141,11 +310,17 @@ class SourceImports:
             raise ValueError(
                 "Legacy connection is unavailable; check its vault and token"
             ) from None
+        refresh_available = bool(bundle and bundle.get("refresh_token"))
+        if bundle:
+            bundle.clear()
         return {
             "import_id": identity,
             "adapter_id": definition.adapter_id,
             "name": name,
             "credential_origin": definition.origin,
+            "credential_storage": definition.storage,
+            "oauth_grant_preserved": adapter.connection_auth == "oauth",
+            "refresh_available": refresh_available,
             "config_version": adapter.config_version,
             "config": defaults,
             "settings": [
@@ -160,18 +335,47 @@ class SourceImports:
             "plan_token": ticket,
         }
 
-    def _reserve(self, identity):
+    def _reserve(self, identity, definition):
         with self.manager.store.connection() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            source_id = str(uuid.uuid4())
+            credential_id = (
+                str(
+                    uuid.uuid5(
+                        uuid.NAMESPACE_URL, f"connectors/instance-{source_id}.json"
+                    )
+                )
+                if definition.storage == "bundle"
+                else str(uuid.uuid4())
+            )
             conn.execute(
                 "INSERT OR IGNORE INTO source_imports VALUES (?,?,?,0)",
-                (identity, str(uuid.uuid4()), str(uuid.uuid4())),
+                (identity, source_id, credential_id),
             )
             return dict(
                 conn.execute(
                     "SELECT * FROM source_imports WHERE name=?", (identity,)
                 ).fetchone()
             )
+
+    @contextmanager
+    def _imported_credential(self, definition, mapping, name, values, bundle):
+        if definition.storage == "bundle":
+            destination = TokenVault(
+                token_path(self.manager.store.path.parent, mapping["source_id"])
+            )
+            if destination.identity != mapping["credential_id"]:
+                raise SourceConflict("Reserved credential binding changed")
+            with destination.imported_bundle(bundle):
+                yield
+        else:
+            with self.manager.credentials.imported_bearer(
+                mapping["credential_id"],
+                name,
+                definition.origin,
+                _secret(values.get(definition.token_field)),
+            ):
+                yield
 
     def apply(self, identity, plan_token, *, actor="system"):
         definition = self._definition(identity)
@@ -204,26 +408,34 @@ class SourceImports:
             vault = self._vault(definition)
             try:
                 # Also upgrade a plaintext legacy file to its protected reference.
+                if vault.binding != plan.get("legacy_binding"):
+                    raise SourceConflict(
+                        "Legacy credential selection changed; preview again"
+                    )
                 vault.load()
                 with vault.inspect() as values:
-                    if not values or self._fingerprint(values) != plan["fingerprint"]:
+                    if (
+                        self._vault(definition).binding != vault.binding
+                        or not values
+                        or self._fingerprint(values) != plan["fingerprint"]
+                    ):
                         raise SourceConflict("Legacy connection changed; preview again")
-                    secret = _secret(values.get(definition.token_field))
-                    mapping = self._reserve(identity)
+                    defaults, bundle = self._prepared(definition, values)
+                    if defaults != plan["config"]:
+                        raise SourceConflict(
+                            "Legacy configuration changed; preview again"
+                        )
+                    mapping = self._reserve(identity, definition)
                     adapter = get_adapter(definition.adapter_id)
                     config = adapter.validate_config(
-                        {
-                            **plan["config"],
-                            "credential_id": mapping["credential_id"],
-                        }
+                        {**defaults, "credential_id": mapping["credential_id"]}
+                        if definition.storage == "bearer"
+                        else defaults
                     )
-                    # Stable reserved IDs make a crash after credential commit
-                    # recoverable without orphaning additional credential copies.
-                    with self.manager.credentials.imported_bearer(
-                        mapping["credential_id"],
-                        name,
-                        definition.origin,
-                        secret,
+                    # Hold the reserved credential lock through source commit;
+                    # a retry may reuse but never overwrite the same identity.
+                    with self._imported_credential(
+                        definition, mapping, name, values, bundle
                     ):
                         with self.manager.store.connection() as conn:
                             conn.execute("BEGIN IMMEDIATE")

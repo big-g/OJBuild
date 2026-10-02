@@ -626,8 +626,8 @@ other. After checking the named source, use the existing connection controls to
 retire the old integration if you want to stop indexing the same pages twice.
 
 Only trusted, server-defined import recipes are supported. Clients cannot choose
-arbitrary credential paths or provider origins. Notion is the first recipe; the
-registry and persistent import tracking support subsequent token adapters.
+arbitrary credential paths or provider origins. Notion and the named account
+adapters use the same registry and persistent import tracking. See the account import instructions below.
 
 
 ### Named token and OAuth accounts
@@ -675,6 +675,60 @@ items. Named reads stage up to 10,000 documents / 32 MiB of text before indexing
 an error propagated by a reader or a staging limit fails the scan without
 yielding a partial batch. Some existing readers use best-effort item reads; the
 bridge preserves that behavior until their scan contracts are strengthened.
-Full provider-specific snapshot/deletion contracts, explicit import
-recipes beyond Notion, and named IMAP password connections remain separate
-roadmap items. No legacy connection is silently converted or disconnected.
+Full provider-specific snapshot/deletion contracts and named IMAP password
+connections remain separate roadmap items. No legacy connection is silently
+converted or disconnected.
+
+
+### Import other existing account connections
+
+**Configured sources → Import existing connections** now offers imports for
+Gmail, Google Drive, Calendar, Contacts, Tasks, Spotify, Strava, Slack, Dropbox,
+Granola, Oura, GitHub Notifications and Weather, alongside Notion. An entry is
+available when its legacy server credential bundle has the fields required by
+that adapter. This checks stored format, not live provider access. Unsupported
+or incomplete bundles remain unavailable; configure a new named account instead.
+
+Choose **Import**, enter a name, review **Preview import**, and select **Apply
+import**. Token credentials and complete OAuth bundles are copied into an
+independent encrypted vault binding for the new source. OAuth refresh tokens and
+application credentials are retained when present and complete. Access-only
+OAuth tokens can also be imported; the review explains that new authorization
+will be needed when the access token expires. Weather's location becomes normal
+source configuration while its API key stays in the encrypted bundle. No token,
+client secret, credential file path, or secret fingerprint appears in the preview.
+
+Google imports prefer the product's existing credential file. Only when it is
+absent do they use the legacy shared `google.json`, matching the old readers.
+A present but unusable product file does not silently switch accounts. Preview
+and apply bind to both the selected file and its credential snapshot; changing
+which file is selected, refreshing/rotating the old credential, or disconnecting
+it requires a fresh preview. GitHub Notifications recognizes the reader's
+`github.json` file and the older `github_notifications.json` alias.
+
+Import preserves the existing provider grant, including broader legacy Google
+permissions; copying credentials does not narrow those permissions. The review
+recommends reauthorizing the named account to request the adapter's current read
+permissions. Copied OAuth credentials may still share a provider authorization
+with the old connection. Provider revocation or refresh-token rotation can affect
+both. After verifying the named source, retire the old connection to avoid
+parallel syncs and duplicate evidence; local disconnect does not revoke the
+provider-wide grant.
+
+Preview leaves the original file unchanged, including old plaintext JSON. Apply
+upgrades plaintext legacy credentials to encrypted vault references and makes a
+separate protected copy. It makes no provider requests, starts no sync, and
+neither imports nor deletes legacy indexed documents. Choose **Sync** to populate
+the named source's fresh index. A failed source commit or marker write can be
+retried using the same reserved source/bundle identities. Recovery never replaces
+an independently changed reserved credential. Completed retries preserve later
+named-source edits. Removing an imported source keeps an import tombstone and
+prevents replay from recreating it; use **Add source** for a deliberate new one.
+
+Each legacy integration has its own import tracking, so a shared Google
+registration can provide separate named product connections. Import plans expire
+after ten minutes and bind to the caller, trusted recipe, adapter version and
+current credential selection. A new preview is required after expiry or relevant
+changes. Credentials configured only through an in-memory constructor are not
+server files and cannot be imported by this flow. Password-based IMAP import
+waits for the named IMAP adapter.

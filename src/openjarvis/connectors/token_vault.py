@@ -6,6 +6,8 @@ returning its values. Missing keys and invalid references fail closed.
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -173,6 +175,58 @@ class TokenVault:
             if not referenced:
                 self._marker()
 
+    @contextmanager
+    def imported_bundle(self, tokens):
+        """Recover a reserved import without replacing independently changed data.
+
+        The caller holds this binding's exclusive lock through source commit.
+        Encrypted data commits first; a failed source transaction can reuse the
+        reserved identity. Existing ciphertext must decrypt and match exactly.
+        """
+        if not isinstance(tokens, dict) or _REFERENCE in tokens:
+            raise ValueError("Invalid imported credential bundle")
+        try:
+            with self.store._lock(self.identity, exclusive=True, blocking=True):
+                previous = self._read()
+                if previous is None and self.path.exists():
+                    raise SourceConflict("Reserved import credential changed")
+                referenced = previous is not None and self._reference(previous)
+                if previous is not None and not referenced:
+                    raise SourceConflict("Reserved import credential changed")
+                with self.store._connection() as conn:
+                    row = self._row(conn)
+                    if referenced and row is None:
+                        raise ValueError(
+                            "Connector credential reference does not exist"
+                        )
+                    cipher = self.store._cipher()
+                    if row is not None:
+                        material = self._material(row, cipher)
+                        try:
+
+                            def digest(value):
+                                return hashlib.sha256(
+                                    json.dumps(
+                                        value, sort_keys=True, separators=(",", ":")
+                                    ).encode()
+                                ).digest()
+
+                            if not hmac.compare_digest(
+                                digest(material), digest(tokens)
+                            ):
+                                raise SourceConflict(
+                                    "Reserved import credential changed"
+                                )
+                        finally:
+                            material.clear()
+                    else:
+                        self._write(conn, dict(tokens), cipher, row)
+                if not referenced:
+                    self._marker()
+                yield
+        finally:
+            tokens.clear()
+
     def delete(self):
         with self.store._lock(self.identity, exclusive=True, blocking=True):
             value = self._read()
@@ -208,6 +262,7 @@ def migrate_connector_tokens(directory: str | Path) -> int:
         "granola",
         "gmail_imap",
         "oura",
+        "github",
         "github_notifications",
         "weather",
     )

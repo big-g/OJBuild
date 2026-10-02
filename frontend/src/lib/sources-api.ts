@@ -134,6 +134,7 @@ export interface LegacySourceImport {
 }
 export interface LegacySourceImportPlan {
   import_id: string; adapter_id: string; name: string; credential_origin: string;
+  credential_storage?: 'bearer' | 'bundle'; oauth_grant_preserved?: boolean; refresh_available?: boolean;
   fresh_index: boolean; legacy_connection_kept: boolean; expires_in_seconds: number;
   config_version: number; config: SourceConfig;
   settings: { label: string; value: string | number | boolean }[];

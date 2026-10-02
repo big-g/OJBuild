@@ -83,8 +83,15 @@ Automatic model routing is deferred; explicit model selection remains supported.
    layer. Source revision checks and lifecycle locks reject stale changes;
    replacing authorization clears prior account evidence before accepting new
    credentials. Google consent stays scoped to the selected service.
-   **Next:** extend explicit legacy import recipes beyond Notion; strengthen
-   individual provider scan contracts, and add password-based IMAP instances.
+   **Implemented:** explicit legacy imports for all named account adapters;
+   complete encrypted OAuth bundles and token/API-key credentials; Weather
+   location normalization; Google product/shared-file selection and GitHub
+   filename compatibility. Bound previews reject credential/selection changes;
+   stable reserved vault bindings recover interrupted imports without overwriting
+   changed credentials. OAuth reviews disclose preserved grants and refresh-token
+   sharing; imports neither contact providers nor reuse legacy indexes.
+   **Next:** strengthen individual provider scan contracts and add password-based
+   IMAP instances.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,
