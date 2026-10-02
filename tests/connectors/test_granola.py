@@ -441,8 +441,11 @@ def test_handle_callback_persists_after_validation(mock_validate, connector) -> 
     connector.handle_callback("grl_good_key")
 
     mock_validate.assert_called_once_with("grl_good_key")
-    stored = json.loads(Path(connector._credentials_path).read_text())
+    from openjarvis.connectors.oauth import load_tokens
+
+    stored = load_tokens(connector._credentials_path)
     assert stored["token"] == "grl_good_key"
+    assert "grl_good_key" not in Path(connector._credentials_path).read_text()
 
 
 def test_handle_callback_invalid_key_does_not_overwrite_existing(connector) -> None:

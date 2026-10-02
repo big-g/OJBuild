@@ -10,6 +10,19 @@ class SyncCancelled(RuntimeError):
         super().__init__("Sync cancelled")
 
 
+class SyncLimitExceeded(ValueError):
+    """A trusted scan bound, safe to disclose without remote data or secrets."""
+
+    def __init__(self, kind):
+        label = {
+            "request": "request",
+            "document": "document",
+            "bytes": "byte",
+            "deadline": "time",
+        }[kind]
+        super().__init__(f"Source scan exceeded its {label} limit")
+
+
 class JobControl:
     def __init__(self, jobs, identity):
         self.jobs = jobs

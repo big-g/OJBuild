@@ -669,15 +669,12 @@ connections and original provider data are unaffected. Disconnect removes local
 authorization; it does not revoke the provider-wide grant. Removing the source
 also removes its encrypted bundle and pending consent attempts.
 
-Most adapters reuse the existing provider readers and retain their read limits
-and incremental behavior. They do not infer provider deletions from omitted
-items. Named reads stage up to 10,000 documents / 32 MiB of text before indexing;
-an error propagated by a reader or a staging limit fails the scan without
-yielding a partial batch. Some existing readers use best-effort item reads; the
-bridge preserves that behavior until their scan contracts are strengthened.
-Full provider-specific snapshot/deletion contracts and named IMAP password
-connections remain separate roadmap items. No legacy connection is silently
-converted or disconnected.
+Named account adapters use strict staged readers. They do not infer provider
+deletions from omitted items. Named reads stage up to 10,000 documents / 32 MiB
+of text before indexing; incomplete traversals and reader/staging limits fail
+without yielding a partial batch. Full provider-specific snapshot/deletion
+contracts and named IMAP password connections remain separate roadmap items.
+No legacy connection is silently converted or disconnected.
 
 Named Spotify and Strava sources use stricter readers. Each source's web form
 lets you set **Max pages** (default 100, maximum 250), **Max documents** (default
@@ -729,6 +726,54 @@ existing behavior. Pagination follows Slack's
 [collection contract](https://docs.slack.dev/apis/web-api/pagination/) and
 [history](https://docs.slack.dev/reference/methods/conversations.history/) /
 [thread](https://docs.slack.dev/reference/methods/conversations.replies/) methods.
+
+The remaining named readers—Gmail, Drive, Calendar, Contacts, Tasks, Dropbox,
+Granola, Oura, GitHub Notifications and Weather—now use adapter version 2. For an
+existing version-1 source, use **Preview configuration upgrade**, then
+**Apply configuration upgrade**, and
+sync again. The preview discloses an index reset; applying it clears that source's
+old evidence and checkpoint, retains its encrypted authorization, and advances
+the source revision. This prevents older conflated record identities or partial
+indexes from mixing with the new scans. New sources and legacy imports start
+at version 2; importing still neither contacts providers nor reuses old indexes.
+
+Their web forms expose **Max requests** (default 500, maximum 2,000), **Max
+documents** (default 5,000, maximum 10,000), and **Timeout seconds** (default 120,
+range 10–300). Each response is limited to 2 MiB and the full read to 16 MiB.
+Missing scopes, rate limits, failed detail/export/download requests, malformed
+pages, repeated records/cursors, cancellation and limits fail the whole read
+before indexing and preserve the last successful watermark. Limit errors name
+the exceeded bound without exposing credentials. Raise an adjustable limit and
+retry when necessary. Inventories/windows are reread to capture older edits;
+neither provider mutations during pagination nor omissions imply an atomic
+snapshot or authorize deletion.
+
+| Reader | Coverage and behavior |
+| --- | --- |
+| Gmail | Listed messages, including Spam/Trash; full message bodies and paginated inventory. File attachments are not downloaded; separately stored text bodies are read. Received timestamps come from `internalDate`. |
+| Drive | Nontrashed files in the user corpus, including supported shared-drive items. Incomplete searches fail. Docs/Sheets/Slides are exported; other MIME types remain explicitly metadata-only. Failed exports do not replace text with metadata. |
+| Calendar | All accessible calendar-list pages and event-resource pages. Recurring masters are retained without expanding infinite series. Calendar IDs scope event identities. |
+| Contacts | All connection pages. When no provider timestamp is available, the timestamp is explicitly the observation time. |
+| Tasks | All task-list/task pages, including completed, hidden and assigned tasks. List IDs scope task identities. |
+| Dropbox | Recursive available inventory. Text extensions are downloaded at their listed revision and verified against response metadata; other formats are metadata-only. Stable file IDs survive renames. |
+| Granola | Accessible summarized notes plus every transcript page. Detail calls omit inline transcripts to avoid the inline transcript-size limit. Unprocessed notes excluded by the provider remain outside coverage. |
+| Oura | Sleep, readiness and activity pages in a configurable UTC date window. **Lookback days** defaults to 30 (range 1–3,650), reread each sync. Separate record IDs preserve multiple sleep sessions on the same day. |
+| GitHub Notifications | Available read and unread notifications, bounded by scan start; validated next-page links remain on the notifications endpoint. |
+| Weather | Current observation plus four forecast intervals, staged together. Provider timestamps and interval times are retained; incomplete/malformed forecasts fail. |
+
+Weather keys remain in the vault and are injected into the pinned HTTPS request
+only after destination validation. They never appear in source URLs, evidence
+metadata, response request URLs or public status/error messages. Query-authenticated
+requests never follow redirects. Other provider credentials remain in trusted,
+origin-bound headers. Legacy connector endpoints retain their existing behavior.
+
+Provider contracts: [Google APIs](https://developers.google.com/workspace),
+[Dropbox](https://www.dropbox.com/developers/documentation/http/documentation),
+[Granola notes](https://docs.granola.ai/api-reference/get-note) and
+[transcripts](https://docs.granola.ai/api-reference/get-transcript),
+[Oura v2](https://api.ouraring.com/v2/docs),
+[GitHub notifications](https://docs.github.com/en/rest/activity/notifications), and
+[OpenWeather](https://openweathermap.org/api).
 
 
 ### Import other existing account connections

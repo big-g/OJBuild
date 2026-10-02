@@ -576,6 +576,9 @@ class _FakeResponse:
         self.status_code = status_code
         self._json = json_data or {}
         self.text = text
+        self.content = (
+            json.dumps(self._json).encode() if json_data is not None else text.encode()
+        )
 
     def json(self):
         return self._json
@@ -623,7 +626,8 @@ def test_401_triggers_refresh_and_retries_with_new_token(tmp_path: Path) -> None
 
     post_calls: list[dict] = []
 
-    def fake_post(url, *, data, timeout):
+    def fake_post(url, *, data, timeout, follow_redirects, trust_env):
+        assert follow_redirects is False and trust_env is False
         post_calls.append({"url": url, "data": dict(data)})
         return _FakeResponse(
             status_code=200,
@@ -654,7 +658,10 @@ def test_401_triggers_refresh_and_retries_with_new_token(tmp_path: Path) -> None
     }
 
     # The new access_token is persisted to the credentials file.
-    on_disk = json.loads(Path(creds_path).read_text(encoding="utf-8"))
+    from openjarvis.connectors.oauth import load_tokens
+
+    on_disk = load_tokens(creds_path)
+    assert "fresh-access-token" not in Path(creds_path).read_text()
     assert on_disk["access_token"] == "fresh-access-token"
     assert on_disk["token"] == "fresh-access-token"  # legacy key kept in sync
     assert on_disk["refresh_token"] == "stored-refresh-token"
@@ -754,7 +761,8 @@ def test_sync_recovers_when_list_returns_401(tmp_path: Path) -> None:
             json_data={"messages": [{"id": "msg-99"}]},
         )
 
-    def fake_post(url, *, data, timeout):
+    def fake_post(url, *, data, timeout, follow_redirects, trust_env):
+        assert follow_redirects is False and trust_env is False
         return _FakeResponse(
             status_code=200,
             json_data={"access_token": "fresh-token-after-401", "expires_in": 3599},
@@ -772,5 +780,8 @@ def test_sync_recovers_when_list_returns_401(tmp_path: Path) -> None:
     # First list call carried the stale token; second carried the fresh one.
     assert list_calls == ["Bearer old-access-token", "Bearer fresh-token-after-401"]
     # Creds file persisted the new token.
-    on_disk = json.loads(Path(creds_path).read_text(encoding="utf-8"))
+    from openjarvis.connectors.oauth import load_tokens
+
+    on_disk = load_tokens(creds_path)
+    assert "fresh-token-after-401" not in Path(creds_path).read_text()
     assert on_disk["access_token"] == "fresh-token-after-401"

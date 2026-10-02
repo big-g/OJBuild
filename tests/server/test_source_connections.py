@@ -364,7 +364,7 @@ def test_rotation_advances_revision_purges_previous_account_evidence(
     setup, monkeypatch
 ):
     from openjarvis.connectors._stubs import Document
-    from openjarvis.connectors.oura import OuraConnector
+    from openjarvis.connectors.provider_sources import ProviderSource
 
     client, manager, directory = setup
     record = source(setup, "oura")
@@ -374,7 +374,7 @@ def test_rotation_advances_revision_purges_previous_account_evidence(
             doc_id="1", source="oura", doc_type="text", content="Old account evidence"
         )
 
-    monkeypatch.setattr(OuraConnector, "sync", scan)
+    monkeypatch.setattr(ProviderSource, "sync", scan)
     response = client.put(
         path(record) + "/connection/token", json={"revision": 1, "token": "first"}
     )

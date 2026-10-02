@@ -105,9 +105,20 @@ Automatic model routing is deferred; explicit model selection remains supported.
    inference from missing or permission-filtered messages.
    **Implemented:** bounded SQLite WAL initialization retries for concurrent
    source-list and sync startup, with real reader-lock/concurrent-open tests.
-   **Next:** strengthen the remaining provider scan contracts (Google,
-   Dropbox, Granola, Oura, GitHub Notifications and Weather), then add
-   password-based IMAP instances.
+   **Implemented:** strict named Gmail, Drive, Calendar, Contacts, Tasks,
+   Dropbox, Granola, Oura, GitHub Notifications and Weather readers. Shared
+   bounded/pinned HTTP, staged validation, per-instance web limits and safe limit
+   errors; full accessible inventories or explicit windows reread for older
+   edits; all nested collections paginated. Content-read failures abort rather
+   than downgrade evidence. Scoped calendar/task IDs, per-record Oura identities,
+   revision-checked Dropbox downloads, paginated Granola transcripts and complete
+   weather response validation. OpenWeather query keys are injected only into
+   the pinned wire request, with secret-free stored URLs and no redirects.
+   Version-2 upgrade previews reset incompatible indexes/checkpoints while
+   preserving vault bindings. These scans do not infer deletion or claim atomic
+   snapshots; metadata-only/retention/window coverage remains explicit.
+   **Next:** add password-based IMAP instances, reusing the vault, source lifecycle
+   and bounded scan safeguards.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,

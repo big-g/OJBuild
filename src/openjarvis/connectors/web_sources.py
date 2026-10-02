@@ -13,7 +13,7 @@ from typing import Iterator
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
-from openjarvis.connectors.sync_control import SyncCancelled
+from openjarvis.connectors.sync_control import SyncCancelled, SyncLimitExceeded
 from openjarvis.core.registry import ConnectorRegistry
 from openjarvis.security.public_http import (
     fetch_public_source,
@@ -283,6 +283,10 @@ class _PublicSource(BaseConnector):
         except SyncCancelled:
             self._status.state = "cancelled"
             self._status.error = "Sync cancelled"
+            raise
+        except SyncLimitExceeded as exc:
+            self._status.state = "error"
+            self._status.error = str(exc)
             raise
         except Exception as exc:
             self._status.state = "error"

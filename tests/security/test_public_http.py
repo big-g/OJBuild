@@ -497,3 +497,99 @@ def test_pinned_fetch_cancellation_between_reads_closes_connection(monkeypatch):
             cancel_event=event,
         )
     connection.close.assert_called_once()
+
+
+def test_weather_query_secret_is_injected_only_into_pinned_wire_target(monkeypatch):
+    target = public_http.PublicTarget(
+        "https",
+        "api.openweathermap.org",
+        443,
+        "/data/2.5/weather?q=Boston",
+        "api.openweathermap.org",
+        ("93.184.216.34",),
+    )
+    connection = MagicMock()
+    connection.sock = None
+    response = MagicMock()
+    response.status = 200
+    response.length = 0
+    response.getheader.return_value = "identity"
+    response.getheaders.return_value = []
+    response.read1.side_effect = [b"{}", b""]
+    connection.getresponse.return_value = response
+    monkeypatch.setattr(
+        public_http, "PinnedHTTPSConnection", lambda *args, **kwargs: connection
+    )
+    value = public_http._request_source(
+        "https://api.openweathermap.org/data/2.5/weather?q=Boston",
+        target,
+        max_bytes=100,
+        deadline=public_http.time.monotonic() + 10,
+        accept="application/json",
+        credential_query={"appid": "protected-weather-key"},
+    )
+    assert (
+        connection.request.call_args.args[1]
+        == "/data/2.5/weather?q=Boston&appid=protected-weather-key"
+    )
+    assert "protected-weather-key" not in str(value.url)
+
+
+@pytest.mark.parametrize(
+    "origin,query",
+    [
+        ("https://attacker.example", {"appid": "secret"}),
+        ("https://api.openweathermap.org", {"token": "secret"}),
+        ("https://api.openweathermap.org", {"appid": "different"}),
+    ],
+)
+def test_query_authentication_is_restricted_to_trusted_weather_adapter(
+    monkeypatch, origin, query
+):
+    def forbidden(*args, **kwargs):
+        raise AssertionError("No DNS or HTTP before validating query authentication")
+
+    monkeypatch.setattr(public_http, "validate_public_url", forbidden)
+    with pytest.raises(ValueError):
+        public_http.fetch_public_source(
+            origin + "/",
+            accept="application/json",
+            authentication={
+                "origin": origin,
+                "secret": "secret",
+                "headers": {},
+                "query": query,
+            },
+        )
+
+
+@pytest.mark.parametrize("status", [301, 302, 307, 308])
+def test_weather_query_auth_never_follows_redirects(monkeypatch, status):
+    target = public_http.PublicTarget(
+        "https",
+        "api.openweathermap.org",
+        443,
+        "/data/2.5/weather?q=Boston",
+        "api.openweathermap.org",
+        ("93.184.216.34",),
+    )
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: target)
+    request = MagicMock(
+        return_value=httpx.Response(
+            status, headers={"Location": "https://api.openweathermap.org/other"}
+        )
+    )
+    monkeypatch.setattr(public_http, "_request_source", request)
+    with pytest.raises(ValueError, match="redirects"):
+        public_http.fetch_public_source(
+            "https://api.openweathermap.org/data/2.5/weather?q=Boston",
+            accept="application/json",
+            authentication={
+                "origin": "https://api.openweathermap.org",
+                "secret": "protected-key",
+                "headers": {},
+                "query": {"appid": "protected-key"},
+            },
+        )
+    assert request.call_count == 1
+    assert request.call_args.kwargs["credential_query"] == {"appid": "protected-key"}

@@ -57,6 +57,13 @@ def token_path(directory, identity):
 
 
 def validate_config(service, config):
+    from openjarvis.connectors.account_scans import (
+        REMAINING_SERVICES,
+        validate_scan_config,
+    )
+
+    if service in REMAINING_SERVICES:
+        return validate_scan_config(service, config)
     if service == "slack":
         from openjarvis.connectors.slack_sources import validate_slack_config
 
@@ -65,11 +72,6 @@ def validate_config(service, config):
         from openjarvis.connectors.activity_sources import validate_activity_config
 
         return validate_activity_config(config)
-    if service == "weather":
-        location = config.get("location", "")
-        if not isinstance(location, str) or not 1 <= len(location.strip()) <= 200:
-            raise ValueError("A weather location is required")
-        return {"location": location.strip()}
     if config:
         raise ValueError("This account adapter has no configuration fields")
     return {}
@@ -136,6 +138,22 @@ class AccountSource(BaseConnector):
         self.service = service
         self.connector_id = service
         self.path = token_path(directory, record["id"])
+        from openjarvis.connectors.account_scans import REMAINING_SERVICES
+
+        if service in REMAINING_SERVICES:
+            from openjarvis.connectors.google_sources import GoogleSource
+            from openjarvis.connectors.provider_sources import ProviderSource
+
+            reader_type = (
+                GoogleSource
+                if service
+                in {"gmail", "gdrive", "gcalendar", "gcontacts", "google_tasks"}
+                else ProviderSource
+            )
+            self.reader = reader_type(
+                service=service, token_path=str(self.path), config=record["config"]
+            )
+            return
         module, cls, argument, _ = ACCOUNT_READERS[service]
         reader_type = getattr(
             importlib.import_module(f"openjarvis.connectors.{module}"), cls
@@ -153,9 +171,6 @@ class AccountSource(BaseConnector):
             self.reader = ActivitySource(
                 service=service, token_path=str(self.path), config=record["config"]
             )
-        if service == "weather":
-            original = self.reader._load_config
-            self.reader._load_config = lambda: {**original(), **record["config"]}
 
     def is_connected(self):
         values = load_tokens(str(self.path)) or {}
@@ -195,9 +210,12 @@ class AccountSource(BaseConnector):
         except Exception:
             import sys
 
-            from openjarvis.connectors.sync_control import SyncCancelled
+            from openjarvis.connectors.sync_control import (
+                SyncCancelled,
+                SyncLimitExceeded,
+            )
 
-            if isinstance(sys.exception(), SyncCancelled):
+            if isinstance(sys.exception(), (SyncCancelled, SyncLimitExceeded)):
                 raise
             raise ValueError(
                 "Account sync failed; check this source authorization"
@@ -206,6 +224,9 @@ class AccountSource(BaseConnector):
 
 
 def register_instance_adapters(register, adapter_type):
+    from openjarvis.connectors.account_scans import LIMITS, REMAINING_SERVICES
+    from openjarvis.connectors.source_adapters import ConfigMigration
+
     for service, (_, _, _, auth) in ACCOUNT_READERS.items():
         display = service.replace("_", " ").title()
         fields = (
@@ -248,6 +269,29 @@ def register_instance_adapters(register, adapter_type):
                 }
                 for field, (default, maximum) in SLACK_LIMITS.items()
             )
+        if service in REMAINING_SERVICES:
+            fields += tuple(
+                {
+                    "name": field,
+                    "label": field.replace("_", " ").title(),
+                    "type": "number",
+                    "default_value": default,
+                    "min": 10 if field == "timeout_seconds" else 1,
+                    "max": maximum,
+                }
+                for field, (default, maximum) in LIMITS.items()
+            )
+            if service == "oura":
+                fields += (
+                    {
+                        "name": "lookback_days",
+                        "label": "Lookback days",
+                        "type": "number",
+                        "default_value": 30,
+                        "min": 1,
+                        "max": 3650,
+                    },
+                )
         register(
             adapter_type(
                 adapter_id=f"{service}_account",
@@ -266,6 +310,10 @@ def register_instance_adapters(register, adapter_type):
                 ),
                 connection_service=service,
                 connection_auth=auth,
+                config_version=2 if service in REMAINING_SERVICES else 1,
+                migrations=(ConfigMigration(1, lambda config: config),)
+                if service in REMAINING_SERVICES
+                else (),
                 required_capabilities=(
                     f"connector:{service}:read",
                     "network:fetch",

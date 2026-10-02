@@ -12,7 +12,7 @@ import socket
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import parse_qsl, urldefrag, urljoin, urlparse
+from urllib.parse import parse_qsl, urldefrag, urlencode, urljoin, urlparse
 
 import httpx
 
@@ -147,6 +147,7 @@ class PinnedHTTPSConnection(_PinnedConnectionMixin, http.client.HTTPSConnection)
 
 
 _SECRET_QUERY_KEYS = {
+    "appid",
     "key",
     "apikey",
     "api_key",
@@ -214,6 +215,7 @@ def _request_source(
     deadline: float,
     accept: str,
     credential_headers: dict[str, str] | None = None,
+    credential_query: dict[str, str] | None = None,
     cancel_event=None,
     method: str = "GET",
     body: bytes | None = None,
@@ -234,7 +236,13 @@ def _request_source(
         try:
             connection.request(
                 method,
-                target.request_target,
+                target.request_target
+                + (
+                    ("&" if "?" in target.request_target else "?")
+                    + urlencode(credential_query)
+                    if credential_query
+                    else ""
+                ),
                 **({"body": body} if body is not None else {}),
                 headers={
                     "Host": target.host_header,
@@ -344,6 +352,18 @@ def fetch_public_source(
                 raise ValueError(
                     "Authenticated redirects must stay on the credential HTTPS origin"
                 )
+            query = authentication.get("query")
+            # Only this trusted provider requires query authentication. Inject
+            # after validation, retaining a secret-free response/request URL.
+            if query is not None and (
+                authentication["origin"] != "https://api.openweathermap.org"
+                or not isinstance(query, dict)
+                or set(query) != {"appid"}
+                or not isinstance(secret, str)
+                or not secret
+                or query["appid"] != secret
+            ):
+                raise ValueError("Unsupported provider query authentication")
         if allowed_origin is not None and source_origin(current) != allowed_origin:
             raise ValueError("Paginated redirects must stay on the configured origin")
         target = validate_public_url(current)
@@ -360,8 +380,15 @@ def fetch_public_source(
                 if authentication
                 else {}
             ),
+            **(
+                {"credential_query": authentication["query"]}
+                if authentication and authentication.get("query")
+                else {}
+            ),
         )
         if response.status_code in {301, 302, 303, 307, 308}:
+            if authentication and authentication.get("query"):
+                raise ValueError("Query-authenticated redirects are not allowed")
             if method != "GET":
                 raise ValueError("Source POST redirects are not allowed")
             location = response.headers.get("location")
