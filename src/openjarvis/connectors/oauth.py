@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import os
 import secrets
 from dataclasses import dataclass, field
@@ -295,29 +294,20 @@ def resolve_google_credentials(connector_path: str) -> str:
 
 
 def load_tokens(path: str) -> Optional[Dict[str, Any]]:
-    """Load OAuth tokens from a JSON file.
+    """Load an encrypted bundle, migrating legacy JSON before returning it."""
+    from openjarvis.connectors.token_vault import TokenVault
 
-    Returns ``None`` if the file is missing, unreadable, or contains
-    invalid JSON.
-    """
     p = Path(path)
-    if not p.exists():
+    if not p.exists() and not p.is_symlink():
         return None
-    try:
-        raw = p.read_text(encoding="utf-8")
-        return json.loads(raw)
-    except (OSError, json.JSONDecodeError):
-        return None
+    return TokenVault(p).load()
 
 
 def save_tokens(path: str, tokens: Dict[str, Any]) -> None:
-    """Persist *tokens* to *path* as JSON with owner-only (0o600) permissions.
+    """Encrypt tokens and client secrets; persist only a reference at *path*."""
+    from openjarvis.connectors.token_vault import TokenVault
 
-    Creates parent directories as needed.
-    """
-    from openjarvis.security.file_utils import secure_write_json
-
-    secure_write_json(Path(path), tokens)
+    TokenVault(path).save(tokens)
 
 
 def require_access_token(tokens: Any) -> str:
@@ -342,10 +332,12 @@ def require_access_token(tokens: Any) -> str:
 
 
 def delete_tokens(path: str) -> None:
-    """Delete the credentials file at *path* if it exists."""
+    """Remove the connector reference and its encrypted credential bundle."""
+    from openjarvis.connectors.token_vault import TokenVault
+
     p = Path(path)
-    if p.exists():
-        p.unlink()
+    if p.parent.exists():
+        TokenVault(p).delete()
 
 
 def refresh_google_token(path: str) -> Optional[str]:

@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterator, Optional
 import httpx
 
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
+from openjarvis.connectors.oauth import delete_tokens, load_tokens, save_tokens
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
 from openjarvis.core.registry import ConnectorRegistry
 
@@ -41,7 +42,7 @@ class WeatherConnector(BaseConnector):
 
     def _load_config(self) -> Dict[str, str]:
         """Load API key and location from disk."""
-        data = json.loads(self._token_path.read_text(encoding="utf-8"))
+        data = load_tokens(str(self._token_path)) or {}
         return data
 
     def configure(self, *, api_key: str, location: str) -> None:
@@ -56,10 +57,8 @@ class WeatherConnector(BaseConnector):
             "https://api.openweathermap.org/data/2.5/weather",
             params={"q": location, "appid": api_key, "units": "imperial"},
         )
-        from openjarvis.security.file_utils import secure_write_json
-
-        secure_write_json(
-            self._token_path,
+        save_tokens(
+            str(self._token_path),
             {"api_key": api_key, "location": location},
         )
 
@@ -67,14 +66,13 @@ class WeatherConnector(BaseConnector):
         if not self._token_path.exists():
             return False
         try:
-            data = json.loads(self._token_path.read_text(encoding="utf-8"))
+            data = load_tokens(str(self._token_path)) or {}
             return bool(data.get("api_key"))
         except (json.JSONDecodeError, OSError):
             return False
 
     def disconnect(self) -> None:
-        if self._token_path.exists():
-            self._token_path.unlink()
+        delete_tokens(str(self._token_path))
 
     def sync(
         self, *, since: Optional[datetime] = None, cursor: Optional[str] = None

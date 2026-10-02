@@ -1,14 +1,14 @@
 """Shared Google OAuth helpers: access token read + one-shot 401 refresh.
 
 All Google connectors (Gmail, Calendar, Contacts, Drive, Tasks) authenticate
-with the same OAuth flow and store identical token payloads at
-``~/.openjarvis/connectors/*.json`` — typically a shared ``google.json`` file
-plus per-product copies. They all need the same refresh-on-401 behavior, so
+through the shared OAuth flow and encrypted vault bundles referenced by
+``~/.openjarvis/connectors/*.json``. New consent is per-product; shared
+``google.json`` remains a legacy fallback. They need refresh-on-401 behavior, so
 the wrapper lives here instead of being duplicated per connector.
 
 Use ``call_with_refresh(api_fn, credentials_path, *args, **kwargs)`` around
 any token-taking API helper. On a 401 the wrapper exchanges the stored
-``refresh_token`` for a new ``access_token``, updates the credentials file,
+``refresh_token`` for a new ``access_token``, updates the encrypted bundle,
 and retries the call once. All other status codes propagate.
 """
 
@@ -106,7 +106,7 @@ def call_with_refresh(
 
     Loads the current access token from disk, calls the helper, and if Google
     returns 401 (the access token has expired or been revoked) uses the stored
-    refresh_token to mint a new access_token, updates the credentials file,
+    refresh_token to mint a new access_token, updates the encrypted bundle,
     and retries the call exactly once.
 
     Any other ``HTTPStatusError`` is re-raised unchanged — auth-related retries

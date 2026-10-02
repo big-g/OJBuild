@@ -14,6 +14,7 @@ from typing import Any, Dict, Iterator, Optional
 import httpx
 
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
+from openjarvis.connectors.oauth import delete_tokens, load_tokens, save_tokens
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
 from openjarvis.core.registry import ConnectorRegistry
 
@@ -49,7 +50,7 @@ class OuraConnector(BaseConnector):
 
     def _load_token(self) -> str:
         """Load the Oura PAT from disk."""
-        data = json.loads(self._token_path.read_text(encoding="utf-8"))
+        data = load_tokens(str(self._token_path)) or {}
         return data["token"]
 
     def set_token(self, token: str) -> None:
@@ -58,9 +59,7 @@ class OuraConnector(BaseConnector):
         if not token:
             raise ValueError("An Oura personal access token is required")
         _oura_api_get(token, "personal_info")
-        from openjarvis.security.file_utils import secure_write_json
-
-        secure_write_json(self._token_path, {"token": token})
+        save_tokens(str(self._token_path), {"token": token})
 
     def is_connected(self) -> bool:
         try:
@@ -69,8 +68,7 @@ class OuraConnector(BaseConnector):
             return False
 
     def disconnect(self) -> None:
-        if self._token_path.exists():
-            self._token_path.unlink()
+        delete_tokens(str(self._token_path))
 
     def sync(
         self, *, since: Optional[datetime] = None, cursor: Optional[str] = None

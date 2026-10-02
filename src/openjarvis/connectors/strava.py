@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterator, Optional
 import httpx
 
 from openjarvis.connectors._stubs import BaseConnector, Document, SyncStatus
+from openjarvis.connectors.oauth import delete_tokens, load_tokens, save_tokens
 from openjarvis.core.config import DEFAULT_CONFIG_DIR
 from openjarvis.core.registry import ConnectorRegistry
 
@@ -66,12 +67,10 @@ class StravaConnector(BaseConnector):
         self._status = SyncStatus()
 
     def _load_tokens(self) -> Dict[str, str]:
-        return json.loads(self._token_path.read_text(encoding="utf-8"))
+        return load_tokens(str(self._token_path)) or {}
 
     def _save_tokens(self, tokens: Dict[str, str]) -> None:
-        from openjarvis.security.file_utils import secure_write_json
-
-        secure_write_json(self._token_path, tokens)
+        save_tokens(str(self._token_path), tokens)
 
     def _get_access_token(self) -> str:
         tokens = self._load_tokens()
@@ -85,8 +84,7 @@ class StravaConnector(BaseConnector):
         return isinstance(access_token, str) and bool(access_token.strip())
 
     def disconnect(self) -> None:
-        if self._token_path.exists():
-            self._token_path.unlink()
+        delete_tokens(str(self._token_path))
 
     def auth_url(self) -> str:
         """Return Strava OAuth authorization URL."""

@@ -489,8 +489,8 @@ Previously granted permissions are not remotely revoked by this update. New
 read-only consent does not authorize email modification or calendar writes; any
 future write integration needs an explicit additional consent design, as well as
 Jarvis's existing tool capability/approval checks. Successful consent grants no
-Jarvis tool capabilities. Named source instances and encrypted storage for these
-legacy account tokens remain the next migration step.
+Jarvis tool capabilities. Named source instances for these legacy account
+integrations remain the next migration step.
 
 Register the exact `/v1/connectors/{id}/oauth/callback` URI with the provider. Server
 callbacks require HTTPS, except for HTTP loopback addresses. An HTTP LAN hostname
@@ -502,7 +502,40 @@ request logs, and have a total two-minute deadline plus bounded socket reads.
 OpenJarvis's standard Uvicorn access logger redacts OAuth launch/callback query
 strings. Reverse proxies and other logging systems must likewise omit those
 queries, since handoff tickets and authorization codes are short-lived secrets.
-Legacy connector token/client-secret files still use owner-only JSON storage;
-this batch does not convert them to the encrypted source credential vault or
-claim to revoke old backups. OAuth is optional: local folders, public sources and
+Connector access/refresh tokens, client secrets, personal access tokens, API keys
+and IMAP credentials now use encrypted bundles in `source_credentials.db`, sharing
+its original `source_credentials.key`. The old `connectors/*.json` credential
+locations contain only versioned vault references, bound to their connector file.
+Google's shared registration fallback still works. New connections and refreshes
+write encrypted bundles; reading valid legacy credential JSON migrates it before
+returning values. This includes Google, Spotify, Strava, Notion, Dropbox, Slack,
+Granola, Gmail IMAP, Oura, GitHub Notifications and Weather. Local folder and RSS
+configuration remains ordinary configuration.
+
+Migration commits the encrypted bundle before atomically replacing the plaintext
+file. If replacement fails, the original file remains available for retry; no
+plaintext backup is created. Repeated migration is safe. Missing/incorrect keys,
+modified ciphertext, swapped references and symbolic-link credential paths are
+rejected. Disconnect removes the reference and encrypted row; a refresh that read
+an older revision cannot restore disconnected credentials or overwrite a newer
+refresh. Disconnect does not revoke provider grants or erase historical backups.
+Existing plaintext backups should be protected or retired separately.
+
+For an immediate migration of all known credential files, run this as the same
+account that runs OpenJarvis, from the updated checkout, while the service is
+stopped:
+
+```bash
+sudo systemctl stop openjarvis-api.service
+uv sync --extra server
+uv run python -c 'from openjarvis.core.config import DEFAULT_CONFIG_DIR; from openjarvis.connectors.token_vault import migrate_connector_tokens; print("Migrated credential files:", migrate_connector_tokens(DEFAULT_CONFIG_DIR / "connectors"))'
+sudo systemctl start openjarvis-api.service
+```
+
+Do not change accounts with `sudo uv`: the config directory and key belong to the
+server account. Back up the vault database, its original key, and the secret-free
+connector reference files together. File bindings are relative to that directory,
+so restoring the complete configuration under a new home preserves references.
+Vault bundles are internal and do not appear in the metadata-only credential APIs
+or browser storage. OAuth remains optional: local folders, public sources and
 manually configured bearer/API-key source connections continue independently.

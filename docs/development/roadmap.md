@@ -63,8 +63,11 @@ Automatic model routing is deferred; explicit model selection remains supported.
    S256 PKCE for Google/Spotify; per-connector Google read-only consent with no
    token fanout; attempt-specific status; redacted exchange/refresh errors and
    OAuth access-log queries; bounded state-checked native callback handling.
-   **Next:** move legacy connector tokens into protected vault references and
-   migrate OAuth/token integrations into the instance model. Secret-bearing fields
+   **Implemented:** encrypted OAuth/PAT/API-key/IMAP bundles in the server vault;
+   secret-free, connector-bound file references; on-read legacy migration plus a
+   bounded one-time migration helper; refresh revision checks that reject stale
+   writes after disconnect; fail-closed key loss and ciphertext validation.
+   **Next:** migrate OAuth/token integrations into the instance model. Secret-bearing fields
    must use protected credential references; never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,
    followed by desktop/Android end-to-end validation of research and configuration.

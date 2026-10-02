@@ -68,7 +68,7 @@ class CredentialStore:
         with self._lock("schema", exclusive=True, blocking=True):
             with self._connection() as conn:
                 version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if version > 1:
+                if version > 2:
                     raise ValueError("Unsupported credential database version")
                 conn.execute("""CREATE TABLE IF NOT EXISTS credentials (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
@@ -77,7 +77,11 @@ class CredentialStore:
                     revision INTEGER NOT NULL, created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )""")
-                conn.execute("PRAGMA user_version=1")
+                conn.execute("""CREATE TABLE IF NOT EXISTS connector_tokens (
+                    id TEXT PRIMARY KEY, sealed BLOB NOT NULL,
+                    revision INTEGER NOT NULL
+                )""")
+                conn.execute("PRAGMA user_version=2")
 
     @contextmanager
     def _connection(self):
@@ -114,7 +118,12 @@ class CredentialStore:
         with self._lock("schema", exclusive=True, blocking=True):
             if not self.key_path.exists():
                 with self._connection() as conn:
-                    if conn.execute("SELECT 1 FROM credentials LIMIT 1").fetchone():
+                    if (
+                        conn.execute("SELECT 1 FROM credentials LIMIT 1").fetchone()
+                        or conn.execute(
+                            "SELECT 1 FROM connector_tokens LIMIT 1"
+                        ).fetchone()
+                    ):
                         raise ValueError(
                             "Credential key is missing; restore the original key backup"
                         )

@@ -1,7 +1,6 @@
 """Mock-only OAuth protocol/state security; never access real service accounts."""
 
 import concurrent.futures
-import json
 from pathlib import Path
 
 import httpx
@@ -11,6 +10,7 @@ from openjarvis.connectors.oauth import (
     OAUTH_PROVIDERS,
     _exchange_token,
     connector_scopes,
+    load_tokens,
     pkce_pair,
     require_access_token,
     save_tokens,
@@ -212,7 +212,7 @@ def test_refresh_error_redacts_remote_body_and_keeps_previous_tokens(
     assert "reflected-secret" not in str(error.value) and "script" not in str(
         error.value
     )
-    assert json.loads(Path(path).read_text()) == tokens
+    assert load_tokens(str(Path(path))) == tokens
 
 
 @pytest.mark.parametrize(

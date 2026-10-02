@@ -27,12 +27,13 @@ shared file when the caller-supplied path does not yet exist on disk).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any, Iterator
 from unittest.mock import patch
 
 import pytest
+
+from openjarvis.connectors.oauth import load_tokens
 
 fastapi = pytest.importorskip("fastapi", reason="requires the 'server' extra")
 from fastapi import FastAPI  # noqa: E402
@@ -198,7 +199,9 @@ def test_connect_client_pair_returns_oauth_required_no_browser(
     for filename in _ALL_GOOGLE_FILES:
         path = hermetic_connectors / filename
         assert path.exists(), f"{filename} not written"
-        assert json.loads(path.read_text())["client_id"] == _CLIENT_ID
+        assert load_tokens(str(path))["client_id"] == _CLIENT_ID
+        assert b"GOCSPX-secret" not in path.read_bytes()
+    assert "GOCSPX-secret" not in resp.text
 
 
 def test_connect_malformed_client_pair_raises_400(
@@ -221,8 +224,13 @@ def test_connect_raw_token_still_handled(
         "/v1/connectors/gdrive/connect", json={"token": "ya29.raw-access-token"}
     )
     assert resp.status_code == 200, resp.text
-    saved = json.loads((hermetic_connectors / "gdrive.json").read_text())
+    saved = load_tokens(str((hermetic_connectors / "gdrive.json")))
     assert saved.get("token") == "ya29.raw-access-token"
+    assert "ya29.raw-access-token" not in resp.text
+    assert (
+        b"ya29.raw-access-token"
+        not in (hermetic_connectors / "gdrive.json").read_bytes()
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +267,7 @@ def test_connect_client_pair_returns_oauth_required_for_non_google_providers(
     assert body["connected"] is False
     mock_browser.assert_not_called()
 
-    saved = json.loads((hermetic_connectors / credentials_file).read_text())
+    saved = load_tokens(str((hermetic_connectors / credentials_file)))
     assert saved["client_id"] == f"{connector_id}-client-id"
     assert saved["client_secret"] == f"{connector_id}-client-secret"
 
@@ -283,7 +291,7 @@ def test_google_client_pair_detection_unaffected_by_generalization(
     resp = client.post("/v1/connectors/gdrive/connect", json={"code": _CLIENT_PAIR})
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "oauth_required"
-    saved = json.loads((hermetic_connectors / "gdrive.json").read_text())
+    saved = load_tokens(str((hermetic_connectors / "gdrive.json")))
     assert saved["client_id"] == _CLIENT_ID
 
 
@@ -345,7 +353,7 @@ def test_oauth_callback_exchanges_and_connects(
 
     # Service consent must not silently connect unrelated Google products.
     for filename in _ALL_GOOGLE_FILES:
-        saved = json.loads((hermetic_connectors / filename).read_text())
+        saved = load_tokens(str((hermetic_connectors / filename)))
         if filename == "gdrive.json":
             assert saved["access_token"] == "ya29.REAL"
             assert saved["refresh_token"] == "1//REAL"
@@ -413,7 +421,7 @@ def test_oauth_callback_rejects_missing_access_token_without_false_success(
     assert resp.status_code == 500
     assert "Token Exchange Failed" in resp.text
     assert "Connected!" not in resp.text
-    saved = json.loads((hermetic_connectors / "spotify.json").read_text())
+    saved = load_tokens(str((hermetic_connectors / "spotify.json")))
     assert "access_token" not in saved
 
     from openjarvis.connectors.spotify import SpotifyConnector

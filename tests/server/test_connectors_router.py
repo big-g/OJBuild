@@ -563,7 +563,9 @@ def test_connect_granola_invalid_key_returns_400_keeps_existing(
         assert resp.status_code == 400
         assert "Invalid API key" in resp.json()["detail"]
         # The previously-working credential must be untouched.
-        assert json.loads(creds.read_text())["token"] == "grl_real_existing_key"
+        from openjarvis.connectors.oauth import load_tokens
+
+        assert load_tokens(str(creds))["token"] == "grl_real_existing_key"
     finally:
         _instances.pop("granola", None)
 
@@ -631,7 +633,9 @@ def test_connect_persists_generic_token_connector_credentials(
         resp = app.post(f"/v1/connectors/{connector_id}/connect", json=payload)
         assert resp.status_code == 200, resp.text
         assert resp.json()["connected"] is True
-        assert json.loads(path.read_text()) == expected
+        from openjarvis.connectors.oauth import load_tokens
+
+        assert load_tokens(str(path)) == expected
         if os.name != "nt":
             assert stat.S_IMODE(path.stat().st_mode) == 0o600
     finally:
