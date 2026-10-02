@@ -14,7 +14,7 @@ class OAuthAccessFilter(logging.Filter):
             if isinstance(target, str):
                 path = target.split("?", 1)[0]
                 if re.fullmatch(
-                    r"/v1/connectors/[A-Za-z0-9_-]+/oauth/(launch|callback)",
+                    r"/v1/(connectors|sources)/[A-Za-z0-9_-]+/oauth/(launch|callback)",
                     unquote(path),
                 ):
                     args[2] = path + ("?[redacted]" if "?" in target else "")

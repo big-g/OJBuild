@@ -286,6 +286,8 @@ def resolve_google_credentials(connector_path: str) -> str:
     shared ``google.json``.  Returns *connector_path* if neither exists
     (so ``is_connected()`` correctly returns ``False``).
     """
+    if Path(connector_path).name.startswith("instance-"):
+        return connector_path
     if Path(connector_path).exists():
         return connector_path
     if Path(_SHARED_GOOGLE_CREDENTIALS_PATH).exists():

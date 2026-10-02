@@ -585,8 +585,8 @@ explicit source removal or configuration reset remains available for cleanup.
 The old single-account Notion connector retains its separate identity and setup.
 It is not automatically imported or disabled by creating a named instance; avoid
 syncing both against the same pages if you want to avoid duplicate legacy evidence.
-Other token integrations and per-instance OAuth consent remain subsequent
-Phase 2 work. The Notion import flow below can reuse an existing server token.
+Named token and OAuth account connections are available as described below.
+The Notion import flow can reuse an existing server token.
 
 
 ### Import an existing Notion connection
@@ -628,3 +628,53 @@ retire the old integration if you want to stop indexing the same pages twice.
 Only trusted, server-defined import recipes are supported. Clients cannot choose
 arbitrary credential paths or provider origins. Notion is the first recipe; the
 registry and persistent import tracking support subsequent token adapters.
+
+
+### Named token and OAuth accounts
+
+In **Configured sources → Add source**, choose a provider's **account** adapter
+and give the connection a name. Multiple accounts for the same service have
+independent credentials, indexed evidence and sync checkpoints. The existing
+single-connection cards remain available during migration.
+
+Gmail, Google Drive, Calendar, Contacts and Tasks, Spotify and Strava support
+**Authorize account** through the existing secure browser broker. Google consent
+requests only the selected product's read scope. Each named connection has its
+own callback URL: `/v1/sources/{source_id}/oauth/callback`. Register the exact
+public HTTPS URL (loopback HTTP is permitted for local development) with the
+provider. **Configure OAuth application** stores a client ID and client secret
+in this connection's encrypted bundle; an existing server application
+registration can also be reused. No centralized identity directory is required.
+Application registration does not authorize an account by itself.
+
+Slack, Dropbox, Granola, Oura, GitHub Notifications and Weather support a token
+or API key entered on their connection card. Slack requires a user token;
+Weather also needs a location in the source configuration. Token storage does
+not contact the provider or prove access. Choose **Sync** to check access and
+index documents. Provider support and token availability depend on the service.
+
+Access/refresh tokens and application secrets stay in the server vault. Source
+configuration and connection status return no secrets. OAuth attempts bind to
+one source revision, callback and browser; refresh updates only that instance's
+bundle. Sources never borrow a legacy Google account's tokens. Secrets entered
+in the web form are cleared after the operation and are not put in URLs or
+browser persistent storage.
+
+Replacing a token, application registration or OAuth authorization, or choosing
+**Disconnect this account**, clears that connection's index and checkpoint.
+This prevents evidence from a previous account surviving an account change.
+Sync again after authorization. These changes advance the source revision,
+invalidate old consent attempts, and record metadata-only audit events. Other
+connections and original provider data are unaffected. Disconnect removes local
+authorization; it does not revoke the provider-wide grant. Removing the source
+also removes its encrypted bundle and pending consent attempts.
+
+These adapters reuse the existing provider readers and retain their read limits
+and incremental behavior. They do not infer provider deletions from omitted
+items. Named reads stage up to 10,000 documents / 32 MiB of text before indexing;
+an error propagated by a reader or a staging limit fails the scan without
+yielding a partial batch. Some existing readers use best-effort item reads; the
+bridge preserves that behavior until their scan contracts are strengthened.
+Full provider-specific snapshot/deletion contracts, explicit import
+recipes beyond Notion, and named IMAP password connections remain separate
+roadmap items. No legacy connection is silently converted or disconnected.

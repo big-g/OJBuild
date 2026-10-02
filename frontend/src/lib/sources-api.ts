@@ -24,6 +24,7 @@ export interface SourceField {
 }
 
 export interface SourceAdapter {
+  connection_auth?: 'token' | 'oauth' | null;
   adapter_id: string;
   display_name: string;
   description: string;
@@ -143,3 +144,13 @@ export const previewLegacySourceImport = (id: string, name: string) =>
   request<LegacySourceImportPlan>(`/imports/${encodeURIComponent(id)}/preview`, 'POST', { name });
 export const applyLegacySourceImport = (plan: LegacySourceImportPlan) =>
   request<SourceInstance>(`/imports/${encodeURIComponent(plan.import_id)}`, 'POST', { plan_token: plan.plan_token });
+
+
+export const getSourceConnection = (id: string) =>
+  request<{ connected: boolean; client_configured: boolean; auth_type: string }>(`/${encodeURIComponent(id)}/connection`);
+export const setSourceAccountToken = (source: SourceInstance, token: string) =>
+  request(`/${encodeURIComponent(source.id)}/connection/token`, 'PUT', { revision: source.revision, token });
+export const setSourceAccountClient = (source: SourceInstance, client_id: string, client_secret: string) =>
+  request(`/${encodeURIComponent(source.id)}/connection/client`, 'PUT', { revision: source.revision, client_id, client_secret });
+export const disconnectSourceAccount = (source: SourceInstance) =>
+  request(`/${encodeURIComponent(source.id)}/connection/disconnect`, 'POST', { revision: source.revision });

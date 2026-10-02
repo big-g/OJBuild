@@ -26,13 +26,17 @@ _SYNC_SLOTS = threading.BoundedSemaphore(2)
 
 
 class _InstanceConnector(BaseConnector):
-    def __init__(self, record: dict) -> None:
+    def __init__(self, record: dict, directory=None) -> None:
         self.record = record
         self.connector_id = record["id"]  # independent checkpoint identity
         adapter = get_adapter(record["adapter_id"])
         if record["config_version"] != adapter.config_version:
             raise ValueError("Source configuration needs an adapter version migration")
-        self.reader = adapter.factory(record["config"])
+        self.reader = (
+            adapter.instance_factory(record, directory)
+            if adapter.instance_factory
+            else adapter.factory(record["config"])
+        )
         self.full_snapshot = adapter.full_snapshot
         if adapter.snapshot_config_field:
             self.full_snapshot = self.full_snapshot and (
@@ -209,7 +213,7 @@ class SourceManager:
     def _connector(self, record: dict) -> _InstanceConnector:
         if not record["enabled"]:
             raise SourceConflict("Source is disabled; enable it before syncing")
-        return _InstanceConnector(record)
+        return _InstanceConnector(record, self.store.path.parent)
 
     @contextmanager
     def _reading(self, record, control=None):
@@ -231,6 +235,8 @@ class SourceManager:
     def test(self, adapter_id: str, config: dict) -> dict:
         adapter = get_adapter(adapter_id)
         validated = adapter.validate_config(config)
+        if adapter.instance_factory:
+            return {"ok": True, "config": validated, "authorization_required": True}
         with self._credential(adapter, validated, unlock=True) as material:
             reader = adapter.factory(validated)
             if material:
@@ -376,6 +382,16 @@ class SourceManager:
             if record["revision"] != revision:
                 raise SourceConflict("Source changed; refresh before removing")
             self._reset_and_purge(record)
+            account_path = (
+                self.store.path.parent / "connectors" / f"instance-{source_id}.json"
+            )
+            if (
+                account_path.exists()
+                or (self.store.path.parent / "oauth_attempts.db").exists()
+            ):
+                from openjarvis.connectors.instance_sources import disconnect_instance
+
+                disconnect_instance(self, source_id)
             self.store.delete(source_id, actor=actor)
 
     def sync(self, source_id: str) -> int:

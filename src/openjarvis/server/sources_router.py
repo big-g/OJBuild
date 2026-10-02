@@ -43,6 +43,10 @@ class SafeSourceRoute(APIRoute):
         async def handler(request):
             try:
                 return await original(request)
+            except SourceConflict as exc:
+                raise HTTPException(409, str(exc)) from None
+            except (ValueError, OSError) as exc:
+                raise HTTPException(400, str(exc)) from None
             except RequestValidationError:
                 raise HTTPException(
                     422, "Invalid source or credential request"
@@ -119,6 +123,10 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     def actor(request):
         user_id = getattr(request.state, "auth_user_id", None)
         return f"user:{user_id}" if user_id is not None else "server_access"
+
+    from openjarvis.server.source_connections import install_source_connections
+
+    install_source_connections(router, manager, invoke)
 
     from openjarvis.connectors.source_imports import SourceImports
 

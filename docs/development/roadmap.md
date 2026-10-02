@@ -75,10 +75,18 @@ Automatic model routing is deferred; explicit model selection remains supported.
    expiring, identity-bound plans checked against current credentials and adapter
    version; recoverable reserved identities; import audit events; original
    connection retained and no automatic fetch or index reuse.
-   **Next:** move the remaining token/OAuth integrations into named instances,
-   extend legacy imports to those adapters, and add per-instance OAuth consent.
-   Secret-bearing fields must use protected references; never return credentials
-   in source APIs.
+   **Implemented:** named account adapters for Gmail, Drive, Calendar, Contacts,
+   Tasks, Spotify, Strava, Slack, Dropbox, Granola, Oura, GitHub Notifications and
+   Weather. Each instance owns an encrypted bundle, index and checkpoint; no
+   legacy-account fallback. Web token/application configuration, per-instance
+   OAuth consent/status/refresh/disconnect reuse the completed shared security
+   layer. Source revision checks and lifecycle locks reject stale changes;
+   replacing authorization clears prior account evidence before accepting new
+   credentials. Google consent stays scoped to the selected service.
+   **Next:** extend explicit legacy import recipes beyond Notion; strengthen
+   individual provider scan contracts, and add password-based IMAP instances.
+   OAuth security and encrypted credential storage are complete foundations;
+   new providers reuse them. Never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,
    followed by desktop/Android end-to-end validation of research and configuration.
 

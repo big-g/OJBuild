@@ -7,6 +7,7 @@ import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } fr
 import './SourceManagerPanel.css';
 import { LegacySourceImportsPanel } from './LegacySourceImportsPanel';
 import { CredentialManagerPanel } from './CredentialManagerPanel';
+import { SourceAccountConnection } from './SourceAccountConnection';
 import { SourceSyncControls } from './SourceSyncControls';
 import { SourceAuditHistory, SourceEvolutionControls } from './SourceEvolutionControls';
 
@@ -142,6 +143,7 @@ export function SourceManagerPanel() {
         {source.enabled ? 'Enabled' : 'Disabled'} · {(source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') ? (source.state === 'queued' ? 'Queued…' : 'Syncing…') : `${source.chunks ?? 0} indexed chunks`}
         {source.checkpoint?.last_sync && ` · Last sync ${new Date(source.checkpoint.last_sync).toLocaleString()}`}
       </div>
+      {adapters.find((item) => item.adapter_id === source.adapter_id)?.connection_auth && <SourceAccountConnection source={source} authType={adapters.find((item) => item.adapter_id === source.adapter_id)!.connection_auth!} refresh={refresh} />}
       <SourceSyncControls source={source} refresh={refresh} />
       <SourceEvolutionControls source={source} refresh={refresh} />
       {source.error && <p role="alert">{source.error}</p>}
@@ -168,9 +170,10 @@ export function SourceManagerPanel() {
         <p>{adapter.description}</p>
         <label>Name <input aria-label="Source name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)} /></label>
         <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); }} />
+        {adapter.connection_auth && <p>Save this source, then authorize the account on its connection card.</p>}
         {editing && <p>Changing the configuration clears this connection’s indexed documents. Sync again after saving.</p>}
         <div className="flex gap-3">
-          <button type="button" onClick={() => void perform(async () => {
+          <button type="button" disabled={!!adapter.connection_auth} onClick={() => void perform(async () => {
             const result = await testSourceConfiguration(adapterId, config);
             setConfig(result.config);
           }, 'Connection test passed. Configuration has not been saved.')}>Test connection</button>

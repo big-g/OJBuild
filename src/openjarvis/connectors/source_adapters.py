@@ -46,11 +46,15 @@ class SourceAdapter:
     credential_kinds: tuple[str, ...] = ()
     bind_credential: Callable[[BaseConnector, dict], None] | None = None
     migrations: tuple[ConfigMigration, ...] = ()
+    instance_factory: Callable | None = None
+    connection_service: str | None = None
+    connection_auth: str | None = None
     credential_url: Callable[[dict[str, Any]], str] | None = None
 
     def metadata(self) -> dict[str, Any]:
         return {
             "adapter_id": self.adapter_id,
+            "connection_auth": self.connection_auth,
             "display_name": self.display_name,
             "description": self.description,
             "config_version": self.config_version,
@@ -466,3 +470,10 @@ register_adapter(
         probe=lambda reader: reader.probe(),
     )
 )
+
+
+from openjarvis.connectors.instance_sources import (  # noqa: E402
+    register_instance_adapters,
+)
+
+register_instance_adapters(register_adapter, SourceAdapter)

@@ -43,7 +43,11 @@ export async function connectSource(id: string, req: ConnectRequest): Promise<Co
  *  connector reports connected (or reject on timeout). Reused for any OAuth
  *  connector whose /connect returned `oauth_required` (issue #512). */
 export async function startServerOAuth(id: string, oauthStartPath?: string): Promise<void> {
-  const prefix = `/v1/connectors/${encodeURIComponent(id)}/oauth`;
+  return startOAuthFlow(`/v1/connectors/${encodeURIComponent(id)}/oauth`, oauthStartPath);
+}
+
+export async function startOAuthFlow(prefix: string, oauthStartPath?: string): Promise<void> {
+  if (!/^\/v1\/(connectors|sources)\/[A-Za-z0-9_-]+\/oauth$/.test(prefix)) throw new Error('Invalid authorization address.');
   const path = `${prefix}/start`;
   if (oauthStartPath && oauthStartPath !== path) throw new Error('Invalid authorization start address.');
   const popup = window.open('about:blank', '_blank', 'width=600,height=700');

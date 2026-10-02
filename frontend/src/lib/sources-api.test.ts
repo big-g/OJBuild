@@ -94,3 +94,18 @@ it('keeps legacy import tickets in authenticated request bodies', async () => {
   expect(JSON.parse(String(apiFetch.mock.calls[2][1]?.body))).toEqual({ plan_token: 'private-import-ticket' });
   expect(apiFetch.mock.calls.map(([url]) => String(url)).join(' ')).not.toContain('private-import-ticket');
 });
+
+it('keeps named account credentials in authenticated bodies and disconnects one instance', async () => {
+  const { getSourceConnection, setSourceAccountToken, setSourceAccountClient, disconnectSourceAccount } = await import('./sources-api');
+  await getSourceConnection(source.id);
+  await setSourceAccountToken(source, 'private-token');
+  await setSourceAccountClient(source, 'application-id', 'private-secret');
+  await disconnectSourceAccount(source);
+  expect(apiFetch.mock.calls.map(([url]) => url)).toEqual([
+    '/v1/sources/instance-1/connection', '/v1/sources/instance-1/connection/token',
+    '/v1/sources/instance-1/connection/client', '/v1/sources/instance-1/connection/disconnect',
+  ]);
+  expect(JSON.parse(String(apiFetch.mock.calls[1][1]?.body))).toEqual({ revision: 7, token: 'private-token' });
+  expect(JSON.parse(String(apiFetch.mock.calls[2][1]?.body))).toEqual({ revision: 7, client_id: 'application-id', client_secret: 'private-secret' });
+  expect(apiFetch.mock.calls.map(([url]) => String(url)).join(' ')).not.toContain('private-');
+});

@@ -106,7 +106,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return False
         # These two endpoints authenticate with single-use OAuth attempts,
         # not API headers (provider redirects cannot send those headers).
-        if re.fullmatch(r"/v1/connectors/[A-Za-z0-9_-]+/oauth/(launch|callback)", path):
+        if re.fullmatch(
+            r"/v1/(connectors|sources)/[A-Za-z0-9_-]+/oauth/(launch|callback)", path
+        ):
             return False
 
         return (
