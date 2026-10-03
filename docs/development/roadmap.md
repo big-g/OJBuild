@@ -208,7 +208,17 @@ excluding delayed prior-tick events and unscoped events. Existing managed
 messages migrate with empty correlation; background ticks do not claim a human
 user or browser session from the initiating request.
 
-**Pending:** client/runtime acceptance. Channel sessions remain separate
+**Implemented:** `scripts/check_session_continuity.py` provides a live service
+acceptance workflow for HTTP → WebSocket → reconnect, saved history, matching
+trace IDs, missing-session rejection and logout revocation. It uses a disposable
+login, retains one labeled test conversation for device checks, and reports
+failures without printing credentials or answer text. The workflow itself is
+covered by offline integration tests; this is not evidence of a live-server pass.
+See [Phase 2 acceptance](phase-2-acceptance.md) for the server command and device
+checks.
+
+**Pending:** executing the acceptance workflow on the Ubuntu service and checking
+browser/desktop/Android behavior. Channel sessions remain separate
 from ownership-checked browser/desktop sessions; identity diagnostics alone do
 not complete the full trace-identity objective.
 
