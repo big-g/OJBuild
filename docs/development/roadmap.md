@@ -172,9 +172,20 @@ collectors and agent SSE bridges filter shared-bus events by trace identity.
 Unscoped and other-request events cannot enter a correlated trace. Failed agent
 runs and research workers retain correlated failure traces with exception types,
 without storing raw exception text. Trace persistence remains opt-in through the
-existing trace configuration. **Pending:** explicit WebSocket/channel/operator
-entry-point identity and client/runtime acceptance. This batch establishes the
-HTTP execution path; it does not complete the full trace-identity objective.
+existing trace configuration.
+
+WebSocket chat now creates a fresh server identity for each received message,
+including validation errors, and binds only the handshake-verified human user.
+Chunk/done/error frames and completed/failed engine traces share that identity;
+thread fallback inherits it and cancellation restores the ambient context.
+Client identity fields are ignored. This engine-only endpoint has no persistent
+session binding, so session/conversation IDs remain empty. Agent event
+subscriptions forward the emitter's correlation separately from event data;
+subscribing does not create an execution identity for the emitter.
+
+**Pending:** channel/operator entry-point identity, persistent WebSocket session
+continuity, and client/runtime acceptance. HTTP and WebSocket diagnostics do not
+complete the full trace-identity objective.
 
 Phase 2 remains open until the evidence hard gate, runtime tool addition, trace
 identity, knowledge maintenance, and client validation meet their acceptance checks.

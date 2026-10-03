@@ -119,11 +119,12 @@ class TestWebSocketStreaming:
             chunk = ws.receive_json()
             done = ws.receive_json()
 
-        assert chunk == {
+        assert chunk["correlation"] == done["correlation"]
+        assert {k: v for k, v in chunk.items() if k != "correlation"} == {
             "type": "chunk",
             "content": "I couldn't retrieve the required data.",
         }
-        assert done == {
+        assert {k: v for k, v in done.items() if k != "correlation"} == {
             "type": "done",
             "content": "I couldn't retrieve the required data.",
         }
@@ -292,3 +293,184 @@ class TestWebSocketStreaming:
 __all__ = [
     "TestWebSocketStreaming",
 ]
+
+
+@pytest.mark.parametrize("streaming", [True, False])
+def test_turn_correlation_reaches_worker_frames_and_traces(tmp_path, streaming):
+    from openjarvis.core.correlation import current_identity
+    from openjarvis.traces.store import TraceStore
+
+    observed = []
+    engine = _make_generate_only_engine()
+
+    def generate(messages, **kwargs):
+        observed.append(current_identity().metadata())
+        return {"content": "OK"}
+
+    async def stream(messages, **kwargs):
+        observed.append(current_identity().metadata())
+        yield "OK"
+
+    engine.generate.side_effect = generate
+    if streaming:
+        engine.stream = stream
+    app = _make_app(engine)
+    store = TraceStore(tmp_path / "ws.db")
+    app.state.trace_store = store
+    frames = []
+    with TestClient(app).websocket_connect("/v1/chat/stream") as ws:
+        for _ in range(2):
+            ws.send_json(
+                {
+                    "message": "Hi",
+                    "correlation": {"trace_id": "forged"},
+                    "user_id": "forged",
+                    "session_id": "forged",
+                }
+            )
+            chunk, done = ws.receive_json(), ws.receive_json()
+            assert chunk["correlation"] == done["correlation"]
+            frames.append(done["correlation"])
+        # Round-trip ensures the previous completed turn's trace was saved.
+        ws.send_text("invalid")
+        ws.receive_json()
+    assert observed == frames
+    assert frames[0]["trace_id"] != frames[1]["trace_id"]
+    assert frames[0]["turn_id"] != frames[1]["turn_id"]
+    for identity in frames:
+        assert identity["user_id"] == identity["session_id"] == ""
+        trace = store.get(identity["trace_id"])
+        assert trace.metadata["correlation"] == identity
+    assert current_identity() is None
+    store.close()
+
+
+def test_failed_turn_trace_and_next_turn_are_isolated(tmp_path):
+    from openjarvis.core.correlation import current_identity
+    from openjarvis.traces.store import TraceStore
+
+    engine = _make_generate_only_engine()
+    engine.generate.side_effect = [
+        RuntimeError("private upstream detail"),
+        {"content": "OK"},
+    ]
+    app = _make_app(engine)
+    store = TraceStore(tmp_path / "ws.db")
+    app.state.trace_store = store
+    with TestClient(app).websocket_connect("/v1/chat/stream") as ws:
+        ws.send_json({"message": "Hi"})
+        error = ws.receive_json()
+        ws.send_json({"message": "Hi again"})
+        chunk, done = ws.receive_json(), ws.receive_json()
+        ws.send_text("invalid")
+        ws.receive_json()
+    failed = store.get(error["correlation"]["trace_id"])
+    assert failed.outcome == "failure"
+    assert failed.metadata["correlation"] == error["correlation"]
+    assert failed.metadata["error_type"] == "RuntimeError"
+    assert "private upstream detail" not in str(failed)
+    assert error["correlation"]["trace_id"] != done["correlation"]["trace_id"]
+    assert chunk["correlation"] == done["correlation"]
+    assert current_identity() is None
+    store.close()
+
+
+def test_verified_user_cannot_be_overridden_in_message(monkeypatch):
+    monkeypatch.setattr(
+        "openjarvis.server.auth_middleware.authenticate_websocket",
+        lambda ws, key: (True, None, "verified-user"),
+    )
+    with TestClient(_make_app()).websocket_connect("/v1/chat/stream") as ws:
+        ws.send_json({"message": "Hi", "user_id": "forged"})
+        frame = ws.receive_json()
+        assert frame["correlation"]["user_id"] == "verified-user"
+        while ws.receive_json()["type"] != "done":
+            pass
+
+
+@pytest.mark.parametrize("payload", [[], None, 1, {"message": ["bad"]}])
+def test_non_object_or_non_string_message_returns_correlated_error(payload):
+    with TestClient(_make_app()).websocket_connect("/v1/chat/stream") as ws:
+        ws.send_json(payload)
+        frame = ws.receive_json()
+        assert frame["type"] == "error"
+        assert frame["correlation"]["trace_id"]
+        ws.send_json({"message": "Hi"})
+        next_frame = ws.receive_json()
+        assert next_frame["correlation"]["trace_id"] != frame["correlation"]["trace_id"]
+        while ws.receive_json()["type"] != "done":
+            pass
+
+
+def test_parallel_connections_do_not_share_identity():
+    from openjarvis.core.correlation import current_identity
+
+    observed = {}
+
+    async def stream(messages, **kwargs):
+        import asyncio
+
+        identity = current_identity().metadata()
+        observed[messages[0]["content"]] = identity
+        yield "first"
+        await asyncio.sleep(0)
+        assert current_identity().metadata() == identity
+        yield "last"
+
+    engine = _make_streaming_engine()
+    engine.stream = stream
+    client = TestClient(_make_app(engine))
+    with client.websocket_connect("/v1/chat/stream") as first:
+        with client.websocket_connect("/v1/chat/stream") as second:
+            first.send_json({"message": "one"})
+            second.send_json({"message": "two"})
+            for ws, query in [(first, "one"), (second, "two")]:
+                for _ in range(3):
+                    assert ws.receive_json()["correlation"] == observed[query]
+    assert observed["one"]["trace_id"] != observed["two"]["trace_id"]
+
+
+def test_cancelled_websocket_restores_ambient_identity():
+    import asyncio
+    from types import SimpleNamespace
+
+    from openjarvis.core.correlation import (
+        ExecutionIdentity,
+        current_identity,
+        execution_scope,
+    )
+    from openjarvis.server.api_routes import websocket_chat_stream
+
+    async def exercise():
+        ambient = ExecutionIdentity(user_id="ambient")
+        observed = []
+
+        class Socket:
+            app = SimpleNamespace(state=SimpleNamespace(api_key="", model="test"))
+            headers = {}
+            query_params = {}
+            state = SimpleNamespace()
+
+            async def accept(self, **kwargs):
+                pass
+
+            async def receive_text(self):
+                return '{"message": "Hi"}'
+
+            async def send_json(self, payload):
+                observed.append(current_identity())
+                raise asyncio.CancelledError
+
+        async def stream(*args, **kwargs):
+            yield "OK"
+
+        Socket.app.state.engine = SimpleNamespace(stream=stream)
+        with execution_scope(ambient):
+            with pytest.raises(asyncio.CancelledError):
+                await websocket_chat_stream(Socket())
+            assert current_identity() is ambient
+        assert observed[0] is not ambient
+        assert observed[0].user_id == ""
+        assert current_identity() is None
+
+    asyncio.run(exercise())

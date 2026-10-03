@@ -998,9 +998,10 @@ def _record_ws_trace(
     started_at: float,
     ended_at: float,
     metadata: Optional[dict[str, Any]] = None,
+    outcome: Optional[str] = None,
 ) -> None:
-    """Record a trace for a completed WebSocket chat (best-effort)."""
-    if trace_store is None or not result:
+    """Record a WebSocket response or failure (best-effort)."""
+    if trace_store is None:
         return
     from openjarvis.traces.collector import record_response_trace
 
@@ -1012,6 +1013,7 @@ def _record_ws_trace(
         started_at=started_at,
         ended_at=ended_at,
         metadata=metadata,
+        outcome=outcome,
     )
 
 
@@ -1050,104 +1052,149 @@ async def websocket_chat_stream(websocket: WebSocket):
     try:
         while True:
             raw = await websocket.receive_text()
-            try:
-                data = json.loads(raw)
-            except (json.JSONDecodeError, ValueError):
-                await websocket.send_json(
-                    {"type": "error", "detail": "Invalid JSON"},
+            from openjarvis.core.correlation import ExecutionIdentity, execution_scope
+
+            identity = ExecutionIdentity(user_id=user_id or "")
+            with execution_scope(identity):
+
+                async def send_frame(payload):
+                    await websocket.send_json(
+                        {**payload, "correlation": identity.metadata()}
+                    )
+
+                try:
+                    data = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    await send_frame(
+                        {"type": "error", "detail": "Invalid JSON"},
+                    )
+                    continue
+
+                if not isinstance(data, dict):
+                    await send_frame(
+                        {"type": "error", "detail": "Expected JSON object"}
+                    )
+                    continue
+
+                message = data.get("message")
+                if not isinstance(message, str) or not message:
+                    await send_frame(
+                        {"type": "error", "detail": "Missing 'message' field"},
+                    )
+                    continue
+
+                model = data.get("model") or getattr(
+                    websocket.app.state,
+                    "model",
+                    "default",
                 )
-                continue
+                engine = getattr(websocket.app.state, "engine", None)
+                if engine is None:
+                    await send_frame(
+                        {"type": "error", "detail": "No engine configured"},
+                    )
+                    continue
 
-            message = data.get("message")
-            if not message:
-                await websocket.send_json(
-                    {"type": "error", "detail": "Missing 'message' field"},
+                messages = [{"role": "user", "content": message}]
+
+                # This WS path streams straight from the engine (no agent /
+                # TraceCollector), so record the interaction directly once it
+                # finishes — otherwise WebSocket chats never reach traces.db.
+                import time as _time
+
+                trace_store = getattr(websocket.app.state, "trace_store", None)
+                _ws_started_at = _time.time()
+
+                from openjarvis.core.evidence import (
+                    assess_evidence,
+                    blocked_response,
+                    detect_evidence_requirement,
+                    evidence_audit_metadata,
                 )
-                continue
 
-            model = data.get("model") or getattr(
-                websocket.app.state,
-                "model",
-                "default",
-            )
-            engine = getattr(websocket.app.state, "engine", None)
-            if engine is None:
-                await websocket.send_json(
-                    {"type": "error", "detail": "No engine configured"},
-                )
-                continue
+                evidence_requirement = detect_evidence_requirement(message)
+                if evidence_requirement.required:
+                    assessment = assess_evidence(evidence_requirement)
+                    blocked = blocked_response(assessment)
+                    await send_frame(
+                        {"type": "chunk", "content": blocked},
+                    )
+                    await send_frame(
+                        {"type": "done", "content": blocked},
+                    )
+                    _record_ws_trace(
+                        trace_store,
+                        query=message,
+                        result=blocked,
+                        model=model,
+                        started_at=_ws_started_at,
+                        ended_at=_time.time(),
+                        metadata={
+                            "evidence": evidence_audit_metadata(
+                                evidence_requirement,
+                                assessment,
+                            )
+                        },
+                    )
+                    continue
 
-            messages = [{"role": "user", "content": message}]
-
-            # This WS path streams straight from the engine (no agent /
-            # TraceCollector), so record the interaction directly once it
-            # finishes — otherwise WebSocket chats never reach traces.db.
-            import time as _time
-
-            trace_store = getattr(websocket.app.state, "trace_store", None)
-            _ws_started_at = _time.time()
-
-            from openjarvis.core.evidence import (
-                assess_evidence,
-                blocked_response,
-                detect_evidence_requirement,
-                evidence_audit_metadata,
-            )
-
-            evidence_requirement = detect_evidence_requirement(message)
-            if evidence_requirement.required:
-                assessment = assess_evidence(evidence_requirement)
-                blocked = blocked_response(assessment)
-                await websocket.send_json(
-                    {"type": "chunk", "content": blocked},
-                )
-                await websocket.send_json(
-                    {"type": "done", "content": blocked},
-                )
-                _record_ws_trace(
-                    trace_store,
-                    query=message,
-                    result=blocked,
-                    model=model,
-                    started_at=_ws_started_at,
-                    ended_at=_time.time(),
-                    metadata={
-                        "evidence": evidence_audit_metadata(
-                            evidence_requirement,
-                            assessment,
+                try:
+                    # Prefer streaming if the engine supports it
+                    stream_fn = getattr(engine, "stream", None)
+                    if stream_fn is not None and (
+                        inspect.isasyncgenfunction(stream_fn) or callable(stream_fn)
+                    ):
+                        full_content = ""
+                        try:
+                            gen = stream_fn(messages, model=model)
+                            # Handle both async and sync generators
+                            if inspect.isasyncgen(gen):
+                                async for token in gen:
+                                    full_content += token
+                                    await send_frame(
+                                        {"type": "chunk", "content": token},
+                                    )
+                            else:
+                                # Sync generator — iterate in a thread to avoid
+                                # blocking the event loop
+                                for token in gen:
+                                    full_content += token
+                                    await send_frame(
+                                        {"type": "chunk", "content": token},
+                                    )
+                        except TypeError:
+                            # stream() didn't return an iterable; fall back to
+                            # generate(). It makes a blocking upstream call, so run
+                            # it in a worker thread to keep the event loop free.
+                            result = await asyncio.to_thread(
+                                engine.generate, messages, model=model
+                            )
+                            content = (
+                                result.get("content", "")
+                                if isinstance(
+                                    result,
+                                    dict,
+                                )
+                                else str(result)
+                            )
+                            full_content = content
+                            await send_frame(
+                                {"type": "chunk", "content": content},
+                            )
+                        await send_frame(
+                            {"type": "done", "content": full_content},
                         )
-                    },
-                )
-                continue
-
-            try:
-                # Prefer streaming if the engine supports it
-                stream_fn = getattr(engine, "stream", None)
-                if stream_fn is not None and (
-                    inspect.isasyncgenfunction(stream_fn) or callable(stream_fn)
-                ):
-                    full_content = ""
-                    try:
-                        gen = stream_fn(messages, model=model)
-                        # Handle both async and sync generators
-                        if inspect.isasyncgen(gen):
-                            async for token in gen:
-                                full_content += token
-                                await websocket.send_json(
-                                    {"type": "chunk", "content": token},
-                                )
-                        else:
-                            # Sync generator — iterate in a thread to avoid
-                            # blocking the event loop
-                            for token in gen:
-                                full_content += token
-                                await websocket.send_json(
-                                    {"type": "chunk", "content": token},
-                                )
-                    except TypeError:
-                        # stream() didn't return an iterable; fall back to
-                        # generate(). It makes a blocking upstream call, so run
-                        # it in a worker thread to keep the event loop free.
+                        _record_ws_trace(
+                            trace_store,
+                            query=message,
+                            result=full_content,
+                            model=model,
+                            started_at=_ws_started_at,
+                            ended_at=_time.time(),
+                        )
+                    else:
+                        # No stream method — single-shot generate. Blocking upstream
+                        # call, so run in a worker thread to keep the event loop free.
                         result = await asyncio.to_thread(
                             engine.generate, messages, model=model
                         )
@@ -1159,55 +1206,36 @@ async def websocket_chat_stream(websocket: WebSocket):
                             )
                             else str(result)
                         )
-                        full_content = content
-                        await websocket.send_json(
+                        await send_frame(
                             {"type": "chunk", "content": content},
                         )
-                    await websocket.send_json(
-                        {"type": "done", "content": full_content},
-                    )
-                    _record_ws_trace(
-                        trace_store,
-                        query=message,
-                        result=full_content,
-                        model=model,
-                        started_at=_ws_started_at,
-                        ended_at=_time.time(),
-                    )
-                else:
-                    # No stream method — single-shot generate. Blocking upstream
-                    # call, so run in a worker thread to keep the event loop free.
-                    result = await asyncio.to_thread(
-                        engine.generate, messages, model=model
-                    )
-                    content = (
-                        result.get("content", "")
-                        if isinstance(
-                            result,
-                            dict,
+                        await send_frame(
+                            {"type": "done", "content": content},
                         )
-                        else str(result)
-                    )
-                    await websocket.send_json(
-                        {"type": "chunk", "content": content},
-                    )
-                    await websocket.send_json(
-                        {"type": "done", "content": content},
-                    )
+                        _record_ws_trace(
+                            trace_store,
+                            query=message,
+                            result=content,
+                            model=model,
+                            started_at=_ws_started_at,
+                            ended_at=_time.time(),
+                        )
+                except WebSocketDisconnect:
+                    raise
+                except Exception as exc:
                     _record_ws_trace(
                         trace_store,
                         query=message,
-                        result=content,
+                        result="",
                         model=model,
                         started_at=_ws_started_at,
                         ended_at=_time.time(),
+                        outcome="failure",
+                        metadata={"error_type": type(exc).__name__},
                     )
-            except WebSocketDisconnect:
-                raise
-            except Exception as exc:
-                await websocket.send_json(
-                    {"type": "error", "detail": str(exc)},
-                )
+                    await send_frame(
+                        {"type": "error", "detail": str(exc)},
+                    )
     except WebSocketDisconnect:
         pass  # Client disconnected — nothing to clean up
 

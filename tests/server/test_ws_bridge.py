@@ -251,3 +251,18 @@ class TestIncludeAllRoutesBusWiring:
         assert data["type"] == "agent_tick_start"
         assert data["data"]["agent_id"] == "test-123"
         make_system.assert_called_once()
+
+
+def test_event_stream_preserves_emitter_correlation(app, event_bus):
+    from openjarvis.core.correlation import ExecutionIdentity, execution_scope
+
+    identity = ExecutionIdentity(user_id="emitter")
+    with TestClient(app).websocket_connect("/v1/agents/events") as ws:
+        with execution_scope(identity):
+            event_bus.publish(
+                EventType.AGENT_TICK_START, {"correlation": {"trace_id": "forged"}}
+            )
+        frame = ws.receive_json()
+        assert frame["correlation"] == identity.metadata()
+        event_bus.publish(EventType.AGENT_TICK_END, {})
+        assert ws.receive_json()["correlation"] == {}
