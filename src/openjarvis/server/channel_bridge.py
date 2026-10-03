@@ -7,6 +7,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from openjarvis.channels._stubs import BaseChannel, ChannelStatus
+from openjarvis.core.correlation import ExecutionIdentity, execution_scope
 from openjarvis.core.events import EventBus, EventType
 from openjarvis.server.session_store import SessionStore
 
@@ -52,6 +53,7 @@ class ChannelBridge:
         system: Any = None,
         agent_manager: Any = None,
         deep_research_agent: Any = None,
+        trace_store: Any = None,
     ) -> None:
         self._channels = channels
         self._session_store = session_store
@@ -59,6 +61,7 @@ class ChannelBridge:
         self._system = system
         self._agent_manager = agent_manager
         self._deep_research_agent = deep_research_agent
+        self._trace_store = trace_store
         self._notification_timestamps: Dict[str, float] = {}
         self._subscribe_notifications()
 
@@ -121,7 +124,15 @@ class ChannelBridge:
         metadata: Optional[Dict[str, Any]] = None,
         max_length: int = _DEFAULT_MAX_LENGTH,
     ) -> str:
-        self._session_store.get_or_create(sender_id, channel_type)
+        session = self._session_store.get_or_create(sender_id, channel_type)
+        # Adapter sender IDs are not authenticated application user IDs.
+        identity = ExecutionIdentity(
+            session_id=session["session_id"], conversation_id=session["session_id"]
+        )
+        with execution_scope(identity):
+            return self._handle_incoming(sender_id, content, channel_type, max_length)
+
+    def _handle_incoming(self, sender_id, content, channel_type, max_length):
 
         # Command routing
         stripped = content.strip()
@@ -257,6 +268,7 @@ class ChannelBridge:
 
         # Try DeepResearchAgent first
         if self._deep_research_agent is not None:
+            started_at = time.time()
             try:
                 result = self._deep_research_agent.run(content)
                 from openjarvis.core.evidence import (
@@ -269,7 +281,20 @@ class ChannelBridge:
                     result,
                 )
                 response_text = result.content or "No results found."
+                self._record_research_trace(
+                    content,
+                    response_text,
+                    started_at,
+                    metadata=getattr(result, "metadata", {}),
+                )
             except Exception as exc:
+                self._record_research_trace(
+                    content,
+                    "",
+                    started_at,
+                    outcome="failure",
+                    metadata={"error_type": type(exc).__name__},
+                )
                 logger.error("DeepResearch agent failed: %s", exc)
                 response_text = f"Research error: {exc}"
         elif self._system is not None:
@@ -302,6 +327,20 @@ class ChannelBridge:
             sender_id, channel_type, "assistant", response_text
         )
         return formatted
+
+    def _record_research_trace(self, query, result, started_at, **kwargs):
+        from openjarvis.traces.collector import record_response_trace
+
+        record_response_trace(
+            self._trace_store,
+            query=query,
+            result=result,
+            model=getattr(self._deep_research_agent, "_model", ""),
+            agent="channel_research",
+            started_at=started_at,
+            ended_at=time.time(),
+            **kwargs,
+        )
 
     def _format_response(
         self,

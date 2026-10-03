@@ -6,6 +6,11 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from openjarvis.core.correlation import (
+    ExecutionIdentity,
+    current_identity,
+    execution_scope,
+)
 from openjarvis.operators.loader import load_operator
 from openjarvis.operators.types import OperatorManifest
 
@@ -184,6 +189,10 @@ class OperatorManager:
         if manifest is None:
             raise KeyError(f"Operator not registered: {operator_id}")
 
+        with execution_scope(current_identity() or ExecutionIdentity()):
+            return self._run_once(manifest, operator_id)
+
+    def _run_once(self, manifest: OperatorManifest, operator_id: str) -> str:
         tools_list = manifest.tools if manifest.tools else None
         result = self._system.ask(
             _TICK_PROMPT,

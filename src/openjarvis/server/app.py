@@ -107,6 +107,7 @@ def _restore_sendblue_bindings(app: FastAPI) -> None:
                         bus=bus,
                         agent_manager=mgr,
                         deep_research_agent=dr_agent,
+                        trace_store=getattr(app.state, "trace_store", None),
                     )
 
                 logger.info(

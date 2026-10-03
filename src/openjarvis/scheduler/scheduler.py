@@ -9,6 +9,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
+from openjarvis.core.correlation import (
+    ExecutionIdentity,
+    current_identity,
+    execution_scope,
+)
 from openjarvis.scheduler.store import SchedulerStore
 
 logger = logging.getLogger(__name__)
@@ -203,6 +208,10 @@ class TaskScheduler:
 
     def _execute_task(self, task: ScheduledTask) -> None:
         """Execute a single due task and log the result."""
+        with execution_scope(ExecutionIdentity()):
+            self._execute_scoped_task(task)
+
+    def _execute_scoped_task(self, task: ScheduledTask) -> None:
         started_at = _now_iso()
 
         # Publish start event
@@ -234,9 +243,14 @@ class TaskScheduler:
                 if meta.get("operator_id"):
                     ask_kwargs["system_prompt"] = meta.get("system_prompt", "")
                     ask_kwargs["operator_id"] = meta["operator_id"]
-                result_text = self._system.ask(
+                result = self._system.ask(
                     task.prompt,
                     **ask_kwargs,
+                )
+                result_text = (
+                    str(result.get("content", ""))
+                    if isinstance(result, dict)
+                    else str(result)
                 )
             else:
                 result_text = f"[dry-run] Would execute: {task.prompt}"
@@ -256,6 +270,7 @@ class TaskScheduler:
                 success=success,
                 result=result_text,
                 error=error_text,
+                correlation=current_identity().metadata(),
             )
 
             # Update task state

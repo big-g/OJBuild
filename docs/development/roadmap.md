@@ -183,9 +183,23 @@ session binding, so session/conversation IDs remain empty. Agent event
 subscriptions forward the emitter's correlation separately from event data;
 subscribing does not create an execution identity for the emitter.
 
-**Pending:** channel/operator entry-point identity, persistent WebSocket session
-continuity, and client/runtime acceptance. HTTP and WebSocket diagnostics do not
-complete the full trace-identity objective.
+Channel ingress now starts a fresh turn bound to a server-generated, persisted
+channel-session ID. Existing channel history/preferences survive migration;
+message metadata, execution events and system traces share the turn identity.
+Channel sender IDs and webhook metadata do not establish an application user.
+Deep Research channel bridges persist grounded response summaries and sanitized
+failure summaries when tracing is enabled.
+
+Scheduled tasks/operators create a fresh identity per run, without inheriting
+creator/request identity from task metadata. Start/end events, agent traces and
+persisted run logs carry it. Existing run logs migrate with empty correlation.
+Manual operator runs inherit the current trusted execution scope or create a
+standalone identity, with cleanup on success and failure.
+
+**Pending:** persistent WebSocket session continuity, managed autonomous-agent
+tick correlation, and client/runtime acceptance. Channel sessions remain separate
+from ownership-checked browser/desktop sessions; identity diagnostics alone do
+not complete the full trace-identity objective.
 
 Phase 2 remains open until the evidence hard gate, runtime tool addition, trace
 identity, knowledge maintenance, and client validation meet their acceptance checks.

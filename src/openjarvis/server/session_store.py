@@ -5,9 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from uuid import uuid4
 
+from openjarvis.core.correlation import current_identity
 from openjarvis.core.paths import get_config_dir
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,7 @@ class SessionStore:
 
             secure_create(Path(db_path))
         self._db = sqlite3.connect(db_path, check_same_thread=False)
+        self._lock = threading.RLock()
         self._db.row_factory = sqlite3.Row
         self._create_tables()
 
@@ -55,6 +59,24 @@ class SessionStore:
                 ON channel_sessions (updated_at);
             """
         )
+        columns = {
+            row[1] for row in self._db.execute("PRAGMA table_info(channel_sessions)")
+        }
+        if "session_id" not in columns:
+            self._db.execute("ALTER TABLE channel_sessions ADD COLUMN session_id TEXT")
+        for row in self._db.execute(
+            "SELECT sender_id, channel_type FROM channel_sessions "
+            "WHERE session_id IS NULL OR session_id = ''"
+        ).fetchall():
+            self._db.execute(
+                "UPDATE channel_sessions SET session_id = ? "
+                "WHERE sender_id = ? AND channel_type = ?",
+                (uuid4().hex, row[0], row[1]),
+            )
+        self._db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_session_id "
+            "ON channel_sessions(session_id)"
+        )
         self._db.commit()
 
     # ------------------------------------------------------------------
@@ -62,30 +84,26 @@ class SessionStore:
     # ------------------------------------------------------------------
 
     def get_or_create(self, sender_id: str, channel_type: str) -> Dict[str, Any]:
-        row = self._db.execute(
-            "SELECT * FROM channel_sessions WHERE sender_id = ? AND channel_type = ?",
-            (sender_id, channel_type),
-        ).fetchone()
-        if row is None:
+        with self._lock:
             self._db.execute(
-                "INSERT INTO channel_sessions (sender_id, channel_type) VALUES (?, ?)",
-                (sender_id, channel_type),
+                "INSERT INTO channel_sessions (sender_id, channel_type, session_id) "
+                "VALUES (?, ?, ?) ON CONFLICT(sender_id, channel_type) DO NOTHING",
+                (sender_id, channel_type, uuid4().hex),
             )
             self._db.commit()
+            row = self._db.execute(
+                "SELECT * FROM channel_sessions "
+                "WHERE sender_id = ? AND channel_type = ?",
+                (sender_id, channel_type),
+            ).fetchone()
             return {
-                "sender_id": sender_id,
-                "channel_type": channel_type,
-                "conversation_history": [],
-                "preferred_notification_channel": None,
-                "pending_response": None,
+                "session_id": row["session_id"],
+                "sender_id": row["sender_id"],
+                "channel_type": row["channel_type"],
+                "conversation_history": json.loads(row["conversation_history"]),
+                "preferred_notification_channel": row["preferred_notification_channel"],
+                "pending_response": row["pending_response"],
             }
-        return {
-            "sender_id": row["sender_id"],
-            "channel_type": row["channel_type"],
-            "conversation_history": json.loads(row["conversation_history"]),
-            "preferred_notification_channel": row["preferred_notification_channel"],
-            "pending_response": row["pending_response"],
-        }
 
     def append_message(
         self,
@@ -94,25 +112,30 @@ class SessionStore:
         role: str,
         content: str,
     ) -> None:
-        row = self._db.execute(
-            "SELECT conversation_history FROM channel_sessions "
-            "WHERE sender_id = ? AND channel_type = ?",
-            (sender_id, channel_type),
-        ).fetchone()
-        if row is None:
-            return
-        history: List[Dict[str, str]] = json.loads(row["conversation_history"])
-        history.append({"role": role, "content": content})
-        if len(history) > _MAX_HISTORY_TURNS:
-            history = history[-_MAX_HISTORY_TURNS:]
-        self._db.execute(
-            "UPDATE channel_sessions "
-            "SET conversation_history = ?, "
-            "updated_at = datetime('now') "
-            "WHERE sender_id = ? AND channel_type = ?",
-            (json.dumps(history), sender_id, channel_type),
-        )
-        self._db.commit()
+        with self._lock:
+            row = self._db.execute(
+                "SELECT conversation_history, session_id FROM channel_sessions "
+                "WHERE sender_id = ? AND channel_type = ?",
+                (sender_id, channel_type),
+            ).fetchone()
+            if row is None:
+                return
+            history: List[Dict[str, Any]] = json.loads(row["conversation_history"])
+            message = {"role": role, "content": content}
+            identity = current_identity()
+            if identity and identity.session_id == row["session_id"]:
+                message["metadata"] = {"correlation": identity.metadata()}
+            history.append(message)
+            if len(history) > _MAX_HISTORY_TURNS:
+                history = history[-_MAX_HISTORY_TURNS:]
+            self._db.execute(
+                "UPDATE channel_sessions "
+                "SET conversation_history = ?, "
+                "updated_at = datetime('now') "
+                "WHERE sender_id = ? AND channel_type = ?",
+                (json.dumps(history), sender_id, channel_type),
+            )
+            self._db.commit()
 
     def set_notification_preference(
         self,

@@ -44,8 +44,8 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 
 _INSERT_LOG = """\
 INSERT INTO task_run_logs
-    (task_id, started_at, finished_at, success, result, error)
-VALUES (?, ?, ?, ?, ?, ?)
+    (task_id, started_at, finished_at, success, result, error, correlation)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -58,6 +58,14 @@ class SchedulerStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(_CREATE_TASKS_TABLE)
         self._conn.execute(_CREATE_LOGS_TABLE)
+        columns = {
+            row[1] for row in self._conn.execute("PRAGMA table_info(task_run_logs)")
+        }
+        if "correlation" not in columns:
+            self._conn.execute(
+                "ALTER TABLE task_run_logs ADD COLUMN correlation "
+                "TEXT NOT NULL DEFAULT '{}'"
+            )
         self._conn.commit()
 
     # -- Task CRUD -----------------------------------------------------------
@@ -129,11 +137,20 @@ class SchedulerStore:
         success: bool,
         result: str = "",
         error: str = "",
+        correlation: Optional[Dict[str, str]] = None,
     ) -> None:
         """Record a single execution of a task."""
         self._conn.execute(
             _INSERT_LOG,
-            (task_id, started_at, finished_at, int(success), result, error),
+            (
+                task_id,
+                started_at,
+                finished_at,
+                int(success),
+                result,
+                error,
+                json.dumps(correlation or {}),
+            ),
         )
         self._conn.commit()
 
@@ -143,7 +160,10 @@ class SchedulerStore:
             "SELECT * FROM task_run_logs WHERE task_id = ? ORDER BY id DESC LIMIT ?",
             (task_id, limit),
         ).fetchall()
-        return [dict(r) for r in rows]
+        logs = [dict(r) for r in rows]
+        for log in logs:
+            log["correlation"] = json.loads(log["correlation"])
+        return logs
 
     # -- Lifecycle -----------------------------------------------------------
 

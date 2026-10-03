@@ -1817,6 +1817,7 @@ def create_agent_manager_router(
                                 from openjarvis.agents.deep_research import (
                                     DeepResearchAgent,
                                 )
+                                from openjarvis.core.config import load_config
 
                                 agent_inst = DeepResearchAgent(
                                     engine=engine,
@@ -1928,6 +1929,7 @@ def create_agent_manager_router(
                             bus=bus,
                             agent_manager=manager,
                             deep_research_agent=dr_agent,
+                            trace_store=getattr(request.app.state, "trace_store", None),
                         )
                         request.app.state.channel_bridge = bridge
 
