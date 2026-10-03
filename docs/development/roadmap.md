@@ -196,8 +196,15 @@ persisted run logs carry it. Existing run logs migrate with empty correlation.
 Manual operator runs inherit the current trusted execution scope or create a
 standalone identity, with cleanup on success and failure.
 
-**Pending:** persistent WebSocket session continuity, managed autonomous-agent
-tick correlation, and client/runtime acceptance. Channel sessions remain separate
+Managed autonomous-agent ticks now create fresh execution identities covering
+lifecycle events, retries, tool workers, stored traces and response messages.
+Tool/activity listeners require both the managed agent ID and tick trace ID,
+excluding delayed prior-tick events and unscoped events. Existing managed
+messages migrate with empty correlation; background ticks do not claim a human
+user or browser session from the initiating request.
+
+**Pending:** persistent WebSocket session continuity and client/runtime
+acceptance. Channel sessions remain separate
 from ownership-checked browser/desktop sessions; identity diagnostics alone do
 not complete the full trace-identity objective.
 

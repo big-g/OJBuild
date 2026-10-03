@@ -137,6 +137,14 @@ class AgentManager:
                 self._conn.execute(migration)
             except sqlite3.OperationalError:
                 pass  # Column already exists
+        columns = {
+            row[1] for row in self._conn.execute("PRAGMA table_info(agent_messages)")
+        }
+        if "correlation" not in columns:
+            self._conn.execute(
+                "ALTER TABLE agent_messages ADD COLUMN correlation "
+                "TEXT NOT NULL DEFAULT '{}'"
+            )
         self._conn.commit()
         # Only the authoritative long-running process (the API server, which
         # owns the scheduler) may sweep running→idle on boot. Short-lived CLI
@@ -602,6 +610,7 @@ class AgentManager:
         agent_id: str,
         content: str,
         tool_calls: Optional[list] = None,
+        correlation: Optional[dict[str, str]] = None,
     ) -> dict:
         """Store an agent-to-user response message.
 
@@ -616,9 +625,16 @@ class AgentManager:
         self._conn.execute(
             "INSERT INTO agent_messages"
             " (id, agent_id, direction, content, mode, status, created_at,"
-            " tool_calls)"
-            " VALUES (?, ?, 'agent_to_user', ?, 'immediate', 'delivered', ?, ?)",
-            (msg_id, agent_id, content, now, tool_calls_json),
+            " tool_calls, correlation)"
+            " VALUES (?, ?, 'agent_to_user', ?, 'immediate', 'delivered', ?, ?, ?)",
+            (
+                msg_id,
+                agent_id,
+                content,
+                now,
+                tool_calls_json,
+                json.dumps(correlation or {}),
+            ),
         )
         self._conn.commit()
         return {
@@ -630,6 +646,7 @@ class AgentManager:
             "status": "delivered",
             "created_at": now,
             "tool_calls": tool_calls or None,
+            "correlation": correlation or {},
         }
 
     def list_messages(self, agent_id: str, limit: int = 50) -> list[dict]:
@@ -697,6 +714,7 @@ class AgentManager:
             "status": row["status"],
             "created_at": row["created_at"],
             "tool_calls": tool_calls,
+            "correlation": json.loads(row["correlation"] or "{}"),
         }
 
     # ── Learning log ──────────────────────────────────────────

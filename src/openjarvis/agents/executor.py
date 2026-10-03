@@ -17,6 +17,11 @@ from openjarvis.agents.errors import (
     retry_delay,
 )
 from openjarvis.agents.tool_resolver import resolve_agent_tools
+from openjarvis.core.correlation import (
+    ExecutionIdentity,
+    current_identity,
+    execution_scope,
+)
 from openjarvis.core.events import EventBus, EventType
 
 if TYPE_CHECKING:
@@ -126,6 +131,14 @@ class AgentExecutor:
         guard — bailing out with no end_tick(), leaving the agent stuck in
         ``status='running'`` forever.
         """
+        # A background tick is a new execution, not the caller's HTTP turn.
+        with execution_scope(ExecutionIdentity()):
+            self._execute_scoped_tick(agent_id, lock_already_held=lock_already_held)
+
+    def _execute_scoped_tick(
+        self, agent_id: str, *, lock_already_held: bool = False
+    ) -> None:
+        identity = current_identity()
         if lock_already_held:
             self._set_activity(agent_id, "Preparing tick...")
         else:
@@ -151,7 +164,10 @@ class AgentExecutor:
 
         # Activity tracking: subscribe to tool/inference events
         def _on_activity(event: Any) -> None:
-            if event.data.get("agent") == agent_id:
+            if (
+                event.data.get("agent") == agent_id
+                and event.correlation.get("trace_id") == identity.trace_id
+            ):
                 self._manager.update_agent(agent_id, last_activity_at=time.time())
 
         self._bus.subscribe(EventType.TOOL_CALL_START, _on_activity)
@@ -161,7 +177,10 @@ class AgentExecutor:
         trace_steps: list[dict[str, Any]] = []
 
         def _on_tool_start(event: Any) -> None:
-            if event.data.get("agent") == agent_id:
+            if (
+                event.data.get("agent") == agent_id
+                and event.correlation.get("trace_id") == identity.trace_id
+            ):
                 trace_steps.append(
                     {
                         "type": "tool_call",
@@ -174,7 +193,11 @@ class AgentExecutor:
                 )
 
         def _on_tool_end(event: Any) -> None:
-            if event.data.get("agent") == agent_id and trace_steps:
+            if (
+                event.data.get("agent") == agent_id
+                and trace_steps
+                and event.correlation.get("trace_id") == identity.trace_id
+            ):
                 for step in reversed(trace_steps):
                     if step["type"] == "tool_call" and "output" not in step:
                         step["output"] = {
@@ -426,7 +449,9 @@ class AgentExecutor:
             capability_policy = getattr(self._system, "capability_policy", None)
             if capability_policy is not None:
                 agent_kwargs["capability_policy"] = capability_policy
-            security_cfg = getattr(getattr(self._system, "config", None), "security", None)
+            security_cfg = getattr(
+                getattr(self._system, "config", None), "security", None
+            )
             if bool(getattr(security_cfg, "enforce_tool_management", False)):
                 agent_kwargs["tool_management_registry"] = getattr(
                     self._system,
@@ -765,6 +790,9 @@ class AgentExecutor:
                     agent_id,
                     result.content,
                     tool_calls=_tool_calls_for_storage(result),
+                    correlation=(
+                        current_identity().metadata() if current_identity() else None
+                    ),
                 )
 
             # Budget enforcement (post-tick check)
@@ -872,12 +900,16 @@ class AgentExecutor:
                 )
             )
 
+        identity = current_identity()
         metadata: dict[str, Any] = {}
+        if identity:
+            metadata["correlation"] = identity.metadata()
         if error is not None:
             metadata["error_detail"] = self._build_error_detail(error)
 
         outcome = "success" if error is None else "error"
         trace = Trace(
+            **({"trace_id": identity.trace_id} if identity else {}),
             agent=agent_id,
             query=agent.get("summary_memory", "")[:200],
             result=result.content[:200] if result else "",
