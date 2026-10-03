@@ -349,6 +349,11 @@ class ResearchRequest(BaseModel):
 
 def _sse(event: Dict[str, Any]) -> str:
     """Serialize one event dict to an SSE ``data: ...\\n\\n`` frame."""
+    from openjarvis.core.correlation import current_identity
+
+    identity = current_identity()
+    if identity:
+        event = {**event, "correlation": identity.metadata()}
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
@@ -387,6 +392,7 @@ async def _stream_research(
     active_model: str = "",
     request_model: str = "",
     active_agent: Any = None,
+    trace_store: Any = None,
 ) -> AsyncGenerator[str, None]:
     """Drive ResearchAgent on a worker thread; yield SSE frames as they land.
 
@@ -478,6 +484,15 @@ async def _stream_research(
         sampler.start()
         try:
             result = agent.run(query)
+            if trace_store is not None:
+                from openjarvis.traces.collector import record_response_trace
+
+                record_response_trace(
+                    trace_store, query=query, result=result.answer, model=model,
+                    engine=engine_key, agent="research", started_at=t0,
+                    ended_at=time.time(),
+                    metadata={"evidence": result.evidence_metadata},
+                )
             usage_dict = dict(result.usage)
             totals = sampler.stop()
             # Persist token usage *and* GPU energy/power so /v1/telemetry/energy
@@ -502,6 +517,15 @@ async def _stream_research(
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("research agent crashed: %s", exc)
+            if trace_store is not None:
+                from openjarvis.traces.collector import record_response_trace
+
+                record_response_trace(
+                    trace_store, query=query, result="", model=model,
+                    engine=engine_key, agent="research", started_at=t0,
+                    ended_at=time.time(), outcome="failure",
+                    metadata={"error_type": type(exc).__name__},
+                )
             # Stop the sampler on failure too so we don't leak the polling thread
             # past the request lifetime.
             try:
@@ -623,7 +647,10 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
     parsing the underlying ``[DONE]`` sentinel used by OpenAI-style routes.
     """
     session_store = None
-    user_id = ""
+    from openjarvis.core.correlation import bind_verified_identity, current_identity
+
+    user_id = str(getattr(getattr(request, "state", None), "auth_user_id", "") or "")
+    bind_verified_identity(user_id=user_id)
     if req.session_id:
         user_id = get_authenticated_user_id(request)
         session_store = getattr(request.app.state, "session_store", None)
@@ -638,12 +665,14 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
             raise HTTPException(status_code=404, detail="Session not found")
         if session.identity.user_id != user_id:
             raise HTTPException(status_code=404, detail="Session not found")
+        bind_verified_identity(user_id=user_id, session_id=session.session_id)
         try:
             session_store.save_message(
                 req.session_id,
                 "user",
                 req.query,
                 channel="web",
+                metadata={"correlation": current_identity().metadata()},
             )
         except Exception as exc:
             logger.exception("research: failed to persist query in session")
@@ -665,6 +694,7 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
         active_model=active_model,
         request_model=req.model or "",
         active_agent=getattr(request.app.state, "agent", None),
+        trace_store=getattr(request.app.state, "trace_store", None),
     )
 
     async def stream():
@@ -682,7 +712,10 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
                             "assistant",
                             "".join(answer_parts),
                             channel="web",
-                            metadata={"isResearch": True},
+                            metadata={
+                                "isResearch": True,
+                                "correlation": current_identity().metadata(),
+                            },
                         )
                 except Exception:
                     logger.exception("research: failed to persist session answer")

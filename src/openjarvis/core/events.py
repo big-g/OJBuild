@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional  # noqa: I001
 
+from openjarvis.core.correlation import current_identity
+
 # ---------------------------------------------------------------------------
 # Event taxonomy
 # ---------------------------------------------------------------------------
@@ -87,6 +89,7 @@ class Event:
     event_type: EventType
     timestamp: float
     data: Dict[str, Any] = field(default_factory=dict)
+    correlation: Dict[str, str] = field(default_factory=dict)
 
 
 # Type alias for subscriber callbacks
@@ -139,7 +142,11 @@ class EventBus:
 
         Returns the published ``Event`` instance.
         """
-        event = Event(event_type=event_type, timestamp=time.time(), data=data or {})
+        identity = current_identity()
+        event = Event(
+            event_type=event_type, timestamp=time.time(), data=data or {},
+            correlation=identity.metadata() if identity else {},
+        )
 
         with self._lock:
             if self._record_history:

@@ -156,6 +156,26 @@ Automatic model routing is deferred; explicit model selection remains supported.
    and Android end-to-end research/configuration checks. Synthetic offline tests
    do not substitute for those runtime checks.
 
+## Phase 2: execution trace identity
+
+**Implemented:** server-generated request/turn/trace IDs for HTTP requests,
+including chat and Deep Research, with authenticated user and ownership-checked
+session/conversation identity. The persistent session ID is the canonical
+conversation ID. Response headers expose diagnostic IDs through CORS; research
+SSE frames, session messages, agent/direct traces and research summary traces
+carry the same correlation metadata. Shared API-key research without a verified
+human session does not claim a personal identity. Client identity headers are
+never authoritative.
+
+Execution context follows bounded tool workers and asynchronous thread bridges;
+collectors and agent SSE bridges filter shared-bus events by trace identity.
+Unscoped and other-request events cannot enter a correlated trace. Failed agent
+runs and research workers retain correlated failure traces with exception types,
+without storing raw exception text. Trace persistence remains opt-in through the
+existing trace configuration. **Pending:** explicit WebSocket/channel/operator
+entry-point identity and client/runtime acceptance. This batch establishes the
+HTTP execution path; it does not complete the full trace-identity objective.
+
 Phase 2 remains open until the evidence hard gate, runtime tool addition, trace
 identity, knowledge maintenance, and client validation meet their acceptance checks.
 The source-management foundation alone does not complete Phase 2.

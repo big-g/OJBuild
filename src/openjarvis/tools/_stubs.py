@@ -14,6 +14,7 @@ import queue
 import threading
 import time
 from abc import ABC, abstractmethod
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -51,7 +52,7 @@ class _BoundedToolRunner:
         self._ensure_started()
         future: concurrent.futures.Future[ToolResult] = concurrent.futures.Future()
         try:
-            self._queue.put_nowait((future, function, params))
+            self._queue.put_nowait((future, copy_context(), function, params))
         except queue.Full:
             return None
         return future
@@ -77,11 +78,11 @@ class _BoundedToolRunner:
             try:
                 if item is _STOP_WORKER:
                     return
-                future, function, params = item
+                future, context, function, params = item
                 if not future.set_running_or_notify_cancel():
                     continue
                 try:
-                    future.set_result(function(**params))
+                    future.set_result(context.run(function, **params))
                 except BaseException as exc:  # propagate tool failures to caller
                     future.set_exception(exc)
             finally:
@@ -99,7 +100,7 @@ class _BoundedToolRunner:
                 except queue.Empty:
                     break
                 if item is not _STOP_WORKER:
-                    future, _, _ = item
+                    future = item[0]
                     future.cancel()
                 self._queue.task_done()
             for _ in self._threads:

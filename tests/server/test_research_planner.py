@@ -250,6 +250,7 @@ def test_research_route_passes_live_engine_and_selected_model(
         "active_model": "server-model",
         "request_model": "selected-model",
         "active_agent": None,
+        "trace_store": None,
     }
 
 

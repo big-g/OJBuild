@@ -179,6 +179,9 @@ def _ensure_identity_prompt(messages: list[Message], app_config) -> list[Message
 async def chat_completions(request_body: ChatCompletionRequest, request: Request):
     """Handle chat completion requests (streaming and non-streaming)."""
     user_id = get_authenticated_user_id(request)
+    from openjarvis.core.correlation import bind_verified_identity
+
+    bind_verified_identity(user_id=user_id)
 
     engine = request.app.state.engine
     agent = getattr(request.app.state, "agent", None)
@@ -200,7 +203,10 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         from openjarvis.server.cloud_router import get_provider
 
         if get_provider(model) is not None or request_body.tools:
-            raise HTTPException(status_code=400, detail="Image input currently requires a local model without tools")
+            raise HTTPException(
+                status_code=400,
+                detail="Image input currently requires a local model without tools",
+            )
         if (
             len(image_messages) != 1
             or image_messages[0] is not request_body.messages[-1]
@@ -219,13 +225,18 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             try:
                 raw = base64.b64decode(encoded, validate=True)
             except (ValueError, binascii.Error):
-                raise HTTPException(status_code=400, detail="Invalid image encoding") from None
+                raise HTTPException(
+                    status_code=400, detail="Invalid image encoding"
+                ) from None
             if len(raw) > 10 * 1024 * 1024 or not (
                 raw.startswith(b"\x89PNG\r\n\x1a\n")
                 or raw.startswith(b"\xff\xd8\xff")
                 or raw.startswith(b"RIFF") and raw[8:12] == b"WEBP"
             ):
-                raise HTTPException(status_code=400, detail="Images must be PNG, JPEG, or WebP under 10 MiB")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Images must be PNG, JPEG, or WebP under 10 MiB",
+                )
 
     # Load server-side conversation history when a persistent session is supplied.
     session_store = None
@@ -246,7 +257,9 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 raise HTTPException(
                 status_code=403,
                 detail="Session does not belong to authenticated user",
-                ) 
+                )
+
+            bind_verified_identity(user_id=user_id, session_id=session.session_id)
 
             # The server is authoritative for persistent sessions.
             # Keep the current request's new user message, but replace the
@@ -530,7 +543,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         user_id=user_id,
         bus=getattr(request.app.state, "bus", None),
         source="server.chat",
-    )    
+    )
     return response
 
 
@@ -553,11 +566,15 @@ def _persist_session_message(
         return
 
     try:
+        from openjarvis.core.correlation import current_identity
+
+        identity = current_identity()
         session_store.save_message(
             session_id,
             role,
             content,
             channel="",
+            metadata={"correlation": identity.metadata()} if identity else {},
         )
     except Exception:  # noqa: BLE001 — persistence must never break a reply
         logging.getLogger("openjarvis.server").error(
@@ -599,7 +616,7 @@ def _record_completed_exchange(
             )
         elif memory_service is not None:
             memory_service.submit(
-                user_text, 
+                user_text,
                 assistant_text,
                 user_id=user_id,
             )

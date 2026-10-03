@@ -15,6 +15,11 @@ from typing import AsyncGenerator
 from fastapi.responses import StreamingResponse
 
 from openjarvis.agents._stubs import AgentContext, BaseAgent
+from openjarvis.core.correlation import (
+    ExecutionIdentity,
+    current_identity,
+    execution_scope,
+)
 from openjarvis.core.events import Event, EventBus, EventType
 from openjarvis.engine._base import looks_like_context_length_error
 from openjarvis.server.models import (
@@ -92,7 +97,8 @@ class AgentStreamBridge:
         loop = asyncio.get_event_loop()
 
         def _cb(event: Event) -> None:
-            loop.call_soon_threadsafe(self._queue.put_nowait, event)
+            if event.correlation.get("trace_id") == self._identity.trace_id:
+                loop.call_soon_threadsafe(self._queue.put_nowait, event)
 
         self._callbacks[event_type] = _cb
         return _cb
@@ -110,6 +116,9 @@ class AgentStreamBridge:
 
     def _format_named_event(self, name: str, data: dict) -> str:
         """Format an SSE event with an explicit ``event:`` field."""
+        identity = getattr(self, "_identity", None)
+        if identity:
+            data = {**data, "correlation": identity.metadata()}
         if name == "tool_call_start" and not isinstance(data.get("arguments"), str):
             # The in-process event bus uses parsed arguments for trace/eval
             # consumers, while the web SSE contract expects their JSON text.
@@ -155,6 +164,12 @@ class AgentStreamBridge:
 
     async def stream(self) -> AsyncGenerator[str, None]:
         """Async generator that yields SSE-formatted strings."""
+        self._identity = current_identity() or ExecutionIdentity()
+        with execution_scope(self._identity):
+            async for frame in self._stream():
+                yield frame
+
+    async def _stream(self) -> AsyncGenerator[str, None]:
         self._subscribe_all()
 
         # Kick off agent.run() in a background thread

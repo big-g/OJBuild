@@ -975,3 +975,27 @@ address authorization and certificate trust before syncing a private endpoint.
 Password changes at the mail server can affect both connections. No
 legacy email index is migrated or removed; the imported source starts with a
 fresh independent index.
+
+## Request and conversation diagnostics
+
+HTTP responses expose server-generated `X-Request-ID`, `X-Turn-ID` and
+`X-Trace-ID` headers. Use these IDs to locate an execution in the configured
+trace store when tracing is enabled. IDs are also available to browser clients
+through CORS. Sending your own identity headers does not select or overwrite
+them.
+
+Chat traces, saved conversation messages, and research SSE frames include
+`correlation` metadata. Its `user_id` comes from verified authentication;
+`session_id` and `conversation_id` refer to the same ownership-checked persistent
+conversation. Requests without a persistent session leave both empty. Research
+using only the shared server API key leaves personal identity empty. Each request
+has distinct request/turn/trace IDs even when browser, desktop and Android share
+one conversation.
+
+When enabled, research saves a summary trace containing its final answer and
+evidence verdict; worker failures retain a failure trace with the exception type.
+These summaries do not represent a full research tool-step replay. Correlation
+metadata contains identifiers, not credentials. Shared event-bus collection is
+scoped to the execution so simultaneous requests and late tool workers cannot
+mix their trace steps. WebSocket/channel/operator entry-point correlation and
+live client acceptance remain separate Phase 2 work.

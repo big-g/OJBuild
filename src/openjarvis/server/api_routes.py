@@ -857,6 +857,8 @@ async def import_session_messages(
                 detail="Session history is already imported",
             )
 
+        if any("correlation" in message.metadata for message in req.messages):
+            raise HTTPException(400, "Execution correlation is server-managed")
         imported = store.replace_messages(
             session_id,
             [message.model_dump() for message in req.messages],
@@ -886,6 +888,8 @@ async def update_session_message_metadata(
             raise HTTPException(status_code=404, detail="Session not found")
         if session.identity.user_id != user_id:
             raise HTTPException(status_code=404, detail="Session not found")
+        if "correlation" in req.metadata:
+            raise HTTPException(400, "Execution correlation is server-managed")
         updated = store.update_latest_message_metadata(
             session_id,
             req.role,

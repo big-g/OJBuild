@@ -421,7 +421,10 @@ def test_research_route_persists_session_exchange(monkeypatch, tmp_path):
         ("user", "Check this claim"),
         ("assistant", "Verified answer."),
     ]
-    assert saved.messages[1].metadata == {"isResearch": True}
+    assert saved.messages[1].metadata["isResearch"] is True
+    correlation = saved.messages[1].metadata["correlation"]
+    assert correlation["conversation_id"] == session.session_id
+    assert correlation["user_id"] == session.identity.user_id
     session_store.close()
 
 

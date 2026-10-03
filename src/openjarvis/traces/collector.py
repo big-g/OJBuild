@@ -6,6 +6,12 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, BaseAgent
+from openjarvis.core.correlation import (
+    ExecutionIdentity,
+    current_identity,
+    execution_scope,
+)
+from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.evidence import (
     EvidenceAssessment,
     EvidenceRequirement,
@@ -13,7 +19,6 @@ from openjarvis.core.evidence import (
     evidence_audit_metadata,
     grounding_audit_from_result_metadata,
 )
-from openjarvis.core.events import EventBus, EventType
 from openjarvis.core.types import StepType, Trace, TraceStep
 from openjarvis.traces.store import TraceStore
 
@@ -63,6 +68,34 @@ class TraceCollector:
         **kwargs: Any,
     ) -> AgentResult:
         """Execute the wrapped agent and record a trace."""
+        self._identity = current_identity() or ExecutionIdentity()
+        self._started_at = time.time()
+        self._current_steps = []
+        with execution_scope(self._identity):
+            try:
+                return self._run(input, context=context, **kwargs)
+            except Exception as exc:
+                # Preserve execution failures as correlated traces without
+                # replacing the original exception or storing its raw text.
+                trace = Trace(
+                    trace_id=self._identity.trace_id, query=input,
+                    agent=getattr(self._agent, "agent_id", "unknown"),
+                    steps=list(self._current_steps), outcome="failure",
+                    started_at=self._started_at, ended_at=time.time(),
+                    metadata={
+                        "correlation": self._identity.metadata(),
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                self._last_trace = trace
+                if self._store is not None:
+                    try:
+                        self._store.save(trace)
+                    except Exception:
+                        pass  # The agent failure remains authoritative.
+                raise
+
+    def _run(self, input, context=None, **kwargs):
         self._current_steps = []
         self._current_model = ""
         self._current_engine = ""
@@ -71,6 +104,7 @@ class TraceCollector:
         unsubs = self._subscribe()
 
         started_at = time.time()
+        self._started_at = started_at
         try:
             result = self._agent.run(input, context=context, **kwargs)
         finally:
@@ -94,7 +128,7 @@ class TraceCollector:
         # Extract messages from agent result metadata
         messages: List[Dict[str, Any]] = result.metadata.get("messages", [])
 
-        trace_metadata: Dict[str, Any] = {}
+        trace_metadata: Dict[str, Any] = {"correlation": self._identity.metadata()}
         evidence_audit = evidence_audit_from_result_metadata(result.metadata)
         if evidence_audit is not None:
             grounding_audit = grounding_audit_from_result_metadata(
@@ -106,6 +140,7 @@ class TraceCollector:
 
         # Build and persist the trace
         trace = Trace(
+            trace_id=self._identity.trace_id,
             query=input,
             agent=getattr(self._agent, "agent_id", "unknown"),
             model=self._current_model,
@@ -185,9 +220,14 @@ class TraceCollector:
             (EventType.TOOL_CALL_END, self._on_tool_end),
             (EventType.MEMORY_RETRIEVE, self._on_memory_retrieve),
         ]
+        scoped_handlers = []
         for evt_type, handler in handlers:
-            self._bus.subscribe(evt_type, handler)
-        return handlers
+            def scoped(event, handler=handler):
+                if event.correlation.get("trace_id") == self._identity.trace_id:
+                    handler(event)
+            self._bus.subscribe(evt_type, scoped)
+            scoped_handlers.append((evt_type, scoped))
+        return scoped_handlers
 
     def _unsubscribe(self, handlers: list[tuple]) -> None:
         if self._bus is None:
@@ -297,6 +337,7 @@ def record_response_trace(
     started_at: float,
     ended_at: float,
     metadata: Optional[Dict[str, Any]] = None,
+    outcome: Optional[str] = None,
 ) -> Optional[Trace]:
     """Persist a minimal single-step ``Trace`` for a non-agent response.
 
@@ -313,13 +354,19 @@ def record_response_trace(
         return None
     try:
         duration = max(0.0, ended_at - started_at)
+        identity = current_identity()
+        trace_metadata = dict(metadata or {})
+        if identity:
+            trace_metadata["correlation"] = identity.metadata()
         trace = Trace(
+            **({"trace_id": identity.trace_id} if identity else {}),
             query=query,
             agent=agent,
             model=model,
             engine=engine,
             result=result,
-            metadata=dict(metadata or {}),
+            outcome=outcome,
+            metadata=trace_metadata,
             started_at=started_at,
             ended_at=ended_at,
             steps=[

@@ -12,8 +12,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from openjarvis.server.analytics_routes import router as analytics_router
-from openjarvis.server.auth_routes import router as auth_router
 from openjarvis.server.api_routes import include_all_routes
+from openjarvis.server.auth_routes import router as auth_router
 from openjarvis.server.comparison import comparison_router
 from openjarvis.server.connectors_router import create_connectors_router
 from openjarvis.server.dashboard import dashboard_router
@@ -451,6 +451,8 @@ def create_app(
         logger.debug("Security middleware init skipped: %s", exc)
 
     # API key authentication middleware
+    from openjarvis.server.correlation import CORRELATION_HEADERS, CorrelationMiddleware
+
     if api_key:
         try:
             from openjarvis.server.auth_middleware import AuthMiddleware
@@ -458,6 +460,8 @@ def create_app(
             app.add_middleware(AuthMiddleware, api_key=api_key)
         except Exception as exc:
             logger.debug("Auth middleware init skipped: %s", exc)
+
+    app.add_middleware(CorrelationMiddleware)
 
     # Register CORS last so it is the outermost middleware. In addition to
     # handling preflights, this ensures browser clients can read 401 responses
@@ -469,6 +473,7 @@ def create_app(
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=list(CORRELATION_HEADERS),
     )
 
     # Mount webhook routes (always — SendBlue may be configured dynamically)

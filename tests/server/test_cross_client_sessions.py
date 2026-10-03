@@ -157,7 +157,10 @@ def test_two_clients_resume_authoritative_history_after_restart(
             *expected,
             ("assistant", "reply-2"),
         ]
-        assert detail.json()["messages"][1]["metadata"] == metadata
+        saved_metadata = detail.json()["messages"][1]["metadata"]
+        correlation = saved_metadata.pop("correlation")
+        assert correlation["session_id"] == correlation["conversation_id"] == session_id
+        assert saved_metadata == metadata
         listed = resumed.get("/v1/sessions")
         assert listed.status_code == 200
         assert any(s["session_id"] == session_id for s in listed.json()["sessions"])
