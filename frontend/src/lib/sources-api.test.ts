@@ -109,3 +109,12 @@ it('keeps named account credentials in authenticated bodies and disconnects one 
   expect(JSON.parse(String(apiFetch.mock.calls[2][1]?.body))).toEqual({ revision: 7, client_id: 'application-id', client_secret: 'private-secret' });
   expect(apiFetch.mock.calls.map(([url]) => String(url)).join(' ')).not.toContain('private-');
 });
+
+it('sends IMAP credentials in an authenticated, revision-bound body', async () => {
+  const { setSourceAccountPassword } = await import('./sources-api');
+  await setSourceAccountPassword(source, 'mail@example.com', 'protected password');
+  const [url, options] = apiFetch.mock.calls[0];
+  expect(url).toBe('/v1/sources/instance-1/connection/password');
+  expect(options?.method).toBe('PUT');
+  expect(JSON.parse(String(options?.body))).toEqual({ revision: 7, username: 'mail@example.com', password: 'protected password' });
+});

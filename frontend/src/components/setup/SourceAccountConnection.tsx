@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { getBase } from '../../lib/api';
 import { startOAuthFlow } from '../../lib/connectors-api';
-import { disconnectSourceAccount, getSourceConnection, setSourceAccountClient, setSourceAccountToken } from '../../lib/sources-api';
+import { disconnectSourceAccount, getSourceConnection, setSourceAccountClient, setSourceAccountToken, setSourceAccountPassword } from '../../lib/sources-api';
 import type { SourceInstance } from '../../lib/sources-api';
 
 export function SourceAccountConnection({ source, authType, refresh }: {
-  source: SourceInstance; authType: 'token' | 'oauth'; refresh: () => Promise<void>;
+  source: SourceInstance; authType: 'token' | 'oauth' | 'password'; refresh: () => Promise<void>;
 }) {
   const [connected, setConnected] = useState<boolean | undefined>();
+  const [username, setUsername] = useState('');
   const [token, setToken] = useState('');
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
@@ -43,6 +44,11 @@ export function SourceAccountConnection({ source, authType, refresh }: {
           <label>Client secret <input aria-label="Account client secret" type="password" autoComplete="new-password" value={clientSecret} onChange={(event) => setClientSecret(event.target.value)} /></label>
           <button type="button" disabled={!clientId || !clientSecret} onClick={() => void perform(() => setSourceAccountClient(source, clientId, clientSecret))}>Save application and reset authorization</button>
         </>}
+      </> : authType === 'password' ? <>
+        <label>IMAP username <input aria-label="IMAP username" autoComplete="off" value={username} onChange={(event) => setUsername(event.target.value)} /></label>
+        <label>Password or app password <input aria-label="IMAP password" type="password" autoComplete="new-password" value={token} onChange={(event) => setToken(event.target.value)} /></label>
+        <button type="button" disabled={!username || !token} onClick={() => void perform(() => setSourceAccountPassword(source, username, token))}>{connected ? 'Replace password' : 'Store password'}</button>
+        <p>Stored encrypted on the server. Sync checks mailbox access. Use an app password when required by your mail provider.</p>
       </> : <>
         <label>Account token <input aria-label="Account token" type="password" autoComplete="new-password" value={token} onChange={(event) => setToken(event.target.value)} /></label>
         <button type="button" disabled={!token} onClick={() => void perform(() => setSourceAccountToken(source, token))}>{connected ? 'Replace token' : 'Store token'}</button>

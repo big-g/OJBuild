@@ -673,7 +673,7 @@ Named account adapters use strict staged readers. They do not infer provider
 deletions from omitted items. Named reads stage up to 10,000 documents / 32 MiB
 of text before indexing; incomplete traversals and reader/staging limits fail
 without yielding a partial batch. Full provider-specific snapshot/deletion
-contracts and named IMAP password connections remain separate roadmap items.
+contracts remain separate roadmap items.
 No legacy connection is silently converted or disconnected.
 
 Named Spotify and Strava sources use stricter readers. Each source's web form
@@ -776,6 +776,47 @@ Provider contracts: [Google APIs](https://developers.google.com/workspace),
 [OpenWeather](https://openweathermap.org/api).
 
 
+### Named IMAP mailbox connections
+
+Choose **IMAP mailbox** in Data Sources and save its host, port, transport security
+and mailbox (default `INBOX`). Then store its username and password on the source
+card and sync. Use a provider app password when required; some providers require
+OAuth instead of allowing password logins. Credentials are encrypted in the
+server vault and never returned by the source API. The password field is cleared
+after each submission. Usernames and passwords use printable ASCII; passwords
+may include spaces. Replacement/disconnection clears this source's indexed
+evidence and checkpoint; resync after replacement. Source removal deletes its
+vault binding. Configuration edits follow the existing preview/reset workflow.
+
+TLS defaults to port 993; STARTTLS defaults to 143 and must succeed before login.
+Certificates and hostnames are verified. DNS-resolved addresses are pinned and
+must all be public unicast addresses. Private/LAN/self-hosted endpoints are not
+supported by this adapter yet. Mailbox names must be printable ASCII (use the
+server's modified UTF-7 wire name for non-ASCII folders). Save separate named
+connections for different mailboxes or accounts.
+
+The scan rereads every UID in the configured mailbox using read-only selection
+and `BODY.PEEK[]`; it does not mark messages read, delete, move, expunge or send
+mail. Message identities include mailbox, UIDVALIDITY and UID, scoped to the
+source instance. INTERNALDATE supplies the provider timestamp. Plain text and
+HTML bodies are indexed; attachments and attached message bodies are excluded.
+Messages without inline text retain subject/from evidence with an explicit body
+absence marker. No missing message implies deletion, and scans do not claim an
+atomic mailbox snapshot. A changed UIDVALIDITY is blocked against the saved
+checkpoint; replace authorization (which resets the index) and resync so old UID
+namespaces cannot mix with replacement mailbox records.
+
+**Max messages** defaults to 1,000 (maximum 10,000); **Timeout seconds** defaults
+to 120 (range 10–300). The transport bounds each message literal to 2 MiB and all
+received data to 16 MiB, including protocol responses. The socket timeout is at
+most ten seconds and cancellation is checked between reads/commands. All reads
+are staged: failed login, missing/mismatched bodies, invalid UID inventories,
+mailbox identity changes, malformed MIME, cancellation or limits fail before
+indexing and preserve the last successful checkpoint. Raise a configurable
+limit, choose a smaller mailbox, or correct authorization and retry. The Test
+configuration action validates settings locally; sync verifies actual access.
+Legacy IMAP connections are neither imported nor changed by this feature.
+
 ### Import other existing account connections
 
 **Configured sources → Import existing connections** now offers imports for
@@ -826,5 +867,5 @@ registration can provide separate named product connections. Import plans expire
 after ten minutes and bind to the caller, trusted recipe, adapter version and
 current credential selection. A new preview is required after expiry or relevant
 changes. Credentials configured only through an in-memory constructor are not
-server files and cannot be imported by this flow. Password-based IMAP import
-waits for the named IMAP adapter.
+server files and cannot be imported by this flow. Password-based IMAP legacy
+imports remain a separate follow-up; create a named mailbox connection manually.

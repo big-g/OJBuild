@@ -17,3 +17,13 @@ it('offers per-instance OAuth and application configuration', () => {
   expect(html).toContain('Configure OAuth application');
   expect(html).not.toContain('Account token');
 });
+
+it('offers a protected IMAP username and password form', () => {
+  const html = renderToStaticMarkup(<SourceAccountConnection source={source} authType="password" refresh={async () => {}} />);
+  expect(html).toContain('IMAP username');
+  expect(html).toContain('IMAP password');
+  expect(html).toContain('Store password');
+  expect(html).toContain('Stored encrypted on the server');
+  expect(html).not.toContain('Account token');
+  expect(html).not.toContain('Configure OAuth');
+});

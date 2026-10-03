@@ -117,8 +117,13 @@ Automatic model routing is deferred; explicit model selection remains supported.
    Version-2 upgrade previews reset incompatible indexes/checkpoints while
    preserving vault bindings. These scans do not infer deletion or claim atomic
    snapshots; metadata-only/retention/window coverage remains explicit.
-   **Next:** add password-based IMAP instances, reusing the vault, source lifecycle
-   and bounded scan safeguards.
+   **Implemented:** named password-based IMAP mailbox instances with web-configured
+   TLS/STARTTLS endpoints, encrypted username/password bundles, revision-bound
+   authorization changes and bounded staged read-only scans. DNS-pinned public
+   destinations, verified TLS, UIDVALIDITY/UID identities, nonmutating body reads,
+   MIME/byte/document/deadline safeguards and checkpoint-preserving failures.
+   Coverage is one configured mailbox without attachments; no deletion inference.
+   Private/local mail endpoints and legacy IMAP imports remain separate work.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
 4. **Pending:** Playwright and Scrapy integration through existing governed tools,

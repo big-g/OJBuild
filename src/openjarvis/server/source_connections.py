@@ -31,6 +31,13 @@ class AccountClient(BaseModel):
     client_secret: SecretStr
 
 
+class AccountPassword(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    username: SecretStr
+    password: SecretStr
+
+
 class AccountDisconnect(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
@@ -111,7 +118,9 @@ def install_source_connections(router, manager, invoke):
         record, adapter = invoke(account_record, manager, identity)
         values = load_tokens(str(token_path(directory, identity))) or {}
         key = (
-            "access_token"
+            "password"
+            if adapter.connection_auth == "password"
+            else "access_token"
             if adapter.connection_auth == "oauth"
             else ("api_key" if adapter.connection_service == "weather" else "token")
         )
@@ -122,6 +131,36 @@ def install_source_connections(router, manager, invoke):
                 values.get("client_id") and values.get("client_secret")
             ),
         }
+
+    @router.put("/{identity}/connection/password")
+    def set_password(identity: str, req: AccountPassword, request: Request):
+        with manager._locked(identity):
+            record, adapter = invoke(account_record, manager, identity, req.revision)
+            if adapter.connection_auth != "password":
+                raise HTTPException(
+                    400, "This source does not use password authorization"
+                )
+            username = invoke(_secret, req.username.get_secret_value())
+            password = req.password.get_secret_value()
+            if (
+                not password
+                or len(password) > 4096
+                or any(ord(c) < 32 or ord(c) > 126 for c in password)
+            ):
+                raise HTTPException(400, "Invalid account password")
+            manager._reset_and_purge(record)
+            OAuthStateStore(directory).cancel(identity)
+            invoke(
+                save_tokens,
+                str(token_path(directory, identity)),
+                {"username": username, "password": password},
+            )
+            audit(
+                identity,
+                "account_password_replaced",
+                getattr(request.state, "auth_user_id", None),
+            )
+        return {"connected": True}
 
     @router.put("/{identity}/connection/token")
     def set_token(identity: str, req: AccountToken, request: Request):

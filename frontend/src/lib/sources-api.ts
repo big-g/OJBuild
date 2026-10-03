@@ -24,7 +24,7 @@ export interface SourceField {
 }
 
 export interface SourceAdapter {
-  connection_auth?: 'token' | 'oauth' | null;
+  connection_auth?: 'token' | 'oauth' | 'password' | null;
   adapter_id: string;
   display_name: string;
   description: string;
@@ -155,3 +155,6 @@ export const setSourceAccountClient = (source: SourceInstance, client_id: string
   request(`/${encodeURIComponent(source.id)}/connection/client`, 'PUT', { revision: source.revision, client_id, client_secret });
 export const disconnectSourceAccount = (source: SourceInstance) =>
   request(`/${encodeURIComponent(source.id)}/connection/disconnect`, 'POST', { revision: source.revision });
+
+export const setSourceAccountPassword = (source: SourceInstance, username: string, password: string) =>
+  request(`/${encodeURIComponent(source.id)}/connection/password`, 'PUT', { revision: source.revision, username, password });

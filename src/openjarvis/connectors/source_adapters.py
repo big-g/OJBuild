@@ -477,3 +477,7 @@ from openjarvis.connectors.instance_sources import (  # noqa: E402
 )
 
 register_instance_adapters(register_adapter, SourceAdapter)
+
+from openjarvis.connectors.imap_sources import register_imap_adapter  # noqa: E402
+
+register_imap_adapter(register_adapter, SourceAdapter)
