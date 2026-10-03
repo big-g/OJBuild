@@ -48,3 +48,22 @@ it('explains that access-only imports will need new authorization', () => {
   expect(html).toContain('access token expires');
   expect(html).not.toContain('private-ticket');
 });
+
+it('reviews copied IMAP passwords, endpoint limits and unverified access without secret fields', () => {
+  const html = renderToStaticMarkup(<LegacySourceImportReview plan={{
+    import_id: 'imap', adapter_id: 'imap_account', name: 'Work mailbox',
+    credential_origin: 'mail.example.com:993 (TLS)', credential_storage: 'bundle',
+    connection_auth: 'password', oauth_grant_preserved: false,
+    config_version: 1, config: { host: 'mail.example.com', mailbox: 'INBOX' },
+    settings: [{ label: 'IMAP host', value: 'mail.example.com' }, { label: 'Mailbox', value: 'INBOX' }],
+    fresh_index: true, legacy_connection_kept: true, expires_in_seconds: 600, plan_token: 'private-ticket',
+  }} />);
+  expect(html).toContain('saved username and password');
+  expect(html).toContain('encrypted vault storage');
+  expect(html).toContain('does not verify login or mailbox access');
+  expect(html).toContain('private LAN endpoints remain unsupported');
+  expect(html).toContain('Mailbox: INBOX');
+  expect(html).not.toContain('OAuth grant');
+  expect(html).not.toContain('private-ticket');
+  expect(html).not.toContain('type="password"');
+});

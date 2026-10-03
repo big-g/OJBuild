@@ -44,6 +44,57 @@ _IMPORTS = {
 }
 
 
+def _imap_payload(definition, values):
+    """Map saved mailbox settings locally; access is checked only during sync."""
+    from openjarvis.connectors.gmail_imap import _normalize_imap_security
+    from openjarvis.connectors.imap import resolve_imap_host
+
+    username = _secret(values.get("email"))
+    password = values.get("password")
+    if (
+        not isinstance(password, str)
+        or not 1 <= len(password) <= 4096
+        or any(ord(c) < 32 or ord(c) > 126 for c in password)
+    ):
+        raise ValueError("Invalid account password")
+    host = values.get("imap_host")
+    if host in (None, ""):
+        host = (
+            "imap.gmail.com"
+            if definition.identity == "gmail_imap"
+            else resolve_imap_host(username)
+        )
+    security_value = values.get("imap_security", "")
+    if not isinstance(security_value, str):
+        raise ValueError("Invalid IMAP security")
+    security = _normalize_imap_security(security_value)
+    port = values.get("imap_port")
+    if port in (None, ""):
+        port = 993 if security == "tls" else 143
+    elif isinstance(port, str) and port.isascii() and port.isdecimal():
+        port = int(port)
+    config = get_adapter(definition.adapter_id).validate_config(
+        {"host": host, "security": security, "port": port, "mailbox": "INBOX"}
+    )
+    if any(password in value for value in config.values() if isinstance(value, str)):
+        raise ValueError("Configuration contains protected credential material")
+    return config, {"username": username, "password": password}
+
+
+for _imap_identity, _imap_label in (
+    ("imap", "Email (IMAP)"),
+    ("gmail_imap", "Gmail (IMAP)"),
+):
+    _IMPORTS[_imap_identity] = LegacyImport(
+        _imap_identity,
+        _imap_label,
+        "imap_account",
+        f"{_imap_identity}.json",
+        "",
+        storage="bundle",
+    )
+
+
 # Primary names match the legacy readers. Google falls back only when the
 # product-specific file is absent, exactly as the legacy credential resolver.
 _ACCOUNT_ORIGINS = {
@@ -212,6 +263,8 @@ class SourceImports:
         if not values:
             raise ValueError("Missing legacy connection")
         if definition.storage == "bundle":
+            if get_adapter(definition.adapter_id).connection_auth == "password":
+                return _imap_payload(definition, values)
             return _account_payload(definition, values)
         _secret(values.get(definition.token_field))
         adapter = get_adapter(definition.adapter_id)
@@ -317,8 +370,14 @@ class SourceImports:
             "import_id": identity,
             "adapter_id": definition.adapter_id,
             "name": name,
-            "credential_origin": definition.origin,
+            "credential_origin": (
+                f"{defaults['host']}:{defaults['port']} "
+                f"({defaults['security'].upper()})"
+                if adapter.connection_auth == "password"
+                else definition.origin
+            ),
             "credential_storage": definition.storage,
+            "connection_auth": adapter.connection_auth,
             "oauth_grant_preserved": adapter.connection_auth == "oauth",
             "refresh_available": refresh_available,
             "config_version": adapter.config_version,

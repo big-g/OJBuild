@@ -5,6 +5,10 @@ import type { LegacySourceImport, LegacySourceImportPlan } from '../../lib/sourc
 export function LegacySourceImportReview({ plan }: { plan: LegacySourceImportPlan }) {
   return <div aria-label="Import preview">
     <p>Import as <strong>{plan.name}</strong> using {plan.credential_storage === 'bundle' ? 'an encrypted account credential bundle for' : 'a protected credential restricted to'} {plan.credential_origin}.</p>
+    {plan.connection_auth === 'password' && <>
+      <p>The saved username and password will be copied into this source's encrypted vault storage. Password changes at the mail server can affect both connections.</p>
+      <p>Import uses the saved endpoint and INBOX with bounded scan defaults. It does not verify login or mailbox access. Sync requires a public mail endpoint with verified TLS; private LAN endpoints remain unsupported.</p>
+    </>}
     {plan.oauth_grant_preserved && <>
       <p>The existing OAuth grant is preserved. Import does not narrow its permissions. Reauthorize the named account to request its current read permissions.</p>
       <p>{plan.refresh_available ? 'Refresh credentials will be copied. Both connections may share a provider grant; provider revocation or refresh-token rotation can affect both.' : 'No refresh credentials are available. Authorize the named account again when its access token expires.'}</p>
@@ -41,7 +45,7 @@ export function LegacySourceImportsPanel({ refresh }: { refresh: () => Promise<v
   };
   return <section aria-label="Import existing connections" className="flex flex-col gap-3">
     <h4>Import existing connections</h4>
-    <p>Import an existing server connection as a named source without entering its token again.</p>
+    <p>Import an existing server connection as a named source without entering its credentials again.</p>
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {imports.map((item) => <div key={item.import_id}>

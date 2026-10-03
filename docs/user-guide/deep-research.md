@@ -876,13 +876,15 @@ mailbox identity changes, malformed MIME, cancellation or limits fail before
 indexing and preserve the last successful checkpoint. Raise a configurable
 limit, choose a smaller mailbox, or correct authorization and retry. The Test
 configuration action validates settings locally; sync verifies actual access.
-Legacy IMAP connections are neither imported nor changed by this feature.
+Existing saved IMAP connections can be imported explicitly using the workflow
+below; the original connection remains intact.
 
 ### Import other existing account connections
 
 **Configured sources → Import existing connections** now offers imports for
 Gmail, Google Drive, Calendar, Contacts, Tasks, Spotify, Strava, Slack, Dropbox,
-Granola, Oura, GitHub Notifications and Weather, alongside Notion. An entry is
+Granola, Oura, GitHub Notifications, Weather, Email (IMAP) and Gmail (IMAP),
+alongside Notion. An entry is
 available when its legacy server credential bundle has the fields required by
 that adapter. This checks stored format, not live provider access. Unsupported
 or incomplete bundles remain unavailable; configure a new named account instead.
@@ -928,5 +930,21 @@ registration can provide separate named product connections. Import plans expire
 after ten minutes and bind to the caller, trusted recipe, adapter version and
 current credential selection. A new preview is required after expiry or relevant
 changes. Credentials configured only through an in-memory constructor are not
-server files and cannot be imported by this flow. Password-based IMAP legacy
-imports remain a separate follow-up; create a named mailbox connection manually.
+server files and cannot be imported by this flow.
+
+IMAP imports copy the saved email/login name and password into the named source's
+encrypted username/password bundle. Password spaces are preserved. Saved
+`imap_host`, `imap_security` and `imap_port` become normal source settings;
+legacy TLS aliases and numeric port strings are normalized. Without a saved
+host, Email (IMAP) uses the legacy email-domain mapping and Gmail (IMAP) defaults
+to `imap.gmail.com`. Missing transport/port settings default to TLS/993 (or 143
+for explicit STARTTLS). The old reader scanned INBOX, so imports use INBOX with
+the named adapter's 1,000-message and 120-second limits. Other legacy fields are
+not copied. Change settings through the named source's normal edit workflow.
+
+The review shows the endpoint, mailbox and scan limits, without exposing the
+username or password. Import does not verify login, TLS or mailbox access; Sync
+does. Private LAN endpoints still fail the named adapter's public-destination
+checks. Password changes at the mail server can affect both connections. No
+legacy email index is migrated or removed; the imported source starts with a
+fresh independent index.

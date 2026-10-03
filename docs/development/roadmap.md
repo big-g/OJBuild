@@ -123,7 +123,14 @@ Automatic model routing is deferred; explicit model selection remains supported.
    destinations, verified TLS, UIDVALIDITY/UID identities, nonmutating body reads,
    MIME/byte/document/deadline safeguards and checkpoint-preserving failures.
    Coverage is one configured mailbox without attachments; no deletion inference.
-   Private/local mail endpoints and legacy IMAP imports remain separate work.
+   **Implemented:** explicit web preview/apply imports for legacy generic and
+   Gmail IMAP connections; saved endpoint/security/port normalization, INBOX and
+   bounded scan defaults; encrypted username/password copies without secret
+   exports, provider calls or old-index reuse. Existing expiring caller-bound
+   plans, credential-change checks, reserved identity recovery and import audit
+   apply to both recipes. Original connections remain intact; login/access are
+   verified only during an explicit sync. Private/local mail endpoints remain
+   separate work.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
 4. **Implemented:** bounded Playwright `web_render` and strengthened Scrapy
