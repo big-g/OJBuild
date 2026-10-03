@@ -325,7 +325,7 @@ def test_turn_correlation_reaches_worker_frames_and_traces(tmp_path, streaming):
                     "message": "Hi",
                     "correlation": {"trace_id": "forged"},
                     "user_id": "forged",
-                    "session_id": "forged",
+                    "conversation_id": "forged",
                 }
             )
             chunk, done = ws.receive_json(), ws.receive_json()

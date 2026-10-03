@@ -178,8 +178,13 @@ WebSocket chat now creates a fresh server identity for each received message,
 including validation errors, and binds only the handshake-verified human user.
 Chunk/done/error frames and completed/failed engine traces share that identity;
 thread fallback inherits it and cancellation restores the ambient context.
-Client identity fields are ignored. This engine-only endpoint has no persistent
-session binding, so session/conversation IDs remain empty. Agent event
+Client identity fields are ignored. An optional `session_id` now selects an
+existing, ownership-checked conversation for this engine-only endpoint. Human
+login is required, credentials are rechecked on every message, and stored
+history is authoritative across HTTP, WebSocket reconnects and other clients.
+New user messages and completed answers retain the same verified correlation;
+persistence failures produce an error rather than a false completion. Without
+`session_id`, the turn stays stateless. Agent event
 subscriptions forward the emitter's correlation separately from event data;
 subscribing does not create an execution identity for the emitter.
 
@@ -203,8 +208,7 @@ excluding delayed prior-tick events and unscoped events. Existing managed
 messages migrate with empty correlation; background ticks do not claim a human
 user or browser session from the initiating request.
 
-**Pending:** persistent WebSocket session continuity and client/runtime
-acceptance. Channel sessions remain separate
+**Pending:** client/runtime acceptance. Channel sessions remain separate
 from ownership-checked browser/desktop sessions; identity diagnostics alone do
 not complete the full trace-identity objective.
 

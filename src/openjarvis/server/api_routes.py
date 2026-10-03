@@ -1023,7 +1023,7 @@ async def websocket_chat_stream(websocket: WebSocket):
 
     Accepts JSON messages of the form::
 
-        {"message": "...", "model": "...", "agent": "..."}
+        {"message": "...", "model": "...", "session_id": "..."}
 
     Sends back JSON chunks::
 
@@ -1052,12 +1052,40 @@ async def websocket_chat_stream(websocket: WebSocket):
     try:
         while True:
             raw = await websocket.receive_text()
-            from openjarvis.core.correlation import ExecutionIdentity, execution_scope
+            # Long-lived sockets must not retain access after logout/revocation.
+            valid, _, verified_user = authenticate_websocket(websocket, expected_key)
+            if not valid or verified_user != user_id:
+                await websocket.close(code=1008)
+                return
+            from openjarvis.core.correlation import (
+                ExecutionIdentity,
+                bind_verified_identity,
+                execution_scope,
+            )
 
             identity = ExecutionIdentity(user_id=user_id or "")
             with execution_scope(identity):
+                session_store = None
+                session_id = None
+
+                def save_message(role, content):
+                    if session_store is not None and session_id:
+                        try:
+                            session_store.save_message(
+                                session_id,
+                                role,
+                                content,
+                                channel="",
+                                metadata={"correlation": identity.metadata()},
+                            )
+                        except Exception as exc:
+                            raise RuntimeError(
+                                "Failed to persist conversation message"
+                            ) from exc
 
                 async def send_frame(payload):
+                    if payload.get("type") == "done":
+                        save_message("assistant", payload["content"])
                     await websocket.send_json(
                         {**payload, "correlation": identity.metadata()}
                     )
@@ -1096,6 +1124,65 @@ async def websocket_chat_stream(websocket: WebSocket):
                     continue
 
                 messages = [{"role": "user", "content": message}]
+                requested_session = data.get("session_id")
+                if requested_session is not None:
+                    if (
+                        not isinstance(requested_session, str)
+                        or not requested_session.strip()
+                    ):
+                        await send_frame(
+                            {"type": "error", "detail": "Invalid session_id"}
+                        )
+                        continue
+                    if not user_id:
+                        await send_frame(
+                            {
+                                "type": "error",
+                                "detail": (
+                                    "Human login required for persistent sessions"
+                                ),
+                            }
+                        )
+                        continue
+                    try:
+                        store = _session_store(websocket)
+                        session = store.get_session(requested_session)
+                        if session is None:
+                            await send_frame(
+                                {"type": "error", "detail": "Session not found"}
+                            )
+                            continue
+                        if (
+                            session.identity is None
+                            or session.identity.user_id != user_id
+                        ):
+                            await send_frame(
+                                {
+                                    "type": "error",
+                                    "detail": (
+                                        "Session does not belong to authenticated user"
+                                    ),
+                                }
+                            )
+                            continue
+                        identity = bind_verified_identity(
+                            user_id=user_id,
+                            session_id=session.session_id,
+                        )
+                        session_store, session_id = store, session.session_id
+                        messages = [
+                            {"role": msg.role, "content": msg.content}
+                            for msg in session.messages
+                        ] + messages
+                        save_message("user", message)
+                    except Exception:
+                        await send_frame(
+                            {
+                                "type": "error",
+                                "detail": "Failed to load or persist conversation",
+                            }
+                        )
+                        continue
 
                 # This WS path streams straight from the engine (no agent /
                 # TraceCollector), so record the interaction directly once it
@@ -1113,32 +1200,32 @@ async def websocket_chat_stream(websocket: WebSocket):
                 )
 
                 evidence_requirement = detect_evidence_requirement(message)
-                if evidence_requirement.required:
-                    assessment = assess_evidence(evidence_requirement)
-                    blocked = blocked_response(assessment)
-                    await send_frame(
-                        {"type": "chunk", "content": blocked},
-                    )
-                    await send_frame(
-                        {"type": "done", "content": blocked},
-                    )
-                    _record_ws_trace(
-                        trace_store,
-                        query=message,
-                        result=blocked,
-                        model=model,
-                        started_at=_ws_started_at,
-                        ended_at=_time.time(),
-                        metadata={
-                            "evidence": evidence_audit_metadata(
-                                evidence_requirement,
-                                assessment,
-                            )
-                        },
-                    )
-                    continue
-
                 try:
+                    if evidence_requirement.required:
+                        assessment = assess_evidence(evidence_requirement)
+                        blocked = blocked_response(assessment)
+                        await send_frame(
+                            {"type": "chunk", "content": blocked},
+                        )
+                        await send_frame(
+                            {"type": "done", "content": blocked},
+                        )
+                        _record_ws_trace(
+                            trace_store,
+                            query=message,
+                            result=blocked,
+                            model=model,
+                            started_at=_ws_started_at,
+                            ended_at=_time.time(),
+                            metadata={
+                                "evidence": evidence_audit_metadata(
+                                    evidence_requirement,
+                                    assessment,
+                                )
+                            },
+                        )
+                        continue
+
                     # Prefer streaming if the engine supports it
                     stream_fn = getattr(engine, "stream", None)
                     if stream_fn is not None and (

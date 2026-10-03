@@ -997,5 +997,27 @@ evidence verdict; worker failures retain a failure trace with the exception type
 These summaries do not represent a full research tool-step replay. Correlation
 metadata contains identifiers, not credentials. Shared event-bus collection is
 scoped to the execution so simultaneous requests and late tool workers cannot
-mix their trace steps. WebSocket/channel/operator entry-point correlation and
-live client acceptance remain separate Phase 2 work.
+mix their trace steps. Channel, scheduled operator and managed-agent executions
+also carry correlation IDs; background executions do not claim a human identity.
+Live client acceptance remains Phase 2 work.
+
+WebSocket chat at `/v1/chat/stream` accepts an optional `session_id` on each
+message, for example:
+
+```json
+{"message": "Continue our discussion", "model": "qwen3.5:9b", "session_id": "your-existing-session-id"}
+```
+
+Authenticate with a human login session to use a persistent conversation. A
+shared API key alone cannot select one. The server checks ownership, loads the
+same history used by HTTP chat, and saves the user message and completed answer.
+The returned chunk/done/error frames include `correlation` with the verified
+session and conversation IDs. Create conversations through the existing session
+API; this endpoint does not create them automatically. Supply the ID again on
+each message and after reconnecting. Omit it for a stateless turn.
+
+The server rechecks authentication for every message, so logging out/revoking
+the login prevents further turns on an already-open socket. If storing a message
+fails, the socket returns an error instead of confirming completion. A failed or
+interrupted generation may leave the submitted user message in history; partial
+assistant output is not saved as a completed answer.
