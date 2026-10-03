@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import subprocess
 import sys
 from datetime import datetime, timezone
 from typing import Any
@@ -17,32 +16,30 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.core.types import ToolResult
-from openjarvis.security.ssrf import check_ssrf
+from openjarvis.security.public_http import normalize_source_url, source_origin
 from openjarvis.tools._stubs import BaseTool, ToolSpec
+from openjarvis.tools.research_web import (
+    USER_AGENT,
+    ResearchTransport,
+    RobotsPolicy,
+    page_result,
+    run_worker,
+)
 
 logger = logging.getLogger(__name__)
 
 _MAX_PAGES = 8
 _MAX_CHARS_PER_PAGE = 4000
 _CRAWL_TIMEOUT_SECONDS = 60
-_USER_AGENT = "OpenJarvis/1.0 (+https://github.com/big-g/OJBuild)"
+_USER_AGENT = USER_AGENT
 
 
 def _valid_http_url(url: str) -> tuple[str | None, str | None]:
     """Return a normalized URL, or an explanatory validation error."""
-    normalized = urldefrag(url.strip())[0]
     try:
-        parsed = urlsplit(normalized)
-    except ValueError:
-        return None, "The URL is malformed."
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        return None, "A full http:// or https:// URL is required."
-    if parsed.username or parsed.password:
-        return None, "URLs containing embedded credentials are not allowed."
-    error = check_ssrf(normalized)
-    if error:
-        return None, error
-    return normalized, None
+        return normalize_source_url(url), None
+    except Exception:
+        return None, "A valid public http(s) URL without credentials is required."
 
 
 def _bounded_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
@@ -90,6 +87,8 @@ class ScrapyCrawlTool(BaseTool):
                 "optional_dependency": "scrapy",
                 "install_extra": "tools-crawl",
                 "same_host_only": True,
+                "same_origin_only": True,
+                "pinned_http": True,
                 "robots_txt": True,
             },
         )
@@ -119,127 +118,34 @@ class ScrapyCrawlTool(BaseTool):
                     tool_name=self.tool_id,
                     content=(
                         "Scrapy is not installed. Install it with "
-                        "`uv sync --extra tools-crawl`."
+                        "uv sync --extra tools-crawl."
                     ),
                     success=False,
                 )
-        except (ImportError, ValueError):
+            max_pages = _bounded_int(
+                params.get("max_pages"), default=3, minimum=1, maximum=_MAX_PAGES
+            )
+            payload = run_worker(
+                "openjarvis.tools.scrapy_worker",
+                {
+                    "url": url,
+                    "max_pages": max_pages,
+                    "max_chars_per_page": _MAX_CHARS_PER_PAGE,
+                },
+                timeout=_CRAWL_TIMEOUT_SECONDS,
+            )
+            return page_result(
+                self.tool_id, "scrapy", url, payload, max_pages=max_pages
+            )
+        except Exception:
             return ToolResult(
                 tool_name=self.tool_id,
                 content=(
-                    "Scrapy is not installed. Install it with "
-                    "`uv sync --extra tools-crawl`."
+                    "Website crawl failed or exceeded its limits; "
+                    "no page evidence was returned."
                 ),
                 success=False,
             )
-
-        payload = {
-            "url": url,
-            "max_pages": _bounded_int(
-                params.get("max_pages"), default=3, minimum=1, maximum=_MAX_PAGES
-            ),
-            "max_chars_per_page": _MAX_CHARS_PER_PAGE,
-        }
-        try:
-            completed = subprocess.run(
-                [sys.executable, "-m", "openjarvis.tools.scrapy_worker"],
-                input=json.dumps(payload),
-                capture_output=True,
-                check=False,
-                text=True,
-                timeout=_CRAWL_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            return ToolResult(
-                tool_name=self.tool_id,
-                content="Website crawl timed out.",
-                success=False,
-            )
-        except OSError as exc:
-            logger.warning("Could not start Scrapy worker: %s", exc)
-            return ToolResult(
-                tool_name=self.tool_id,
-                content="Could not start the Scrapy crawl worker.",
-                success=False,
-            )
-
-        try:
-            worker_result = json.loads(completed.stdout)
-        except (json.JSONDecodeError, TypeError):
-            logger.warning(
-                "Scrapy worker returned invalid output (exit=%s): %s",
-                completed.returncode,
-                completed.stderr[-1000:],
-            )
-            return ToolResult(
-                tool_name=self.tool_id,
-                content="Website crawl failed before it returned page data.",
-                success=False,
-            )
-
-        if completed.returncode != 0 or worker_result.get("error"):
-            error = str(worker_result.get("error") or "Website crawl failed.")
-            if "No module named 'scrapy'" in error:
-                error = (
-                    "Scrapy is not installed. Install it with "
-                    "`uv sync --extra tools-crawl`."
-                )
-            return ToolResult(
-                tool_name=self.tool_id,
-                content=error,
-                success=False,
-            )
-
-        pages = worker_result.get("pages")
-        if not isinstance(pages, list):
-            pages = []
-        usable_pages = [
-            page
-            for page in pages
-            if isinstance(page, dict)
-            and isinstance(page.get("content"), str)
-            and page["content"].strip()
-            and isinstance(page.get("url"), str)
-        ]
-        if not usable_pages:
-            return ToolResult(
-                tool_name=self.tool_id,
-                content="The crawl returned no readable HTML pages.",
-                success=False,
-                metadata={"pages": 0, "start_url": url},
-            )
-
-        retrieved_at = datetime.now(timezone.utc).isoformat()
-        evidence_records = [
-            {
-                "title": str(page.get("title") or page["url"]),
-                "url": page["url"],
-                "source_id": page["url"],
-                "content": page["content"],
-                "depth": page.get("depth", 0),
-            }
-            for page in usable_pages
-        ]
-        content = "\n\n---\n\n".join(
-            f"### {record['title']}\nSource: {record['url']}\n{record['content']}"
-            for record in evidence_records
-        )
-        return ToolResult(
-            tool_name=self.tool_id,
-            content=content,
-            success=True,
-            metadata={
-                "mode": "crawl",
-                "provider": "scrapy",
-                "start_url": url,
-                "pages": len(evidence_records),
-                "evidence": {
-                    "provider": "scrapy",
-                    "retrieved_at": retrieved_at,
-                    "records": evidence_records,
-                },
-            },
-        )
 
 
 def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
@@ -261,6 +167,9 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         maximum=_MAX_CHARS_PER_PAGE,
     )
     pages: list[dict[str, Any]] = []
+    failures: list[bool] = []
+    transport = ResearchTransport(start_url, timeout=50)
+    robots = RobotsPolicy(transport)
 
     class SameHostSSRFGuard:
         """Validate every initial, linked, and redirected request."""
@@ -269,10 +178,45 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             hostname = urlsplit(request.url).hostname
             if not hostname or hostname.lower().rstrip(".") != start_host:
                 raise IgnoreRequest("Off-host crawl request blocked.")
-            error = check_ssrf(request.url)
-            if error:
-                raise IgnoreRequest(error)
+            try:
+                normalized = normalize_source_url(request.url)
+                if source_origin(normalized) != transport.origin:
+                    raise ValueError
+            except Exception:
+                raise IgnoreRequest("Unsafe crawl request blocked") from None
             return None
+
+    class PinnedDownload:
+        """Return a response after robots middleware, never use Scrapy sockets."""
+
+        def process_request(self, request, spider):
+            if request.method != "GET":
+                raise IgnoreRequest("Only GET is allowed")
+            if not robots.allowed(request.url):
+                raise IgnoreRequest("Robots policy denies access")
+            response = transport.fetch(request.url)
+            status = response.status_code
+            from scrapy.http import Response
+
+            cls = (
+                HtmlResponse
+                if "html" in response.headers.get("Content-Type", "").lower()
+                else Response
+            )
+            return cls(
+                request.url,
+                status=status,
+                body=response.content,
+                headers={
+                    "Content-Type": response.headers.get("Content-Type", ""),
+                    **(
+                        {"Location": response.headers["Location"]}
+                        if "Location" in response.headers
+                        else {}
+                    ),
+                },
+                request=request,
+            )
 
     class SameHostSpider(scrapy.Spider):
         name = "openjarvis_bounded_crawl"
@@ -304,7 +248,8 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             )
 
         def parse(self, response):
-            if not isinstance(response, HtmlResponse):
+            if not isinstance(response, HtmlResponse) or response.status != 200:
+                failures.append(True)
                 return
 
             title = " ".join(response.xpath("//title//text()").getall()).strip()
@@ -320,6 +265,8 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
                         "url": response.url,
                         "content": content[: self._max_chars],
                         "depth": int(response.meta.get("depth", 0)),
+                        "truncated": len(content) > self._max_chars,
+                        "retrieved_at": datetime.now(timezone.utc).isoformat(),
                     }
                 )
 
@@ -340,7 +287,11 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
                     or not self._crawlable_path(parsed.path)
                 ):
                     continue
-                if check_ssrf(candidate):
+                try:
+                    candidate = normalize_source_url(candidate)
+                    if source_origin(candidate) != transport.origin:
+                        continue
+                except Exception:
                     continue
                 self._scheduled += 1
                 yield scrapy.Request(
@@ -381,7 +332,7 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
             )
 
         def on_error(self, failure):
-            self.logger.debug("Crawl request failed: %s", failure.getErrorMessage())
+            failures.append(True)
 
     settings = {
         "AUTOTHROTTLE_ENABLED": True,
@@ -392,16 +343,28 @@ def _run_worker(payload: dict[str, Any]) -> dict[str, Any]:
         "DOWNLOAD_TIMEOUT": 15,
         "LOG_ENABLED": False,
         "REDIRECT_MAX_TIMES": 3,
-        "ROBOTSTXT_OBEY": True,
+        "ROBOTSTXT_OBEY": False,
         "LOG_INSTALL_ROOT_HANDLER": False,
         "TELNETCONSOLE_ENABLED": False,
         "USER_AGENT": _USER_AGENT,
-        "DOWNLOADER_MIDDLEWARES": {SameHostSSRFGuard: 50},
+        "DOWNLOADER_MIDDLEWARES": {
+            SameHostSSRFGuard: 50,
+            PinnedDownload: 950,
+            (
+                "scrapy.downloadermiddlewares.httpcompression.HttpCompressionMiddleware"
+            ): None,
+        },
+        "DOWNLOAD_HANDLERS": {"http": None, "https": None},
+        "ROBOTSTXT_USER_AGENT": USER_AGENT,
+        "COOKIES_ENABLED": False,
+        "RETRY_ENABLED": False,
     }
     process = CrawlerProcess(settings=settings)
     crawler = process.create_crawler(SameHostSpider)
     process.crawl(crawler)
     process.start(install_signal_handlers=False)
+    if failures:
+        raise ValueError("Incomplete crawl")
     return {"pages": pages}
 
 
@@ -412,8 +375,8 @@ def _worker_main() -> int:
         json.dump(result, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         return 0
-    except Exception as exc:  # noqa: BLE001
-        json.dump({"error": f"Scrapy crawl failed: {exc}"}, sys.stdout)
+    except Exception:  # noqa: BLE001
+        json.dump({"error": "Scrapy crawl failed"}, sys.stdout)
         sys.stdout.write("\n")
         return 1
 

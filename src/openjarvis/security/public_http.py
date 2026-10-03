@@ -320,6 +320,7 @@ def fetch_public_source(
     cancel_event=None,
     method: str = "GET",
     body: bytes | None = None,
+    follow_redirects: bool = True,
 ) -> httpx.Response:
     """Bounded, pinned reads. Trusted adapters may use a nonredirecting POST.
 
@@ -391,6 +392,8 @@ def fetch_public_source(
                 raise ValueError("Query-authenticated redirects are not allowed")
             if method != "GET":
                 raise ValueError("Source POST redirects are not allowed")
+            if not follow_redirects:
+                return response
             location = response.headers.get("location")
             if not location:
                 raise ValueError("Source redirect has no destination")

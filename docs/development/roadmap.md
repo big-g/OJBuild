@@ -126,8 +126,18 @@ Automatic model routing is deferred; explicit model selection remains supported.
    Private/local mail endpoints and legacy IMAP imports remain separate work.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
-4. **Pending:** Playwright and Scrapy integration through existing governed tools,
-   followed by desktop/Android end-to-end validation of research and configuration.
+4. **Implemented:** bounded Playwright `web_render` and strengthened Scrapy
+   `web_crawl` through the existing governed ToolExecutor. Exact-origin pinned
+   GET transport, strict robots policy, bounded workers/requests/bytes/output,
+   isolated sandboxed browser contexts and standardized page provenance.
+   Scrapy's default network handlers are disabled; partial/failed traversals
+   return no evidence. Deep Research discovers configured public evidence tools
+   from ToolSpec declarations and uses the active approval/capability executor;
+   new providers require no provider-specific dispatch branch.
+   **Pending acceptance:** install optional browser/crawler dependencies and
+   validate Chromium sandbox/runtime behavior on the Ubuntu server, then desktop
+   and Android end-to-end research/configuration checks. Synthetic offline tests
+   do not substitute for those runtime checks.
 
 Phase 2 remains open until the evidence hard gate, runtime tool addition, trace
 identity, knowledge maintenance, and client validation meet their acceptance checks.

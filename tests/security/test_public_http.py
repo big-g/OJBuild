@@ -593,3 +593,23 @@ def test_weather_query_auth_never_follows_redirects(monkeypatch, status):
         )
     assert request.call_count == 1
     assert request.call_args.kwargs["credential_query"] == {"appid": "protected-key"}
+
+
+def test_research_can_defer_redirects_to_engine_policy(monkeypatch):
+    target = public_http.PublicTarget(
+        "https", "example.com", 443, "/start", "example.com", ("93.184.216.34",)
+    )
+    monkeypatch.setattr(public_http, "validate_public_url", lambda url: target)
+    request = MagicMock(
+        return_value=httpx.Response(
+            302,
+            headers={"Location": "https://example.com/end"},
+            request=httpx.Request("GET", "https://example.com/start"),
+        )
+    )
+    monkeypatch.setattr(public_http, "_request_source", request)
+    result = public_http.fetch_public_source(
+        "https://example.com/start", accept="text/html", follow_redirects=False
+    )
+    assert result.status_code == 302
+    request.assert_called_once()

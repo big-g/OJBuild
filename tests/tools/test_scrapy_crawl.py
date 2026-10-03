@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-import subprocess
+from datetime import datetime, timezone
 from unittest.mock import patch
 
 from openjarvis.core.evidence import EvidenceKind, evidence_records_from_tool_result
@@ -32,7 +31,7 @@ def test_execute_requires_a_url() -> None:
 
 
 def test_execute_rejects_private_targets_before_starting_worker() -> None:
-    with patch("openjarvis.tools.scrapy_crawl.subprocess.run") as run:
+    with patch("openjarvis.tools.scrapy_crawl.run_worker") as run:
         result = ScrapyCrawlTool().execute(url="http://127.0.0.1/private")
 
     assert not result.success
@@ -41,11 +40,11 @@ def test_execute_rejects_private_targets_before_starting_worker() -> None:
 
 
 def test_execute_rejects_malformed_urls_without_starting_worker() -> None:
-    with patch("openjarvis.tools.scrapy_crawl.subprocess.run") as run:
+    with patch("openjarvis.tools.scrapy_crawl.run_worker") as run:
         result = ScrapyCrawlTool().execute(url="http://[invalid")
 
     assert not result.success
-    assert "malformed" in result.content.lower()
+    assert "valid public" in result.content.lower()
     run.assert_not_called()
 
 
@@ -67,23 +66,15 @@ def test_execute_returns_page_provenance_and_evidence(monkeypatch) -> None:
         "url": "https://example.com/guide",
         "content": "A useful fact from this page.",
         "depth": 1,
+        "retrieved_at": datetime.now(timezone.utc).isoformat(),
     }
-    completed = subprocess.CompletedProcess(
-        args=[],
-        returncode=0,
-        stdout=json.dumps({"pages": [page]}),
-        stderr="",
-    )
+    completed = {"pages": [page]}
     monkeypatch.setattr(
         "importlib.util.find_spec",
         lambda name: object() if name == "scrapy" else None,
     )
-    monkeypatch.setattr(
-        "openjarvis.tools.scrapy_crawl.check_ssrf",
-        lambda _url: None,
-    )
     with patch(
-        "openjarvis.tools.scrapy_crawl.subprocess.run", return_value=completed
+        "openjarvis.tools.scrapy_crawl.run_worker", return_value=completed
     ) as run:
         result = ScrapyCrawlTool().execute(
             url="https://example.com/start",
@@ -102,26 +93,21 @@ def test_execute_returns_page_provenance_and_evidence(monkeypatch) -> None:
         )[0].url
         == page["url"]
     )
-    args = run.call_args.args[0]
-    payload = json.loads(run.call_args.kwargs["input"])
-    assert args[-1] == "openjarvis.tools.scrapy_worker"
+    args, payload = run.call_args.args
+    assert args == "openjarvis.tools.scrapy_worker"
     assert payload["max_pages"] == 8
 
 
 def test_execute_fails_closed_when_worker_returns_invalid_json(monkeypatch) -> None:
-    completed = subprocess.CompletedProcess(
-        args=[], returncode=0, stdout="not-json", stderr=""
-    )
     monkeypatch.setattr(
         "importlib.util.find_spec",
         lambda name: object() if name == "scrapy" else None,
     )
-    monkeypatch.setattr(
-        "openjarvis.tools.scrapy_crawl.check_ssrf",
-        lambda _url: None,
-    )
-    with patch("openjarvis.tools.scrapy_crawl.subprocess.run", return_value=completed):
+    with patch(
+        "openjarvis.tools.scrapy_crawl.run_worker",
+        side_effect=ValueError("invalid output"),
+    ):
         result = ScrapyCrawlTool().execute(url="https://example.com")
 
     assert not result.success
-    assert "failed before it returned page data" in result.content
+    assert "crawl failed" in result.content

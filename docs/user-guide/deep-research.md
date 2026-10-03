@@ -292,13 +292,74 @@ credential-vault history or tamper-proof logging. All audit and migration endpoi
 require the same authenticated access as other source-management endpoints.
 You can disable or remove an unsupported source while keeping its saved settings.
 
+### Governed public crawling and rendered pages
+
+`web_crawl` uses Scrapy to read a bounded subset of a supplied website;
+`web_render` uses Playwright to read one page with JavaScript. These are optional
+research tools, separate from persistent source instances and the legacy
+interactive browser tools. They neither import account cookies nor authorize
+logins, form submissions, file downloads or arbitrary browser actions.
+
+Install the optional packages on the existing Ubuntu server from the source tree:
+
+```bash
+cd ~/.openjarvis/src
+uv sync --inexact --extra browser --extra tools-crawl
+uv run --no-sync playwright install chromium
+```
+
+Playwright requires version 1.48 or later and a working Chromium sandbox. Install
+Chromium's Linux system dependencies if its installer reports them missing; do
+not disable the sandbox to work around an unsupported runtime. After configuration,
+restart the existing `openjarvis-api.service` rather than starting a second API.
+
+Add `web_crawl` and `web_render` to your existing `[tools].enabled` list when you
+want them available. Preserve the other configured tools. Enabling/discovering a
+tool never grants authorization: `web_crawl` requires `network:fetch`, and
+`web_render` also requires `code:execute` because it executes site JavaScript.
+Existing tool approval, enable/disable policy, capability grants, boundaries and
+trace checks still apply. Browser Deep Research advertises configured tools whose
+ToolSpec declares current/external evidence; it dispatches them through the active
+agent's guard and executor and validates the returned evidence before synthesis.
+Additional public evidence tools can use the same declaration and result contract.
+
+Both tools accept public HTTP(S) URLs on ports 80/443 without embedded credentials
+or secret query parameters. Every fetch resolves/validates public IPs and pins its
+connection; redirects and linked resources stay on the exact scheme/host/port.
+Robots policy is fetched through that same transport. A missing robots file (404)
+allows access; denials, unavailable policies and robots redirects fail closed.
+Neither engine uses its own HTTP downloader, cookies or authenticated sessions.
+
+Crawls default to three pages (maximum eight), with link depth at most two. The
+crawler disables its normal HTTP handlers, retries and cookies; failed selected
+pages abort the staged result. Rendering creates a fresh context with service
+workers, WebSockets, non-GET requests, popups and off-origin resources blocked.
+Chromium fallback traffic uses an unavailable local proxy, and native WebRTC/
+WebTransport APIs are disabled. Sites that need external CDN scripts, cookies or
+live socket feeds may provide only a subset or fail; rendering does not claim a
+complete application snapshot. Browser extraction observes the DOM after load.
+
+Each tool shares a budget of 50 HTTP requests, 2 MiB per response and 16 MiB total;
+robots/resources count too. Crawling has a 60-second worker limit; rendering has a
+35-second worker limit. At most two workers run concurrently per API process;
+a busy worker pool returns an explicit retry error. Worker process groups are
+closed after completion or timeout, and output is capped at 256 KiB. Page text is
+limited to 4,000 characters, with truncation disclosed; titles are capped at 300.
+Successful results carry actual page URLs, fetch/observation times, source IDs and
+bounded-coverage metadata. Failed/malformed results return no page evidence.
+Source content remains untrusted data and never supplies instructions or grants.
+
+Optional-library/Chromium behavior and desktop/Android research still require
+runtime acceptance on the deployed server; the regression tests use synthetic
+transports and library seams without outbound networking.
+
 ### Web Page and JSON API sources
 
 **Web Page** indexes one HTML, plain-text or Markdown URL. It extracts
 readable HTML text and a page title, excludes script/style/template and explicitly
 hidden elements, and does not execute JavaScript or follow page links. Add one
 named connection per page. For browser-rendered sites and crawling, the existing
-Playwright/Scrapy tools remain separate governed operations.
+Playwright/Scrapy tools remain separate governed operations (see below).
 
 **JSON API** fetches a JSON endpoint with GET. The default **Whole JSON
 document** mode indexes the response without guessing field meanings. Choose

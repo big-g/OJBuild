@@ -437,6 +437,11 @@ async def _stream_research(
             clarify_handler=lambda question: _WEB_CLARIFY_RESPONSE,
             on_event=on_event,
             web_tool_spec=web_tool_spec,
+            web_tool_specs=[
+                tool.to_openai_function()
+                for tool in getattr(active_agent, "_tools", ())
+                if {"current", "external"}.intersection(tool.spec.evidence_kinds)
+            ],
             execute_web=execute_web,
             validate_evidence=True,
         )
@@ -593,7 +598,7 @@ def _research_web_access(active_agent: Any):
     if executor is None:
         return None, None
     for tool in getattr(active_agent, "_tools", ()):
-        if tool.spec.name != "web_search":
+        if not {"current", "external"}.intersection(tool.spec.evidence_kinds):
             continue
 
         def execute(call):

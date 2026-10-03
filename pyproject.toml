@@ -144,7 +144,7 @@ channel-gmail = [
     "google-auth-oauthlib>=1.0",
     "google-auth-httplib2>=0.2",
 ]
-browser = ["playwright>=1.40"]
+browser = ["playwright>=1.48"]
 tools-crawl = ["Scrapy>=2.11,<3"]
 media = ["openai>=1.30"]
 mining-pearl-vllm = ["docker>=7.0", "httpx>=0.27"]
