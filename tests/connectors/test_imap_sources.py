@@ -2,13 +2,15 @@
 
 import json
 import socket
+import ssl
 from unittest.mock import Mock
 
 import pytest
 
 from openjarvis.connectors import imap_sources as module
 from openjarvis.connectors.instance_sources import token_path
-from openjarvis.connectors.oauth import save_tokens
+from openjarvis.connectors.oauth import load_tokens, save_tokens
+from openjarvis.connectors.source_audit import list_events
 from openjarvis.connectors.sync_control import SyncCancelled, SyncLimitExceeded
 from tests.server import test_source_connections as connection_tests
 
@@ -215,7 +217,7 @@ def test_pinned_verified_transport(tmp_path, monkeypatch, security):
         if security == "tls"
         else client.starttls.call_args.kwargs["ssl_context"]
     )
-    assert context.check_hostname and context.verify_mode == module.ssl.CERT_REQUIRED
+    assert context.check_hostname and context.verify_mode == ssl.CERT_REQUIRED
     assert client.debug == 0
 
 
@@ -257,6 +259,112 @@ def test_deadline(tmp_path, monkeypatch):
     source.deadline = module.time.monotonic() - 1
     with pytest.raises(SyncLimitExceeded, match="time limit"):
         source.check()
+
+
+def test_lan_settings_require_authenticated_revision_bound_save(account_setup):
+    client, manager, directory = account_setup
+    config = {
+        "host": "mail.internal",
+        "network_access": "lan",
+        "lan_addresses": "192.168.1.20",
+    }
+    body = {"adapter_id": "imap_account", "name": "LAN mail", "config": config}
+    assert (
+        client.post("/v1/sources", json=body, headers={"Authorization": ""}).status_code
+        == 401
+    )
+    response = client.post("/v1/sources", json=body)
+    assert response.status_code == 201, response.text
+    record = response.json()
+    assert record["config_version"] == 2
+    assert manager.store.get(record["id"])["config"]["lan_addresses"] == "192.168.1.20"
+    path = "/v1/sources/" + record["id"]
+    updated = {
+        "name": "LAN mail",
+        "config": {**record["config"], "lan_addresses": "192.168.1.21"},
+        "revision": record["revision"],
+        "enabled": True,
+    }
+    assert (
+        client.put(path, json=updated, headers={"Authorization": ""}).status_code == 401
+    )
+    assert client.put(path, json=updated).status_code == 200
+    assert client.put(path, json=updated).status_code == 409
+    public = manager.create("imap_account", "Other", {"host": "mail.internal"})
+    assert public["config"]["network_access"] == "public"
+    assert public["config"]["lan_addresses"] == ""
+    assert "192.168.1.21" not in json.dumps(list_events(manager.store))
+
+
+def test_public_v1_upgrade_preserves_password_index_and_checkpoint(
+    account_setup, monkeypatch
+):
+    _, manager, directory = account_setup
+    source = manager.create("imap_account", "Existing", {"host": "mail.example.com"})
+    path = token_path(directory, source["id"])
+    bundle = {"username": "mail@example.com", "password": PASSWORD}
+    save_tokens(str(path), bundle)
+    monkeypatch.setattr(module.IMAPSource, "connect", lambda self: Mailbox())
+    manager.sync(source["id"])
+    legacy_config = {
+        key: value
+        for key, value in source["config"].items()
+        if key not in {"network_access", "lan_addresses", "tls_trust", "ca_certificate"}
+    }
+    with manager.store.connection() as conn:
+        conn.execute(
+            "UPDATE sources SET config_version=1, config=? WHERE id=?",
+            (json.dumps(legacy_config), source["id"]),
+        )
+    before = manager.list()[0]
+    plan = manager.migration_preview(source["id"], source["revision"])
+    assert plan["from_version"] == 1 and plan["to_version"] == 2
+    assert not plan["index_reset"] and plan["config"]["network_access"] == "public"
+    manager.migrate(source["id"], source["revision"], plan["plan_token"])
+    after = manager.list()[0]
+    assert after["chunks"] == before["chunks"] == 2
+    assert after["checkpoint"] == before["checkpoint"]
+    assert load_tokens(str(path)) == bundle
+
+
+def test_lan_dns_change_preserves_successful_index_and_checkpoint(
+    account_setup, monkeypatch
+):
+    _, manager, directory = account_setup
+    source = manager.create(
+        "imap_account",
+        "LAN mail",
+        {
+            "host": "mail.internal",
+            "network_access": "lan",
+            "lan_addresses": "192.168.1.20",
+        },
+    )
+    save_tokens(
+        str(token_path(directory, source["id"])),
+        {"username": "mail@example.com", "password": PASSWORD},
+    )
+    original = module.IMAPSource.connect
+    monkeypatch.setattr(module.IMAPSource, "connect", lambda self: Mailbox())
+    manager.sync(source["id"])
+    before = manager.list()[0]
+    monkeypatch.setattr(module.IMAPSource, "connect", original)
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *args: [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.21", 993))
+        ],
+    )
+    constructor = Mock(side_effect=AssertionError("No transport to unapproved IP"))
+    monkeypatch.setattr(module, "_TLS", constructor)
+    with pytest.raises(ValueError, match="IMAP scan failed"):
+        manager.sync(source["id"])
+    after = manager.list()[0]
+    assert after["chunks"] == before["chunks"] == 2
+    assert after["checkpoint"]["last_sync"] == before["checkpoint"]["last_sync"]
+    assert after["checkpoint"]["items_synced"] == before["checkpoint"]["items_synced"]
+    constructor.assert_not_called()
 
 
 def test_failed_named_scan_preserves_checkpoint_and_evidence(

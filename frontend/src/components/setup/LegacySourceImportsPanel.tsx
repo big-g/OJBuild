@@ -7,7 +7,7 @@ export function LegacySourceImportReview({ plan }: { plan: LegacySourceImportPla
     <p>Import as <strong>{plan.name}</strong> using {plan.credential_storage === 'bundle' ? 'an encrypted account credential bundle for' : 'a protected credential restricted to'} {plan.credential_origin}.</p>
     {plan.connection_auth === 'password' && <>
       <p>The saved username and password will be copied into this source's encrypted vault storage. Password changes at the mail server can affect both connections.</p>
-      <p>Import uses the saved endpoint and INBOX with bounded scan defaults. It does not verify login or mailbox access. Sync requires a public mail endpoint with verified TLS; private LAN endpoints remain unsupported.</p>
+      <p>Import uses the saved endpoint and INBOX with bounded scan defaults. It does not verify login or mailbox access. Imported connections start with public destination access and system certificate trust. For a private mail server, explicitly authorize its LAN IP addresses and configure certificate trust on the named source before Sync.</p>
     </>}
     {plan.oauth_grant_preserved && <>
       <p>The existing OAuth grant is preserved. Import does not narrow its permissions. Reauthorize the named account to request its current read permissions.</p>

@@ -129,8 +129,18 @@ Automatic model routing is deferred; explicit model selection remains supported.
    exports, provider calls or old-index reuse. Existing expiring caller-bound
    plans, credential-change checks, reserved identity recovery and import audit
    apply to both recipes. Original connections remain intact; login/access are
-   verified only during an explicit sync. Private/local mail endpoints remain
-   separate work.
+   verified only during an explicit sync.
+   **Implemented:** per-instance opt-in LAN IMAP access with exact RFC1918/IPv6
+   unique-local address authorization for the configured host/port. All DNS
+   results must match; sockets remain pinned; localhost, link-local, metadata,
+   public and unlisted addresses fail closed in LAN mode. Optional per-source
+   PEM CA trust retains certificate/hostname verification without global trust
+   changes. Database/web-managed settings, bounded address/certificate inputs
+   and explicit v1→v2 public-default upgrade preserve existing indexes and
+   credentials. Policy/endpoint edits use the existing revision/reset workflow.
+   Legacy imports continue to default to public/system trust; other private
+   network adapters remain future integrations. Live LAN mail-server acceptance
+   remains pending; offline TLS tests verify private CA and hostname enforcement.
    OAuth security and encrypted credential storage are complete foundations;
    new providers reuse them. Never return credentials in source APIs.
 4. **Implemented:** bounded Playwright `web_render` and strengthened Scrapy

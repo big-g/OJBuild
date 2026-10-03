@@ -9,7 +9,7 @@ export interface SourceFieldCondition {
 export interface SourceField {
   name: string;
   label: string;
-  type: 'text' | 'number' | 'checkbox' | 'select' | 'credential';
+  type: 'text' | 'textarea' | 'number' | 'checkbox' | 'select' | 'credential';
   credential_kinds?: string[];
   credential_origin?: string;
   required?: boolean;

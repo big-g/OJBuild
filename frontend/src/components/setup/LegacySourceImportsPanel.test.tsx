@@ -61,7 +61,8 @@ it('reviews copied IMAP passwords, endpoint limits and unverified access without
   expect(html).toContain('saved username and password');
   expect(html).toContain('encrypted vault storage');
   expect(html).toContain('does not verify login or mailbox access');
-  expect(html).toContain('private LAN endpoints remain unsupported');
+  expect(html).toContain('start with public destination access');
+  expect(html).toContain('explicitly authorize its LAN IP addresses');
   expect(html).toContain('Mailbox: INBOX');
   expect(html).not.toContain('OAuth grant');
   expect(html).not.toContain('private-ticket');

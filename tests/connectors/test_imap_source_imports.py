@@ -80,6 +80,10 @@ def test_password_import_is_local_encrypted_secret_free_and_independent(
         "mailbox": "INBOX",
         "max_messages": 1000,
         "timeout_seconds": 120,
+        "network_access": "public",
+        "lan_addresses": "",
+        "tls_trust": "system",
+        "ca_certificate": "",
     }
     source = apply(manager, plan, identity)
     assert source == apply(manager, plan, identity)

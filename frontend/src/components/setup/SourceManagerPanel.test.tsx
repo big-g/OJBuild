@@ -103,3 +103,19 @@ it('applies server-declared dependent value resets when the sync mode changes', 
   select.props.onChange({ target: { value: 'incremental' } });
   expect(saved).toEqual({ complete_snapshot: false, sync_mode: 'incremental', url: 'https://api.example.com/data' });
 });
+
+it('renders conditional multiline CA configuration and preserves PEM line breaks', () => {
+  const definition: SourceAdapter = { ...adapter, fields: [
+    { name: 'tls_trust', label: 'Certificate trust', type: 'select', default_value: 'system', options: [{ value: 'system', label: 'System' }, { value: 'custom_ca', label: 'Private CA' }], value_updates: { system: { ca_certificate: '' } } },
+    { name: 'ca_certificate', label: 'CA certificate (PEM)', type: 'textarea', required: true, visible_when: { field: 'tls_trust', equals: 'custom_ca' } },
+  ] };
+  expect(renderToStaticMarkup(<SourceConfigurationFields adapter={definition} config={{}} onChange={() => {}} />)).not.toContain('textarea');
+  const pem = '-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----\n';
+  let saved: Record<string, string | number | boolean> = {};
+  const tree = SourceConfigurationFields({ adapter: definition, config: { tls_trust: 'custom_ca', ca_certificate: pem }, onChange: (value) => { saved = value; } });
+  const textarea = tree.props.children[1].props.children[1];
+  expect(textarea.type).toBe('textarea');
+  expect(textarea.props.value).toBe(pem);
+  textarea.props.onChange({ target: { value: pem + '\n' } });
+  expect(saved.ca_certificate).toBe(pem + '\n');
+});

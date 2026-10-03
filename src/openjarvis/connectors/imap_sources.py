@@ -2,7 +2,6 @@
 
 import hashlib
 import re
-import ssl
 import time
 from datetime import datetime, timezone
 from email import policy
@@ -14,6 +13,11 @@ from openjarvis.connectors.imap import (
     _PinnedIMAP4,
     _PinnedIMAP4SSL,
     validate_imap_endpoint,
+)
+from openjarvis.connectors.imap_network import (
+    tls_context,
+    validate_lan_endpoint,
+    validate_network_config,
 )
 from openjarvis.connectors.oauth import load_tokens
 from openjarvis.connectors.sync_control import SyncCancelled, SyncLimitExceeded
@@ -32,7 +36,17 @@ class MailboxIdentityChanged(ValueError):
 
 
 def validate_imap_config(config):
-    allowed = {"host", "port", "security", "mailbox", *LIMITS}
+    allowed = {
+        "host",
+        "port",
+        "security",
+        "mailbox",
+        *LIMITS,
+        "network_access",
+        "lan_addresses",
+        "tls_trust",
+        "ca_certificate",
+    }
     if set(config) - allowed:
         raise ValueError("Unsupported IMAP configuration")
     host = config.get("host")
@@ -52,7 +66,13 @@ def validate_imap_config(config):
         or any(ord(c) < 32 or ord(c) > 126 for c in mailbox)
     ):
         raise ValueError("Use a printable ASCII IMAP mailbox name")
-    result = {"host": host, "port": port, "security": security, "mailbox": mailbox}
+    result = {
+        "host": host,
+        "port": port,
+        "security": security,
+        "mailbox": mailbox,
+        **validate_network_config(config),
+    }
     for key, (default, maximum) in LIMITS.items():
         value = config.get(key, default)
         if (
@@ -125,11 +145,16 @@ class IMAPSource(BaseConnector):
             raise SyncLimitExceeded("deadline")
 
     def connect(self):
-        host, addresses = validate_imap_endpoint(
-            self.config["host"], self.config["port"]
-        )
+        if self.config["network_access"] == "lan":
+            host, addresses = validate_lan_endpoint(
+                self.config["host"], self.config["port"], self.config["lan_addresses"]
+            )
+        else:
+            host, addresses = validate_imap_endpoint(
+                self.config["host"], self.config["port"]
+            )
         self.check()
-        context = ssl.create_default_context()
+        context = tls_context(self.config)
         # Fail closed on transport/TLS failure. A later retry can resolve again.
         cls = _TLS if self.config["security"] == "tls" else _StartTLS
         client = cls(
@@ -334,6 +359,7 @@ class IMAPSource(BaseConnector):
 
 def register_imap_adapter(register, adapter_type):
     from openjarvis.connectors.instance_sources import token_path
+    from openjarvis.connectors.source_adapters import ConfigMigration
 
     register(
         adapter_type(
@@ -341,9 +367,67 @@ def register_imap_adapter(register, adapter_type):
             display_name="IMAP mailbox",
             description=(
                 "Read one configured mailbox using TLS and an encrypted "
-                "password or app password."
+                "password or app password, with explicit public or LAN "
+                "destination policy."
+            ),
+            config_version=2,
+            migrations=(
+                ConfigMigration(1, lambda config: config, preserves_index=True),
             ),
             fields=(
+                {
+                    "name": "network_access",
+                    "label": "Destination access",
+                    "type": "select",
+                    "default_value": "public",
+                    "options": [
+                        {"value": "public", "label": "Public mail server"},
+                        {"value": "lan", "label": "Authorize private LAN mail server"},
+                    ],
+                    "value_updates": {"public": {"lan_addresses": ""}},
+                    "description": (
+                        "LAN access applies only to this source's host, port "
+                        "and exact authorized IPs."
+                    ),
+                },
+                {
+                    "name": "lan_addresses",
+                    "label": "Authorized LAN IP addresses",
+                    "type": "text",
+                    "default_value": "",
+                    "required": True,
+                    "visible_when": {"field": "network_access", "equals": "lan"},
+                    "placeholder": "192.168.1.20, fd00::20",
+                    "description": (
+                        "Every DNS result must match. Use exact RFC1918 or IPv6 "
+                        "unique-local IPs; no ranges, localhost or "
+                        "link-local addresses."
+                    ),
+                },
+                {
+                    "name": "tls_trust",
+                    "label": "Certificate trust",
+                    "type": "select",
+                    "default_value": "system",
+                    "options": [
+                        {"value": "system", "label": "System certificate authorities"},
+                        {"value": "custom_ca", "label": "This source's private CA"},
+                    ],
+                    "value_updates": {"system": {"ca_certificate": ""}},
+                },
+                {
+                    "name": "ca_certificate",
+                    "label": "CA certificate (PEM)",
+                    "type": "textarea",
+                    "default_value": "",
+                    "required": True,
+                    "visible_when": {"field": "tls_trust", "equals": "custom_ca"},
+                    "description": (
+                        "Paste public CA certificates only, never private keys. "
+                        "Hostname and certificate verification remain required. "
+                        "Maximum 16 KiB."
+                    ),
+                },
                 {
                     "name": "host",
                     "label": "IMAP host",

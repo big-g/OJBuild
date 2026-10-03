@@ -41,7 +41,14 @@ export function SourceConfigurationFields({
       >
         <option value="">Choose…</option>
         {(field.options ?? []).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select> : <input
+      </select> : field.type === 'textarea' ? <textarea
+        aria-label={field.label}
+        required={field.required}
+        placeholder={field.placeholder}
+        rows={6}
+        value={String(fieldValue(field.name))}
+        onChange={(event) => changeField(field, event.target.value)}
+      /> : <input
         aria-label={field.label}
         type={field.type === 'checkbox' ? 'checkbox' : field.type === 'number' ? 'number' : 'text'}
         required={field.required}

@@ -850,9 +850,34 @@ evidence and checkpoint; resync after replacement. Source removal deletes its
 vault binding. Configuration edits follow the existing preview/reset workflow.
 
 TLS defaults to port 993; STARTTLS defaults to 143 and must succeed before login.
-Certificates and hostnames are verified. DNS-resolved addresses are pinned and
-must all be public unicast addresses. Private/LAN/self-hosted endpoints are not
-supported by this adapter yet. Mailbox names must be printable ASCII (use the
+Certificates and hostnames are verified. DNS-resolved addresses are pinned.
+**Destination access** defaults to **Public mail server**, where all addresses
+must be public unicast. For a LAN mail server, choose **Authorize private LAN
+mail server** and enter its exact **Authorized LAN IP addresses**, separated by
+commas or whitespace. For example, authorize `192.168.1.20` for `mail.internal`
+and port 993. Every DNS result must match this source's list on every connection;
+an unlisted or public result blocks the entire connection. Authorize up to 32
+exact IPv4 RFC1918 or IPv6 unique-local addresses. CIDR ranges, localhost,
+loopback, link-local/metadata destinations and IPv6 zone identifiers are rejected.
+These settings permit only the configured source's IMAP host/port, without
+changing public HTTP or legacy connector policies.
+
+**Certificate trust** defaults to system certificate authorities. If the mail
+server uses your private CA, select **This source's private CA** and paste its
+public PEM CA certificate(s) into **CA certificate (PEM)**. Up to eight CA
+certificates and 16 KiB are accepted; private keys and leaf certificates are
+rejected. Only these roots are trusted for that source. Certificate and hostname
+verification remain mandatory for TLS and STARTTLS. Use the certificate's DNS
+name as the IMAP host, even when you authorize its numeric LAN address.
+
+Existing version-1 IMAP sources require the card's explicit configuration upgrade
+before further syncs. The preview adds public/system-trust defaults and preserves
+the password, existing index and checkpoint. Afterwards, LAN authorization or
+certificate-trust changes use the normal configuration edit/reset workflow;
+resync to rebuild that source's evidence. Adding or editing a source requires
+authenticated API access; configuration does not grant tool capabilities.
+
+Mailbox names must be printable ASCII (use the
 server's modified UTF-7 wire name for non-ASCII folders). Save separate named
 connections for different mailboxes or accounts.
 
@@ -944,7 +969,9 @@ not copied. Change settings through the named source's normal edit workflow.
 
 The review shows the endpoint, mailbox and scan limits, without exposing the
 username or password. Import does not verify login, TLS or mailbox access; Sync
-does. Private LAN endpoints still fail the named adapter's public-destination
-checks. Password changes at the mail server can affect both connections. No
+does. Imported sources default to public destination access and system trust,
+even if the old endpoint is private. Explicitly edit the named source's LAN
+address authorization and certificate trust before syncing a private endpoint.
+Password changes at the mail server can affect both connections. No
 legacy email index is migrated or removed; the imported source starts with a
 fresh independent index.
