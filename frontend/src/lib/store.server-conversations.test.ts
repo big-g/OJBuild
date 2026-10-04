@@ -17,6 +17,7 @@ class MemoryStorage {
 }
 
 const api = vi.hoisted(() => ({
+  getBase: () => '',
   createProject: vi.fn(),
   createSession: vi.fn(),
   deleteSession: vi.fn(),
@@ -33,6 +34,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   (globalThis as unknown as { localStorage: MemoryStorage }).localStorage =
     new MemoryStorage();
+  localStorage.setItem('openjarvis-auth', JSON.stringify({ user_id: 'user-1', username: 'user', display_name: 'User', sessionToken: 'token' }));
 });
 
 afterEach(() => {
@@ -170,7 +172,7 @@ describe('server conversation continuity', () => {
       ],
     };
     localStorage.setItem(
-      'openjarvis-conversations',
+      'openjarvis-conversations:["","user-1"]',
       JSON.stringify({
         version: 1,
         conversations: { 'local-1': localConversation },
@@ -234,7 +236,7 @@ describe('server conversation continuity', () => {
 
   it('retries an incomplete migration without creating a duplicate session', async () => {
     localStorage.setItem(
-      'openjarvis-conversations',
+      'openjarvis-conversations:["","user-1"]',
       JSON.stringify({
         version: 1,
         conversations: {
@@ -338,4 +340,23 @@ describe('server conversation continuity', () => {
         ?.sessionId,
     ).toBe('new-server-session');
   });
+});
+
+it('ignores unowned legacy history and other accounts even if server sync fails', async () => {
+  const old = { version: 1, activeId: 'old', conversations: { old: { id: 'old', title: 'Private old chat', messages: [], updatedAt: 1 } } };
+  localStorage.setItem('openjarvis-conversations', JSON.stringify(old));
+  localStorage.setItem('openjarvis-conversations:["","other-user"]', JSON.stringify(old));
+  api.fetchSessions.mockRejectedValue(new Error('Unavailable'));
+  const { useAppStore } = await import('./store');
+  expect(useAppStore.getState().conversations).toEqual([]);
+  await expect(useAppStore.getState().syncServerConversations()).rejects.toThrow();
+  expect(useAppStore.getState().conversations).toEqual([]);
+  expect(api.importSessionMessages).not.toHaveBeenCalled();
+  expect(localStorage.getItem('openjarvis-conversations')).toBe(JSON.stringify(old));
+});
+
+it('does not adopt another backend cache for the same user', async () => {
+  localStorage.setItem('openjarvis-conversations:["https://other.example","user-1"]', JSON.stringify({ version: 1, conversations: { old: { id: 'old', messages: [] } } }));
+  const { useAppStore } = await import('./store');
+  expect(useAppStore.getState().conversations).toEqual([]);
 });

@@ -79,6 +79,19 @@ useEffect(() => {
   const markOptInModalSeen = useAppStore((s) => s.markOptInModalSeen);
   const savings = useAppStore((s) => s.savings);
 
+  // Recreate account-bound stores when another tab changes login or backend.
+  useEffect(() => {
+    const changed = (event: StorageEvent) => {
+      if (event.key === 'openjarvis-auth' || event.key === 'openjarvis-settings' || event.key === null) window.location.reload();
+    };
+    window.addEventListener('storage', changed);
+    return () => window.removeEventListener('storage', changed);
+  }, []);
+  const initialApiUrl = useRef(settings.apiUrl);
+  useEffect(() => {
+    if (settings.apiUrl !== initialApiUrl.current) window.location.reload();
+  }, [settings.apiUrl]);
+
   // Apply theme class to <html>
   useEffect(() => {
     const root = document.documentElement;
@@ -90,15 +103,15 @@ useEffect(() => {
   // Sync overlay conversations into the main app
   const importOverlay = useAppStore((s) => s.importOverlayConversation);
   useEffect(() => {
-    if (!isTauri()) return;
+    if (authChecking || !authUser || !isTauri()) return;
     importOverlay();
     const interval = setInterval(importOverlay, 5000);
     return () => clearInterval(interval);
-  }, [importOverlay]);
+  }, [authChecking, authUser, importOverlay]);
 
 // Fetch models after authentication
 useEffect(() => {
-  if (!authUser) return;
+  if (authChecking || !authUser) return;
 
   setModelsLoading(true);
 
@@ -108,12 +121,12 @@ useEffect(() => {
     })
     .catch(() => setModels([]))
     .finally(() => setModelsLoading(false));
-}, [authUser, setModels, setModelsLoading]);  
+}, [authChecking, authUser, setModels, setModelsLoading]);
 
 // Restore server-owned conversations after authentication so the same
 // sessions and history appear on browser and desktop clients.
 useEffect(() => {
-  if (!authUser) return;
+  if (authChecking || !authUser) return;
 
   useAppStore.getState().syncServerConversations().catch((error) => {
     useAppStore.getState().addLogEntry({
@@ -123,18 +136,18 @@ useEffect(() => {
       message: `Could not restore server conversations: ${String(error)}`,
     });
   });
-}, [authUser]);
+}, [authChecking, authUser]);
 
 // Fetch server info after authentication
 useEffect(() => {
-  if (!authUser) return;
+  if (authChecking || !authUser) return;
 
   fetchServerInfo().then(setServerInfo).catch(() => {});
-}, [authUser, setServerInfo]);
+}, [authChecking, authUser, setServerInfo]);
 
   // Poll savings and optionally share to Supabase
   useEffect(() => {
-    if (!authUser) return;
+    if (authChecking || !authUser) return;
 
     const refresh = () =>
       fetchSavings()
@@ -170,7 +183,7 @@ useEffect(() => {
     refresh();
     const interval = setInterval(refresh, 30000);
     return () => clearInterval(interval);
-  }, [authUser, optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [authChecking, authUser, optInEnabled, optInDisplayName, optInAnonId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Show opt-in modal on first visit
   useEffect(() => {
@@ -242,7 +255,7 @@ useEffect(() => {
   }
 
   if (!authUser) {
-    return <LoginScreen onLogin={setAuthUser} />;
+    return <LoginScreen onLogin={() => window.location.reload()} />;
   }
 
   return (    <>

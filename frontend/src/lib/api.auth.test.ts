@@ -136,3 +136,14 @@ describe('tool credentials', () => {
     );
   });
 });
+
+it('health uses the configured backend for both probes', async () => {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify({ apiUrl: 'https://jarvis.example/' }));
+  fetchMock.mockResolvedValueOnce(new Response('', { status: 503 }));
+  fetchMock.mockResolvedValueOnce(new Response('{}', { status: 200 }));
+  const { checkHealth } = await freshApi();
+  expect(await checkHealth()).toBe(true);
+  expect(fetchMock.mock.calls.map(([url]) => url)).toEqual([
+    'https://jarvis.example/health', 'https://jarvis.example/v1/connectors',
+  ]);
+});

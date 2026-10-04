@@ -26,6 +26,8 @@ import {
 } from './api';
 import { isEmbedOnlyModel } from './model-capabilities';
 import { serializeToolCallArguments } from './tool-call';
+import { getBase } from './api';
+import { getStoredUser } from './auth';
 
 export interface CachedConnector {
   connector_id: string;
@@ -43,7 +45,12 @@ export interface AgentEvent {
 
 // ── localStorage persistence ──────────────────────────────────────────
 
-const CONVERSATIONS_KEY = 'openjarvis-conversations';
+// Bind this store's lifetime to one account/backend. Login switches reload the
+// app so pending work cannot write another account's cache.
+const CACHE_USER_ID = getStoredUser()?.user_id;
+const CONVERSATIONS_KEY = CACHE_USER_ID
+  ? `openjarvis-conversations:${JSON.stringify([getBase(), CACHE_USER_ID])}`
+  : null;
 const SETTINGS_KEY = 'openjarvis-settings';
 const OPTIN_KEY = 'openjarvis-optin';
 const OPTIN_NAME_KEY = 'openjarvis-display-name';
@@ -62,6 +69,7 @@ function generateId(): string {
 }
 
 function loadConversations(): ConversationStore {
+  if (!CONVERSATIONS_KEY) return { version: 1, conversations: {}, activeId: null };
   try {
     const raw = localStorage.getItem(CONVERSATIONS_KEY);
     if (!raw) return { version: 1, conversations: {}, activeId: null };
@@ -97,6 +105,7 @@ function loadConversations(): ConversationStore {
 }
 
 function saveConversations(store: ConversationStore): void {
+  if (!CONVERSATIONS_KEY) return;
   localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(store));
 }
 
@@ -570,6 +579,8 @@ export const useAppStore = create<AppState>((set, get) => {
         const raw = await invoke<string>('get_overlay_conversation');
         if (!raw || raw === '[]') return;
         const overlay = JSON.parse(raw);
+        // Legacy overlays have no authenticated owner; do not adopt them.
+        if (!CACHE_USER_ID || overlay.user_id !== CACHE_USER_ID || overlay.api_url !== getBase()) return;
         if (!overlay.id || !overlay.messages?.length) return;
         const store = loadConversations();
         const existing = store.conversations[overlay.id];

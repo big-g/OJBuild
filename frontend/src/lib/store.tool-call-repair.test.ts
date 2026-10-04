@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const CONVERSATIONS_KEY = 'openjarvis-conversations';
+const CONVERSATIONS_KEY = 'openjarvis-conversations:["","user-1"]';
 
 class MemoryStorage {
   private store = new Map<string, string>();
@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.resetModules();
   (globalThis as unknown as { localStorage: MemoryStorage }).localStorage =
     new MemoryStorage();
+  localStorage.setItem('openjarvis-auth', JSON.stringify({ user_id: 'user-1', username: 'user', display_name: 'User', sessionToken: 'token' }));
 });
 
 afterEach(() => {

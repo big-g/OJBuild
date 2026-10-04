@@ -20,6 +20,7 @@ beforeEach(() => {
   vi.resetModules();
   (globalThis as unknown as { localStorage: MemoryStorage }).localStorage =
     new MemoryStorage();
+  localStorage.setItem('openjarvis-auth', JSON.stringify({ user_id: 'user-1', username: 'user', display_name: 'User', sessionToken: 'token' }));
 });
 
 afterEach(() => {
