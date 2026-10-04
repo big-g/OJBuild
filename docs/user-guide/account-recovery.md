@@ -69,3 +69,24 @@ uv run jarvis auth create-user
 The reset command requires local server filesystem access; it is not an
 unauthenticated network password-reset endpoint. It does not rename the username
 or re-enable a disabled account.
+
+## Remove a test account
+
+From `~/.openjarvis/src`, as the same OS user and with the same
+`OPENJARVIS_HOME` as the service (without `sudo`):
+
+```bash
+uv run jarvis auth list-users
+uv run jarvis auth delete-user --username test-user
+```
+
+The command asks for confirmation (defaults to No). For scripted testing,
+add `--yes`. Deletion permanently removes the authentication account,
+its login sessions, and its recovery code. Other accounts are unaffected.
+You may delete the last account; create a replacement with
+`uv run jarvis auth create-user`.
+
+Historical conversations and other application data are retained under the old
+user ID; this command is not a full data purge. Recreating the same username
+through `auth create-user` generates a new identity and does not restore access
+to that history. No service restart is needed for account deletion.

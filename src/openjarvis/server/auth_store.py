@@ -184,6 +184,21 @@ class AuthStore:
                 ),
             )
 
+    def delete_user(self, user_id: str) -> None:
+        """Remove an account and its login/recovery credentials atomically.
+
+        Historical application data remains under the original user ID.
+        """
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if conn.execute(
+                "SELECT 1 FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone() is None:
+                raise ValueError("Account not found")
+            conn.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM account_recovery WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+
     def list_users(self) -> list[dict]:
         """Return local account labels and status, never hashes or session tokens."""
         with self._connect() as conn:

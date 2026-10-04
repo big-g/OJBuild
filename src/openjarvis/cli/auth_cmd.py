@@ -186,6 +186,29 @@ def list_users(as_json: bool) -> None:
         click.echo(f"{username}\t{display_name}\t{status}")
 
 
+@auth.command("delete-user")
+@click.option("--username", prompt=True, help="Login username to permanently remove.")
+@click.option("--yes", is_flag=True, help="Skip the deletion confirmation.")
+def delete_user(username: str, yes: bool) -> None:
+    """Remove a local account and revoke its login and recovery credentials."""
+    store = AuthStore()
+    user = store.get_user_by_username(username.strip())
+    if user is None:
+        raise click.ClickException("Account not found.")
+    label = json.dumps(user["username"], ensure_ascii=False)
+    click.echo(f"Delete account {label} and revoke all its logins and recovery codes.")
+    click.echo("Historical conversations and other application data will remain.")
+    if len(store.list_users()) == 1:
+        click.echo("This is the last account. Use auth create-user to create another.")
+    if not yes:
+        click.confirm("Permanently delete this account?", default=False, abort=True)
+    try:
+        store.delete_user(str(user["user_id"]))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo(f"Account {label} deleted.")
+
+
 @auth.command("recovery-code")
 @click.option("--username", prompt=True, help="Existing login username.")
 def recovery_code(username: str) -> None:
