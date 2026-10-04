@@ -1,3 +1,4 @@
+import { AccountSecurityPanel } from '../components/AccountSecurityPanel';
 import { useState, useEffect, useCallback } from 'react';
 import {
   Palette,
@@ -392,6 +393,7 @@ export function SettingsPage() {
             App preferences — appearance, model defaults, keyboard shortcuts, and data management.
           </p>
         </header>
+        <AccountSecurityPanel />
 
         <div className="flex flex-col gap-4">
           {/* Appearance */}

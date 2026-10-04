@@ -13,7 +13,6 @@ from typing import Optional
 
 from openjarvis.core.paths import get_config_dir
 
-
 _PASSWORD_PREFIX = "scrypt$"
 _SESSION_TOKEN_BYTES = 32
 
@@ -58,6 +57,12 @@ class AuthStore:
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL,
                     disabled INTEGER NOT NULL DEFAULT 0
+                );
+
+                CREATE TABLE IF NOT EXISTS account_recovery (
+                    user_id TEXT PRIMARY KEY,
+                    code_hash TEXT NOT NULL UNIQUE,
+                    expires_at REAL NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -179,6 +184,15 @@ class AuthStore:
                 ),
             )
 
+    def list_users(self) -> list[dict]:
+        """Return local account labels and status, never hashes or session tokens."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT user_id, username, display_name, disabled "
+                "FROM users ORDER BY username"
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def get_user_by_username(
         self,
         username: str,
@@ -265,6 +279,81 @@ class AuthStore:
                 """,
                 (user_id,),
             )
+            conn.execute("DELETE FROM account_recovery WHERE user_id = ?", (user_id,))
+
+    def issue_recovery_code(
+        self, user_id: str, current_password: str | None = None
+    ) -> dict:
+        """Issue one reset code; None is reserved for local administrator recovery."""
+        code = secrets.token_urlsafe(32)
+        expires = time.time() + 30 * 86400
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            user = conn.execute(
+                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if (
+                user is None
+                or user["disabled"]
+                or (
+                    current_password is not None
+                    and not self.verify_password(
+                        current_password, user["password_hash"]
+                    )
+                )
+            ):
+                raise ValueError("Account verification failed")
+            conn.execute(
+                "INSERT OR REPLACE INTO account_recovery VALUES (?, ?, ?)",
+                (user_id, self._hash_token(code), expires),
+            )
+        return {"recovery_code": code, "expires_at": expires}
+
+    def recover_account(self, code: str, new_password: str | None = None) -> str:
+        """Verify a recovery code and optionally reset the password atomically."""
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            user = conn.execute(
+                "SELECT users.* FROM users JOIN account_recovery USING(user_id) "
+                "WHERE code_hash = ? AND expires_at > ? AND disabled = 0",
+                (self._hash_token(code), time.time()),
+            ).fetchone()
+            if user is None:
+                raise ValueError("Invalid or expired recovery code")
+            if new_password is not None:
+                conn.execute(
+                    "UPDATE users SET password_hash = ?, updated_at = ? "
+                    "WHERE user_id = ?",
+                    (self.hash_password(new_password), time.time(), user["user_id"]),
+                )
+                conn.execute(
+                    "DELETE FROM auth_sessions WHERE user_id = ?", (user["user_id"],)
+                )
+                conn.execute(
+                    "DELETE FROM account_recovery WHERE user_id = ?", (user["user_id"],)
+                )
+            return str(user["username"])
+
+    def change_password(
+        self, user_id: str, current_password: str, new_password: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            user = conn.execute(
+                "SELECT * FROM users WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            if (
+                user is None
+                or user["disabled"]
+                or not self.verify_password(current_password, user["password_hash"])
+            ):
+                raise ValueError("Current password is incorrect")
+            conn.execute(
+                "UPDATE users SET password_hash = ?, updated_at = ? WHERE user_id = ?",
+                (self.hash_password(new_password), time.time(), user_id),
+            )
+            conn.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
+            conn.execute("DELETE FROM account_recovery WHERE user_id = ?", (user_id,))
 
     # ------------------------------------------------------------------
     # Session tokens
@@ -273,9 +362,7 @@ class AuthStore:
     @staticmethod
     def _hash_token(token: str) -> str:
         """Hash a session token before storing it."""
-        return hashlib.sha256(
-            token.encode("utf-8")
-        ).hexdigest()
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def create_session(
         self,

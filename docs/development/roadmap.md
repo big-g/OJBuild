@@ -27,6 +27,19 @@ and indexed data. Extensibility must retain bounded execution and observable err
 Multi-user separation and Apple client work are outside the current Phase 2 scope.
 Automatic model routing is deferred; explicit model selection remains supported.
 
+## Phase 2: account recovery
+
+**Implemented:** login-screen username retrieval/password reset using a high-entropy
+recovery code; Settings → Account password changes and recovery-code issuance
+require the current password plus a verified human session. Recovery codes are
+hashed in the database, expire after 30 days, and are atomically consumed by a
+password reset. Replacement/password changes invalidate old codes, and password
+changes/reset revoke existing login sessions while preserving the user identity.
+Local `auth list-users`, `auth recovery-code` and `auth reset-password` provide
+administrator recovery when the user is already locked out with no saved code.
+See [Account recovery](../user-guide/account-recovery.md). Browser/client runtime
+acceptance remains pending; no email delivery service is assumed.
+
 ## Phase 2: dynamic source management
 
 1. **Implemented:** database-backed, named source instances;

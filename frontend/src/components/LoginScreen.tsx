@@ -1,11 +1,14 @@
 import { FormEvent, useState } from 'react';
 import { login, type AuthUser } from '../lib/auth';
+import { AccountRecovery } from './AccountRecovery';
 
 interface LoginScreenProps {
   onLogin: (user: AuthUser) => void;
 }
 
 export function LoginScreen({ onLogin }: LoginScreenProps) {
+  const [recovering, setRecovering] = useState(false);
+  const [resetDone, setResetDone] = useState(false);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -29,6 +32,9 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
     }
   }
 
+  if (recovering) return <AccountRecovery onBack={() => setRecovering(false)}
+    onRecovered={name => { setUsername(name); setPassword(''); setError(''); setResetDone(true); setRecovering(false); }} />;
+
   return (
     <div className="flex min-h-screen items-center justify-center px-4">
       <div className="w-full max-w-sm">
@@ -39,6 +45,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
           </p>
         </div>
 
+        {resetDone && <p role="status" className="mb-4 text-sm">Password reset. Sign in with your new password.</p>}
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label
@@ -91,6 +98,7 @@ export function LoginScreen({ onLogin }: LoginScreenProps) {
             {loggingIn ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
+        <button type="button" disabled={loggingIn} onClick={() => setRecovering(true)} className="mt-4 text-sm underline">Forgot username or password?</button>
       </div>
     </div>
   );

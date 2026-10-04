@@ -1,28 +1,27 @@
-"""CLI commands for API key management."""
+"""Local account recovery and API key management."""
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
-
-import click
-
 import uuid
 
-from openjarvis.server.auth_store import AuthStore
-from openjarvis.sessions.session import SessionStore
+import click
 
 from openjarvis.core.config import (
     DEFAULT_CONFIG_DIR,
     DEFAULT_CONFIG_PATH,
 )
 from openjarvis.server.auth_middleware import generate_api_key
+from openjarvis.server.auth_store import AuthStore
+from openjarvis.sessions.session import SessionStore
 
 
 @click.group("auth")
 def auth() -> None:
-    """Manage API authentication keys."""
+    """Manage local accounts, passwords, and API authentication keys."""
 
 
 @auth.command("create-key")
@@ -75,6 +74,7 @@ def revoke_key() -> None:
     config_path.write_text(content)
     click.echo("API key revoked.")
 
+
 @auth.command("create-user")
 @click.option("--username", prompt=True, help="Login username.")
 @click.option("--display-name", prompt=True, help="User's display name.")
@@ -101,9 +101,7 @@ def create_user(username: str, display_name: str) -> None:
     auth_store = AuthStore()
 
     if auth_store.get_user_by_username(username) is not None:
-        raise click.ClickException(
-            f"Username '{username}' already exists."
-        )
+        raise click.ClickException(f"Username '{username}' already exists.")
 
     try:
         auth_store.create_user(
@@ -131,6 +129,7 @@ def create_user(username: str, display_name: str) -> None:
     click.echo(f"Username:     {username}")
     click.echo(f"Display name: {display_name}")
 
+
 @auth.command("reset-password")
 @click.option("--username", prompt=True, help="Login username.")
 def reset_password(username: str) -> None:
@@ -144,9 +143,7 @@ def reset_password(username: str) -> None:
     user = auth_store.get_user_by_username(username)
 
     if user is None:
-        raise click.ClickException(
-            f"Username '{username}' does not exist."
-        )
+        raise click.ClickException(f"Username '{username}' does not exist.")
 
     password = click.prompt(
         "New password",
@@ -160,11 +157,49 @@ def reset_password(username: str) -> None:
             password=password,
         )
     except Exception as exc:
-        raise click.ClickException(
-            f"Failed to reset password: {exc}"
-        ) from exc
+        raise click.ClickException(f"Failed to reset password: {exc}") from exc
 
     click.echo()
     click.echo("Password reset successfully.")
     click.echo(f"Username: {username}")
     click.echo("Existing authentication sessions were revoked.")
+
+
+@auth.command("list-users")
+@click.option("--json", "as_json", is_flag=True, help="Output account labels as JSON.")
+def list_users(as_json: bool) -> None:
+    """Find login usernames using local server access (no password required)."""
+    users = AuthStore().list_users()
+    if as_json:
+        click.echo(json.dumps(users, indent=2))
+        return
+    if not users:
+        click.echo("No local OpenJarvis accounts found.")
+        click.echo("Run this as the same OS user and OPENJARVIS_HOME as the service.")
+        return
+    click.echo("Username\tDisplay name\tStatus")
+    for user in users:
+        # Escape control characters in labels before writing them to the terminal.
+        username = json.dumps(user["username"], ensure_ascii=False)[1:-1]
+        display_name = json.dumps(user["display_name"], ensure_ascii=False)[1:-1]
+        status = "disabled" if user["disabled"] else "active"
+        click.echo(f"{username}\t{display_name}\t{status}")
+
+
+@auth.command("recovery-code")
+@click.option("--username", prompt=True, help="Existing login username.")
+def recovery_code(username: str) -> None:
+    """Issue a one-use web recovery code with local administrator access."""
+    store = AuthStore()
+    user = store.get_user_by_username(username.strip())
+    if user is None:
+        raise click.ClickException("Account not found.")
+    try:
+        result = store.issue_recovery_code(str(user["user_id"]))
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.echo("Recovery code (expires in 30 days; replaces any previous code):")
+    click.echo(result["recovery_code"])
+    click.echo(
+        "Use Forgot username or password on the login screen. Keep this code private."
+    )

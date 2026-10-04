@@ -143,3 +143,19 @@ export async function logout(): Promise<void> {
     clearAuth();
   }
 }
+
+export async function accountRequest(action: 'recover' | 'recovery-code' | 'password', body: Record<string, string>): Promise<{ username?: string; recovery_code?: string; expires_at?: number }> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (action !== 'recover') headers['X-OpenJarvis-Session'] = getSessionToken();
+  const res = await fetch(`${getBase()}/v1/auth/${action}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  if (!res.ok) {
+    if (res.status === 401) throw new Error('Please sign in again.');
+    if (res.status === 422) throw new Error('Check the code and password length (8–1024 characters).');
+    if (res.status === 400) {
+      const data = await res.json();
+      throw new Error(typeof data.detail === 'string' ? data.detail : 'Account verification failed.');
+    }
+    throw new Error('Account service unavailable. Please try again.');
+  }
+  return res.json();
+}

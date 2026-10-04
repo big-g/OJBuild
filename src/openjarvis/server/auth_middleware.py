@@ -102,7 +102,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         OAuth launch/callback routes validate single-use, browser-bound attempts.
         Other ``/v1`` routes remain protected by API-key/session authentication.
         """
-        if path in {"/v1/auth/login", "/v1/auth/logout", "/v1/auth/me"}:
+        if path in {
+            "/v1/auth/login",
+            "/v1/auth/logout",
+            "/v1/auth/me",
+            "/v1/auth/recover",
+        }:
             return False
         # These two endpoints authenticate with single-use OAuth attempts,
         # not API headers (provider redirects cannot send those headers).

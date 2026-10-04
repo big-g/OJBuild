@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from openjarvis.server.auth import get_auth_store
-
 
 router = APIRouter(prefix="/v1/auth", tags=["authentication"])
 
@@ -43,6 +42,7 @@ async def login(req: LoginRequest, request: Request):
         "session_token": token,
     }
 
+
 @router.get("/me")
 async def me(request: Request):
     """Return the currently authenticated user."""
@@ -69,6 +69,7 @@ async def me(request: Request):
         "display_name": str(user["display_name"]),
     }
 
+
 @router.post("/logout")
 async def logout(request: Request):
     """Revoke the current authentication session."""
@@ -84,3 +85,63 @@ async def logout(request: Request):
     store.revoke_session(token)
 
     return {"ok": True}
+
+
+class PasswordProof(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+
+
+class PasswordChange(PasswordProof):
+    new_password: str = Field(min_length=8, max_length=1024)
+
+
+class AccountRecovery(BaseModel):
+    recovery_code: str = Field(min_length=32, max_length=256)
+    new_password: str | None = Field(default=None, min_length=8, max_length=1024)
+
+
+def _private_response(data):
+    from fastapi.responses import JSONResponse
+
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/password")
+async def change_password(req: PasswordChange, request: Request):
+    from openjarvis.server.auth import get_authenticated_user_id
+
+    user_id = get_authenticated_user_id(request)
+    try:
+        get_auth_store(request).change_password(
+            user_id, req.current_password, req.new_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _private_response({"ok": True})
+
+
+@router.post("/recovery-code")
+async def issue_recovery_code(req: PasswordProof, request: Request):
+    from openjarvis.server.auth import get_authenticated_user_id
+
+    user_id = get_authenticated_user_id(request)
+    try:
+        result = get_auth_store(request).issue_recovery_code(
+            user_id, req.current_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _private_response(result)
+
+
+@router.post("/recover")
+async def recover_account(req: AccountRecovery, request: Request):
+    try:
+        username = get_auth_store(request).recover_account(
+            req.recovery_code, req.new_password
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _private_response(
+        {"username": username, "password_reset": req.new_password is not None}
+    )
