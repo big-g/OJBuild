@@ -84,6 +84,16 @@ versions restore approval after restart. Navigation now provides Logout with
 bounded server revocation, local authentication cleanup and client reload.
 See [Runtime tools](../user-guide/runtime-tools.md).
 
+**Implemented:** trusted runtime adapter metadata registry with web forms and
+saved-definition review cards driven by adapter fields. Numeric formula tools
+support declared numeric inputs and bounded arithmetic for calculations such as
+unit conversions; restricted syntax interpretation, finite numeric limits and
+failed-result propagation preserve the existing executor and evidence contract.
+Per-adapter validation versions bind approval independently; original text-tool
+fingerprints and approvals remain compatible. Unknown/damaged definitions are
+excluded from execution while administrators can repair or remove them without
+blocking valid tools.
+
 **Pending:** additional installable tool adapters and package/MCP installation;
 live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
 and logout. The first adapter does not complete runtime tool addition acceptance.

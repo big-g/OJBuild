@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
 from openjarvis.server.auth import authenticate_request
+from openjarvis.tools.runtime_adapters import list_adapters
 from openjarvis.tools.runtime_store import TRANSFORMS, RuntimeToolConflict
 
 
@@ -11,7 +12,9 @@ class Definition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(pattern=r"^custom_[a-z][a-z0-9_]{0,55}$")
     description: str = Field(min_length=1, max_length=500)
-    transform: str = Field(max_length=32)
+    transform: str | None = Field(default=None, max_length=32)
+    adapter_id: str | None = Field(default=None, max_length=64)
+    config: dict | None = None
 
 
 class Revision(BaseModel):
@@ -56,12 +59,15 @@ def create_runtime_tools_router(manager):
         return {
             "tools": [manager.view(row) for row in manager.store.list()],
             "transforms": TRANSFORMS,
+            "adapters": list_adapters(),
         }
 
     @router.post("", status_code=201)
     def install(body: Definition, actor: str = Depends(admin)):
         try:
-            return manager.view(manager.store.create(body.model_dump(), actor))
+            return manager.view(
+                manager.store.create(body.model_dump(exclude_none=True), actor)
+            )
         except RuntimeToolConflict as exc:
             raise HTTPException(409, str(exc)) from None
         except ValueError as exc:
@@ -69,7 +75,13 @@ def create_runtime_tools_router(manager):
 
     @router.put("/{identity}")
     def edit(identity: str, body: Edit, actor: str = Depends(admin)):
-        return change(identity, body, actor, "updated", body.definition.model_dump())
+        return change(
+            identity,
+            body,
+            actor,
+            "updated",
+            body.definition.model_dump(exclude_none=True),
+        )
 
     @router.post("/{identity}/approve")
     def approve(identity: str, body: Revision, actor: str = Depends(admin)):

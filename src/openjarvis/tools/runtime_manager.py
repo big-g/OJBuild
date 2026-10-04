@@ -17,8 +17,12 @@ from openjarvis.security.capability_registry import (
 )
 from openjarvis.security.tool_management_bootstrap import sync_managed_tool
 from openjarvis.security.tool_management_registry import ToolManagementRegistry
+from openjarvis.tools.runtime_adapters import (
+    adapter_config,
+    evaluate_formula,
+    get_adapter,
+)
 from openjarvis.tools.runtime_store import (
-    VALIDATOR_VERSION,
     RuntimeToolStore,
     validate_definition,
 )
@@ -28,18 +32,9 @@ from openjarvis.tools.templates.loader import ToolTemplate
 class RuntimeTransformTool(ToolTemplate):
     def __init__(self, row, manager):
         definition = validate_definition(json.loads(row["definition"]))
+        self._adapter = get_adapter(definition)
         super().__init__(
-            {
-                "name": definition["name"],
-                "description": definition["description"],
-                "parameters": {
-                    "type": "object",
-                    "properties": {"input": {"type": "string", "maxLength": 32768}},
-                    "required": ["input"],
-                    "additionalProperties": False,
-                },
-                "action": {"type": "transform", "transform": definition["transform"]},
-            }
+            self._adapter.tool_data(definition, adapter_config(definition))
         )
         self.management_identity = f"runtime:{row['id']}"
         self.runtime_management_registry = manager.registry
@@ -54,11 +49,16 @@ class RuntimeTransformTool(ToolTemplate):
         return spec
 
     def execute(self, **params):
-        if set(params) != {"input"} or not isinstance(params["input"], str):
+        if self._adapter.adapter_id == "text_transform" and (
+            set(params) != {"input"} or not isinstance(params["input"], str)
+        ):
             return ToolResult(
                 tool_name=self.tool_id, content="Expected one text input", success=False
             )
-        if len(params["input"]) > 32768:
+        if (
+            self._adapter.adapter_id == "text_transform"
+            and len(params["input"]) > 32768
+        ):
             return ToolResult(
                 tool_name=self.tool_id,
                 content="Input exceeds 32768 characters",
@@ -89,6 +89,15 @@ class RuntimeTransformTool(ToolTemplate):
         )
         if not allowed:
             return ToolResult(tool_name=self.tool_id, content=reason, success=False)
+        if self._adapter.adapter_id == "numeric_formula":
+            try:
+                config = {k: v for k, v in self._action.items() if k != "type"}
+                result = evaluate_formula(config, params)
+            except ValueError as exc:
+                return ToolResult(
+                    tool_name=self.tool_id, content=str(exc), success=False
+                )
+            return ToolResult(tool_name=self.tool_id, content=str(result), success=True)
         return super().execute(**params)
 
 
@@ -117,6 +126,7 @@ class RuntimeToolManager:
 
     def record(self, row):
         tool = RuntimeTransformTool(row, self)
+        adapter_version = tool._adapter.validator_version
         registry = ToolManagementRegistry()
         record = sync_managed_tool(
             registry,
@@ -125,13 +135,13 @@ class RuntimeToolManager:
             provenance=Provenance(
                 source_type="runtime",
                 source_id=row["id"],
-                source_version=VALIDATOR_VERSION,
+                source_version=adapter_version,
             ),
             capability_registry=self.capabilities,
             implementation_id=f"{RuntimeTransformTool.__module__}.{RuntimeTransformTool.__qualname__}",
         )
         if (
-            row["validator_version"] == VALIDATOR_VERSION
+            row["validator_version"] == adapter_version
             and row["approved_fingerprint"] == record.fingerprint.value
         ):
             registry.approve(
@@ -149,24 +159,55 @@ class RuntimeToolManager:
         return record
 
     def view(self, row):
-        record = self.record(row)
+        try:
+            record = self.record(row)
+        except (ValueError, TypeError, KeyError, OverflowError):
+            # Unsupported/corrupt definitions must remain manageable without
+            # exposing their malformed configuration or granting execution.
+            return {
+                "id": row["id"],
+                "revision": row["revision"],
+                "name": row["name"],
+                "description": "Definition needs repair",
+                "adapter_id": "unavailable",
+                "config": {},
+                "enabled": False,
+                "approved": False,
+                "approved_by": "",
+                "status": "invalid",
+                "fingerprint": "",
+                "required_capabilities": [],
+                "validator_version": "",
+                "validation_error": (
+                    "The adapter or definition is unavailable. "
+                    "Edit or remove this tool."
+                ),
+            }
+        definition = json.loads(row["definition"])
+        adapter = get_adapter(definition)
         return {
             "id": row["id"],
             "revision": row["revision"],
-            **json.loads(row["definition"]),
+            **definition,
+            "adapter_id": adapter.adapter_id,
+            "config": adapter_config(definition),
             "enabled": bool(row["enabled"]),
             "approved": bool(record.approval),
             "approved_by": row["approved_by"],
             "status": record.status.value,
             "fingerprint": record.fingerprint.value,
             "required_capabilities": record.spec.required_capabilities,
-            "validator_version": VALIDATOR_VERSION,
+            "validator_version": adapter.validator_version,
         }
 
     def change(self, identity, revision, event, actor, definition=None):
         uuid.UUID(identity)
         row = self.store.get(identity)
-        fingerprint = self.record(row).fingerprint.value
+        fingerprint = (
+            self.record(row).fingerprint.value
+            if event in {"approved", "enabled"}
+            else ""
+        )
         return self.store.change(
             identity,
             revision,
@@ -179,8 +220,11 @@ class RuntimeToolManager:
     def available(self):
         tools = []
         for row in self.store.list():
-            if self.record(row).is_approved():
-                tools.append(RuntimeTransformTool(row, self))
+            try:
+                if self.record(row).is_approved():
+                    tools.append(RuntimeTransformTool(row, self))
+            except (ValueError, TypeError, KeyError, OverflowError):
+                continue
         return tools
 
     @contextmanager

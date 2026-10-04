@@ -124,6 +124,55 @@ def test_invalid_definitions_are_rejected(setup, patch, status):
     assert manager.store.list() == []
 
 
+def test_dynamic_adapter_metadata_and_formula_review(setup):
+    from openjarvis.core.types import ToolCall
+    from openjarvis.tools._stubs import ToolExecutor
+
+    client, headers, manager, _ = setup
+    client.headers.update(headers["admin"])
+    adapters = client.get("/v1/runtime-tools").json()["adapters"]
+    formula = next(a for a in adapters if a["adapter_id"] == "numeric_formula")
+    assert [f["name"] for f in formula["fields"]] == ["expression", "variables"]
+    definition = {
+        "name": "custom_temp",
+        "description": "Convert Celsius to Fahrenheit",
+        "adapter_id": formula["adapter_id"],
+        "config": formula["default_config"],
+    }
+    response = client.post("/v1/runtime-tools", json=definition)
+    assert response.status_code == 201, response.text
+    row = response.json()
+    assert row["config"] == definition["config"]
+    assert not row["approved"]
+    path = f"/v1/runtime-tools/{row['id']}"
+    row = client.post(path + "/approve", json={"revision": 1}).json()
+    result = ToolExecutor(manager.available()).execute(
+        ToolCall(id="formula", name="custom_temp", arguments='{"value":100}')
+    )
+    assert result.success and result.content == "212.0"
+    assert (
+        client.post(
+            "/v1/runtime-tools", json={**definition, "transform": "upper"}
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/v1/runtime-tools", json={**definition, "adapter_id": "shell"}
+        ).status_code
+        == 400
+    )
+    edit = {**definition, "config": {"expression": "value * 2", "variables": ["value"]}}
+    edited = client.put(
+        path, json={"revision": row["revision"], "definition": edit}
+    ).json()
+    assert not edited["approved"]
+    assert (
+        client.post(path + "/approve", json={"revision": row["revision"]}).status_code
+        == 409
+    )
+
+
 @pytest.mark.parametrize("stream", [False, True])
 def test_chat_loads_new_tools_and_honors_revocation_without_restart(tmp_path, stream):
     from unittest.mock import MagicMock

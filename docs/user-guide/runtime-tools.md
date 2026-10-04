@@ -1,6 +1,6 @@
 # Runtime tools
 
-Administrators can add text transformations from **Tools** in the navigation
+Administrators can add text transformations and numeric formulas from **Tools** in the navigation
 menu. Definitions, approval decisions, revisions and audit history live in the
 server's SQLite database. No template file editing or server restart is needed
 after adding a tool.
@@ -9,17 +9,41 @@ after adding a tool.
    `uv run jarvis auth set-admin --username YOUR_USERNAME` from
    `~/.openjarvis/src`, then sign in again.
 2. Open **Tools**. Choose a unique name beginning with `custom_`, describe when
-   Jarvis should use the tool, and choose its transformation.
+   Jarvis should use the tool, and choose its type. Complete the fields supplied
+   by that adapter.
 3. Save the definition. Review the saved description, action and revision on
    its card, then select **Approve & enable**.
 4. In a tool-enabled chat, ask Jarvis to use the new tool. For a managed agent,
    add the tool's name to that agent's configured tool list.
 
-The initial adapter supports uppercase, lowercase, reverse, character count and
-identity transformations. Every tool accepts a single string named `input`, with
-a 32,768-character limit. These transformations do not access files, credentials,
-network services or external facts. They declare no factual evidence capability.
-Further installable tool types remain roadmap work.
+The text adapter supports uppercase, lowercase, reverse, character count and
+identity transformations. Text tools accept a single string named `input`, with
+a 32,768-character limit.
+
+The numeric formula adapter accepts a formula and a comma-separated list of
+1–8 variable names. For example, create `custom_celsius_to_fahrenheit` with
+`value * 1.8 + 32` and variable `value`. After approval, a call with `value: 100`
+returns `212.0`. Use `(value - 32) / 1.8` for the inverse conversion.
+
+Formulas support numbers, declared variables, parentheses and `+`, `-`, `*`, `/`.
+They are interpreted through a restricted syntax tree; no Python evaluation or
+script execution occurs. Expressions are limited to 512 characters, 128 syntax
+elements and 32 nesting levels. Inputs and numeric literals must be finite and
+within ±10¹²; intermediate/results must stay within ±10²⁴. Division by zero,
+missing/extra variables, booleans and numeric strings produce failed tool
+results. Calculations use floating-point arithmetic, so normal rounding applies.
+
+Both adapters operate only on supplied inputs. They do not access files,
+credentials, network services or external facts, and declare no factual evidence
+capability. Further installable tool types remain roadmap work.
+
+The Tools form and saved-definition review cards use metadata from the server's
+trusted adapter registry. Each adapter owns its configuration validation,
+parameter schema, executable action and validator version. Existing text-only
+definitions keep their original fingerprints and approvals; editing them through
+the new form still requires review as usual. Unknown or damaged definitions are
+unavailable for execution and can be repaired or removed from the web interface;
+valid tools continue to load.
 
 Approval and capabilities remain separate. Runtime tools pass through the
 existing ToolExecutor, including its capability policy, confirmation, taint,
@@ -57,3 +81,9 @@ unavailable. Edit to lowercase and verify it stays unavailable until reapproved.
 Restart the service and verify the approved tool persists. Check logout and login
 with a second account in browser, Tauri and Android clients. These are live
 acceptance steps; offline regression tests do not establish device acceptance.
+
+Also create the Celsius-to-Fahrenheit formula above, verify its `212.0` tool
+result, edit the formula and confirm it stays unavailable until reapproved.
+Restart the service and verify both the original text tool and the formula still
+honor their current approvals. Failed formulas must surface a tool error rather
+than provide fabricated results.

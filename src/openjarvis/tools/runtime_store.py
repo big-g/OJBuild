@@ -11,8 +11,13 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from openjarvis.connectors._sqlite import initialize_wal
+from openjarvis.tools.runtime_adapters import TRANSFORMS as TRANSFORMS
+from openjarvis.tools.runtime_adapters import (
+    adapter_config,
+    get_adapter,
+)
 
-TRANSFORMS = ("upper", "lower", "reverse", "length", "identity")
+# Retained for callers that use the original transform-only API.
 VALIDATOR_VERSION = "transform-v1"
 
 
@@ -21,13 +26,12 @@ class RuntimeToolConflict(ValueError):
 
 
 def validate_definition(definition: dict) -> dict:
-    """Only bounded declarative transformations are installable in version 1."""
-    if not isinstance(definition, dict) or set(definition) != {
-        "name",
-        "description",
-        "transform",
-    }:
-        raise ValueError("Expected name, description and transform")
+    """Adapters validate config; callers cannot supply an execution contract."""
+    if not isinstance(definition, dict) or set(definition) not in (
+        {"name", "description", "transform"},
+        {"name", "description", "adapter_id", "config"},
+    ):
+        raise ValueError("Expected name, description and one adapter configuration")
     name = definition["name"]
     if not isinstance(name, str) or not re.fullmatch(
         r"custom_[a-z][a-z0-9_]{0,55}", name
@@ -40,8 +44,7 @@ def validate_definition(definition: dict) -> dict:
         or len(description) > 500
     ):
         raise ValueError("Description must contain 1–500 characters")
-    if definition["transform"] not in TRANSFORMS:
-        raise ValueError("Unsupported transformation")
+    get_adapter(definition).validate(adapter_config(definition))
     from openjarvis.core.registry import ToolRegistry
 
     if ToolRegistry.contains(name):
@@ -141,7 +144,7 @@ class RuntimeToolStore:
                         definition["name"],
                         json.dumps(definition),
                         1,
-                        VALIDATOR_VERSION,
+                        get_adapter(definition).validator_version,
                     ),
                 )
             except sqlite3.IntegrityError:
@@ -175,7 +178,7 @@ class RuntimeToolStore:
                             definition["name"],
                             json.dumps(definition),
                             next_revision,
-                            VALIDATOR_VERSION,
+                            get_adapter(definition).validator_version,
                             identity,
                         ),
                     )
@@ -195,7 +198,7 @@ class RuntimeToolStore:
                         fingerprint,
                         actor,
                         time.time(),
-                        VALIDATOR_VERSION,
+                        get_adapter(json.loads(row["definition"])).validator_version,
                         identity,
                     ),
                 )
@@ -203,7 +206,8 @@ class RuntimeToolStore:
                 if event == "enabled" and (
                     not fingerprint
                     or fingerprint != row["approved_fingerprint"]
-                    or row["validator_version"] != VALIDATOR_VERSION
+                    or row["validator_version"]
+                    != get_adapter(json.loads(row["definition"])).validator_version
                 ):
                     raise ValueError("Tool needs approval before enabling")
                 db.execute(
