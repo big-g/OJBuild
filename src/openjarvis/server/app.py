@@ -222,6 +222,16 @@ def create_app(
     )
     app.state.channel_bridge = channel_bridge
     app.state.config = config
+    from openjarvis.core.config import SecurityConfig
+    from openjarvis.tools.runtime_manager import RuntimeToolManager
+
+    runtime_tools = RuntimeToolManager(
+        getattr(getattr(config, "security", None), "runtime_tools_db_path",
+                SecurityConfig().runtime_tools_db_path)
+    )
+    app.state.runtime_tool_manager = runtime_tools
+    if agent is not None:
+        agent._runtime_tool_manager = runtime_tools
     app.state._memory_backend_lock = threading.Lock()
     app.state.memory_backend = memory_backend
     app.state._owns_memory_backend = bool(own_memory_backend)
@@ -431,6 +441,9 @@ def create_app(
     app.include_router(comparison_router)
     app.include_router(create_connectors_router())
     app.include_router(create_sources_router())
+    from openjarvis.server.runtime_tools_router import create_runtime_tools_router
+
+    app.include_router(create_runtime_tools_router(runtime_tools))
     app.include_router(create_digest_router())
     app.include_router(upload_router)
     app.include_router(research_router)

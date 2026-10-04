@@ -546,6 +546,9 @@ def serve(
             logger.debug("Agent manager init failed: %s", exc)
 
     # Set up agent scheduler for cron/interval agents
+    from openjarvis.tools.runtime_manager import RuntimeToolManager
+
+    runtime_tool_manager = RuntimeToolManager(config.security.runtime_tools_db_path)
     agent_scheduler = None
     if agent_manager is not None:
         try:
@@ -615,6 +618,7 @@ def serve(
                 capability_policy=sec.capability_policy,
                 agent_manager=agent_manager,
                 agent_executor=executor,
+                runtime_tool_manager=runtime_tool_manager,
                 _mcp_clients=mcp_clients,
             )
             executor.set_system(system)

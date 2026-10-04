@@ -339,6 +339,7 @@ def resolve_agent_tools(
     knowledge_db_path: str | Path | None = None,
     tool_management_registry: Any = None,
     capability_registry: Any = None,
+    runtime_tools: Iterable[Any] = (),
 ) -> ResolvedAgentTools:
     """Resolve the effective live toolkit for a managed agent.
 
@@ -370,7 +371,10 @@ def resolve_agent_tools(
         if not name or name in seen:
             return
 
-        if tool_management_registry is not None:
+        if (
+            tool_management_registry is not None
+            and getattr(tool, "runtime_management_registry", None) is None
+        ):
             if capability_registry is None:
                 raise ValueError(
                     "capability_registry is required when tool management is active"
@@ -424,6 +428,7 @@ def resolve_agent_tools(
     use_mcp = config.get("mcp_tools", True) is not False
     mcp_tool_list = list(mcp_tools) if use_mcp else []
     mcp_by_name: dict[str, Any] = {}
+    runtime_by_name = {_tool_name(tool): tool for tool in runtime_tools}
     for tool in mcp_tool_list:
         name = _tool_name(tool)
         if name and name not in mcp_by_name:
@@ -473,6 +478,12 @@ def resolve_agent_tools(
                             name,
                             exc,
                         )
+                elif name in runtime_by_name:
+                    # Runtime definitions carry their own reviewed ToolSpec;
+                    # custom advertised schemas cannot override that contract.
+                    logger.warning(
+                        "Runtime tool '%s' requires its registered spec", name
+                    )
                 elif name in mcp_by_name:
                     backing_tool = mcp_by_name[name]
 
@@ -503,6 +514,9 @@ def resolve_agent_tools(
             if name in seen:
                 continue
             if ChannelRegistry.contains(name):
+                continue
+            if name in runtime_by_name and not ToolRegistry.contains(name):
+                add_instance(runtime_by_name[name])
                 continue
             if not ToolRegistry.contains(name):
                 logger.warning(

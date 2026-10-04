@@ -8,6 +8,7 @@ import { GetStartedPage } from './pages/GetStartedPage';
 import { AgentsPage } from './pages/AgentsPage';
 import { DataSourcesPage } from './pages/DataSourcesPage';
 import { LogsPage } from './pages/LogsPage';
+import { ToolsPage } from './pages/ToolsPage';
 import { LoginScreen } from './components/LoginScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
@@ -269,6 +270,7 @@ useEffect(() => {
           <Route path="data-sources" element={<DataSourcesPage />} />
           <Route path="agents" element={<AgentsPage />} />
           <Route path="logs" element={<LogsPage />} />
+          <Route path="tools" element={<ToolsPage />} />
         </Route>
       </Routes>
       <Toaster position="bottom-right" />

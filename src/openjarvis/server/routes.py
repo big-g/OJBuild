@@ -307,7 +307,15 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         agent is not None
         and not image_messages
         and not request_body.tools
-        and (not request_body.stream or bool(getattr(agent, "_tools", None)))
+        and (
+            not request_body.stream
+            or bool(getattr(agent, "_tools", None))
+            or (
+                getattr(agent, "accepts_tools", False)
+                and getattr(request.app.state, "runtime_tool_manager", None)
+                and bool(request.app.state.runtime_tool_manager.available())
+            )
+        )
     )
 
     # Inject memory context into messages before dispatching
@@ -918,7 +926,13 @@ def _handle_agent(
     # Locked for the full override-run-restore cycle (#759): only the
     # override/restore lines racing wouldn't be enough, since agent.run()
     # itself reads self._model throughout the call.
-    with _get_agent_model_lock(agent):
+    from contextlib import nullcontext
+
+    runtime_manager = getattr(agent, "_runtime_tool_manager", None)
+    runtime_context = (
+        runtime_manager.bind_agent(agent) if runtime_manager else nullcontext()
+    )
+    with _get_agent_model_lock(agent), runtime_context:
         original_model = agent._model
         if model:
             agent._model = model

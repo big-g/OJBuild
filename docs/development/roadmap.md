@@ -72,9 +72,21 @@ preserve approval. Existing managed templates require one fresh approval after
 this fingerprint upgrade. Regression coverage includes file reloads, all three
 action types, live mutation and approved execution.
 
-**Pending:** persistent runtime tool installation and web approval/configuration
-controls, including restart and client acceptance. This closes an approval-binding
-gap; it does not complete the runtime tool addition objective.
+**Implemented:** first database-backed runtime tool adapter with administrator web
+add/edit/review/approve/disable/enable/remove controls and retained audit history.
+Bounded declarative text transformations have fixed ToolSpecs and no factual
+evidence claims. Approved definitions are loaded for tool-enabled chat on each run
+and resolve by name in managed-agent streaming and scheduled execution. Runtime
+approval is enforced independently of optional built-in management enforcement;
+live database checks block stale instances after edits, disable or deletion.
+Revision checks reject stale reviews; matching definitions and trusted validator
+versions restore approval after restart. Navigation now provides Logout with
+bounded server revocation, local authentication cleanup and client reload.
+See [Runtime tools](../user-guide/runtime-tools.md).
+
+**Pending:** additional installable tool adapters and package/MCP installation;
+live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
+and logout. The first adapter does not complete runtime tool addition acceptance.
 
 ## Phase 2: dynamic source management
 

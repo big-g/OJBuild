@@ -17,14 +17,31 @@ import {
   Loader2,
   ScrollText,
   Database,
+  LogOut,
+  Wrench,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
+import { getStoredUser, logout } from '../../lib/auth';
 
 export function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchQuery, setSearchQuery] = useState('');
+  const [loggingOut, setLoggingOut] = useState(false);
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await logout();
+    } catch {
+      // Local sign-out still completes if the backend is unreachable.
+    } finally {
+      // Recreate account-bound stores and cancel active streams on sign-out.
+      window.location.reload();
+    }
+  };
 
   const sidebarOpen = useAppStore((s) => s.sidebarOpen);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -57,6 +74,7 @@ export function Sidebar() {
     { path: '/', icon: MessageSquare, label: 'Chat' },
     { path: '/dashboard', icon: BarChart3, label: 'Dashboard' },
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
+    ...(getStoredUser()?.is_admin ? [{ path: '/tools', icon: Wrench, label: 'Tools' }] : []),
     { path: '/agents', icon: Bot, label: 'Agents' },
     { path: '/logs', icon: ScrollText, label: 'Logs' },
     { path: '/settings', icon: Settings, label: 'Settings' },
@@ -228,6 +246,17 @@ export function Sidebar() {
                 </button>
               );
             })}
+            <button
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm w-full text-left cursor-pointer disabled:opacity-50"
+              style={{ color: 'var(--color-text-secondary)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-bg-secondary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
+              <LogOut size={16} />
+              {loggingOut ? 'Logging out…' : 'Logout'}
+            </button>
           </nav>
         </div>
       </aside>

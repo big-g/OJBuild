@@ -13,6 +13,25 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _isolate_runtime_tools(tmp_path, monkeypatch):
+    from openjarvis.tools import runtime_manager
+
+    real_store = runtime_manager.RuntimeToolStore
+
+    def isolated_store(db_path):
+        # Keep explicit temporary stores, redirect the default home database.
+        from pathlib import Path
+
+        from openjarvis.core.config import get_config_dir
+
+        if Path(db_path).expanduser() == get_config_dir() / "runtime_tools.db":
+            db_path = tmp_path / "runtime_tools.db"
+        return real_store(db_path)
+
+    monkeypatch.setattr(runtime_manager, "RuntimeToolStore", isolated_store)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_auth_db(tmp_path, monkeypatch):
     """Give each test its own real auth store without changing auth behavior."""
     from openjarvis.server import auth_store

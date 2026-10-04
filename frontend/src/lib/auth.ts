@@ -138,6 +138,7 @@ export async function logout(): Promise<void> {
     if (token) {
       await fetch(`${getBase()}/v1/auth/logout`, {
         method: 'POST',
+        signal: AbortSignal.timeout(5000),
         headers: {
           'X-OpenJarvis-Session': token,
         },

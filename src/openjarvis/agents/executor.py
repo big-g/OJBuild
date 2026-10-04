@@ -405,6 +405,10 @@ class AgentExecutor:
             capability_registry=getattr(
                 self._system, "capability_registry", None
             ),
+            runtime_tools=(
+                self._system.runtime_tool_manager.available()
+                if getattr(self._system, "runtime_tool_manager", None) else ()
+            ),
         )
         self._toolkit_local.current = resolved_toolkit
         tool_instances = resolved_toolkit.instances

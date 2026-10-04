@@ -119,7 +119,7 @@ class TestJarvisSystem:
         class TestAgent:
             agent_id = "test-system-agent"
 
-            def __init__(self, eng, model, **kwargs):
+            def __init__(self, engine, model, **kwargs):
                 pass
 
             def run(self, input, context=None, **kwargs):

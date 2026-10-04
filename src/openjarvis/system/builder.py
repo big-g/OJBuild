@@ -199,6 +199,9 @@ class SystemBuilder:
         tool_management_registry = build_builtin_tool_management_registry(
             capability_registry=management_capability_registry,
         )
+        from openjarvis.tools.runtime_manager import RuntimeToolManager
+
+        runtime_tool_manager = RuntimeToolManager(config.security.runtime_tools_db_path)
         if (
             config.security.enforce_tool_management
             and sec.capability_policy is None
@@ -382,6 +385,7 @@ class SystemBuilder:
             capability_registry=management_capability_registry,
             tool_management_registry=tool_management_registry,
             audit_logger=sec.audit_logger,
+            runtime_tool_manager=runtime_tool_manager,
             agent_manager=agent_manager,
             agent_scheduler=agent_scheduler,
             agent_executor=agent_executor,

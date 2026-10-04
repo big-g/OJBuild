@@ -1,0 +1,19 @@
+import { beforeEach, expect, it, vi } from 'vitest';
+import { runtimeRequest } from './runtime-tools-api';
+const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
+vi.mock('./api', () => ({ apiFetch }));
+beforeEach(() => apiFetch.mockReset());
+
+it('sends the reviewed revision through the authenticated API wrapper', async () => {
+  apiFetch.mockResolvedValue({ ok: true, json: async () => ({ approved: true }) });
+  expect(await runtimeRequest('/id/approve', 'POST', { revision: 4 })).toEqual({ approved: true });
+  expect(apiFetch).toHaveBeenCalledWith('/v1/runtime-tools/id/approve', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"revision":4}',
+  });
+});
+
+it('surfaces a stale review without retrying approval', async () => {
+  apiFetch.mockResolvedValue({ ok: false, status: 409, json: async () => ({ detail: 'Tool changed; reload before reviewing' }) });
+  await expect(runtimeRequest('/id/approve', 'POST', { revision: 4 })).rejects.toThrow('reload before reviewing');
+  expect(apiFetch).toHaveBeenCalledTimes(1);
+});

@@ -197,6 +197,14 @@ class QueryOrchestrator:
         agent_tools = s.tools
         if tool_names:
             agent_tools = self._build_tools(tool_names)
+        runtime_manager = getattr(s, "runtime_tool_manager", None)
+        if runtime_manager:
+            names = {tool.spec.name for tool in agent_tools}
+            agent_tools = list(agent_tools) + [
+                tool for tool in runtime_manager.available()
+                if tool.spec.name not in names
+                and (not tool_names or tool.spec.name in tool_names)
+            ]
 
         ctx = AgentContext()
 

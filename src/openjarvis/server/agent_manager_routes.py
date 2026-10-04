@@ -935,6 +935,10 @@ async def _stream_managed_agent(
         mcp_tools=mcp_adapters.values(),
         mcp_clients=mcp_clients,
         knowledge_db_path=getattr(app_state, "knowledge_db_path", None),
+        runtime_tools=(
+            app_state.runtime_tool_manager.available()
+            if getattr(app_state, "runtime_tool_manager", None) else ()
+        ),
     )
 
     # Load prior conversation context (DESC order, reverse for chronological).

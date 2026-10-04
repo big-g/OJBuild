@@ -241,22 +241,26 @@ class ToolExecutor:
 
         # Managed lifecycle gate. This is opt-in until a runtime supplies its
         # persisted approval registry; when supplied it fails closed.
-        if self._tool_management_registry is not None:
+        management_registry = (
+            getattr(tool, "runtime_management_registry", None)
+            or self._tool_management_registry
+        )
+        if management_registry is not None:
             identity = str(
                 getattr(tool, "management_identity", "")
                 or f"builtin:{tool.spec.name}"
             )
-            record = self._tool_management_registry.get(identity)
-            if record is None:
-                return ToolResult(
-                    tool_name=tool_call.name,
-                    content=(
-                        "Tool management block: "
-                        f"tool is not registered: {identity}"
-                    ),
-                    success=False,
-                )
             try:
+                record = management_registry.get(identity)
+                if record is None:
+                    return ToolResult(
+                        tool_name=tool_call.name,
+                        content=(
+                            "Tool management block: "
+                            f"tool is not registered: {identity}"
+                        ),
+                        success=False,
+                    )
                 from openjarvis.security.tool_management_registry import (
                     compute_tool_fingerprint,
                 )
@@ -268,7 +272,7 @@ class ToolExecutor:
                     implementation_id=record.implementation_id,
                     is_local=bool(getattr(tool, "is_local", True)),
                 )
-                allowed, reason = self._tool_management_registry.check_execution(
+                allowed, reason = management_registry.check_execution(
                     identity,
                     fingerprint=live_fingerprint,
                 )
