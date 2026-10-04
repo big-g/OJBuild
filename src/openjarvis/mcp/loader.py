@@ -123,15 +123,24 @@ def load_mcp_tools_from_config(
                         exc_info=True,
                     )
                 raise
-            clients.append(client)
-
             provider = MCPToolProvider(
                 client,
                 source_id=name,
                 management_registry=management_registry,
                 capability_registry=capability_registry,
             )
-            discovered = provider.discover()
+            try:
+                discovered = provider.discover()
+            except Exception:
+                try:
+                    client.close()
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "Failed to close MCP client after discovery failed: %s",
+                        cleanup_exc,
+                    )
+                raise
+            clients.append(client)
 
             include_tools = set(cfg.get("include_tools", []))
             exclude_tools = set(cfg.get("exclude_tools", []))

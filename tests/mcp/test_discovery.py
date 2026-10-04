@@ -273,7 +273,9 @@ def test_builder_resolves_external_file_from_config_directory(tmp_path) -> None:
         )
 
     discover.assert_called_once_with(
-        {"name": "file-server", "url": "http://localhost:8080/mcp"}
+        {"name": "file-server", "url": "http://localhost:8080/mcp"},
+        tool_management_registry=None,
+        capability_registry=None,
     )
 
 
@@ -310,7 +312,12 @@ def test_reused_builder_transfers_only_current_build_mcp_state() -> None:
         .speech(False)
     )
 
-    def _discover(_server_cfg):
+    def _discover(_server_cfg, *, tool_management_registry, capability_registry):
+        from openjarvis.security.capability_registry import CapabilityRegistry
+        from openjarvis.security.tool_management_registry import ToolManagementRegistry
+
+        assert isinstance(tool_management_registry, ToolManagementRegistry)
+        assert isinstance(capability_registry, CapabilityRegistry)
         tool, client = next(discoveries)
         builder._mcp_clients.append(client)
         return [tool]

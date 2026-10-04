@@ -94,6 +94,16 @@ fingerprints and approvals remain compatible. Unknown/damaged definitions are
 excluded from execution while administrators can repair or remove them without
 blocking valid tools.
 
+**Implemented:** complete, bounded MCP catalog discovery before adapter creation.
+Pagination rejects duplicate names, repeated/invalid cursors, malformed entries
+and catalogs beyond page/tool/size/structure limits without partial registration.
+Object input schemas receive structural checks; remote schema references are
+rejected and no references are fetched. Full remote contracts, including
+descriptions and untrusted annotations, bind managed approval fingerprints.
+Detached specs prevent caller mutation; failed discovery closes its connection.
+Annotations do not grant capabilities or factual evidence authority. This is
+discovery hardening, not a full JSON Schema validator or runtime MCP installer.
+
 **Pending:** additional installable tool adapters and package/MCP installation;
 live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
 and logout. The first adapter does not complete runtime tool addition acceptance.

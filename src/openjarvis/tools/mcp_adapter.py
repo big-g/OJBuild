@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+from copy import deepcopy
 from typing import Any, List
 
 from openjarvis.core.types import ToolResult
@@ -37,14 +37,12 @@ class MCPToolAdapter(BaseTool):
         self._client = client
         self._source_id = str(source_id or "mcp")
         self.management_identity = f"mcp:{self._source_id}:{tool_spec.name}"
-        self._spec = replace(
-            tool_spec,
-            required_capabilities=["tool:invoke"],
-        )
+        self._spec = deepcopy(tool_spec)
+        self._spec.required_capabilities = ["tool:invoke"]
 
     @property
     def spec(self) -> ToolSpec:
-        return self._spec
+        return deepcopy(self._spec)
 
     def execute(self, **params: Any) -> ToolResult:
         """Execute the remote MCP tool and return a ToolResult."""
@@ -104,7 +102,9 @@ class MCPToolProvider:
             from openjarvis.security.capability_registry import Provenance
             from openjarvis.security.tool_management_bootstrap import sync_managed_tool
 
-            implementation_id = f"{MCPToolAdapter.__module__}.{MCPToolAdapter.__qualname__}"
+            implementation_id = (
+                f"{MCPToolAdapter.__module__}.{MCPToolAdapter.__qualname__}"
+            )
             for tool in tools:
                 sync_managed_tool(
                     self._management_registry,

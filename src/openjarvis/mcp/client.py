@@ -6,6 +6,7 @@ import itertools
 import threading
 from typing import Any, Dict, List
 
+from openjarvis.mcp import catalog
 from openjarvis.mcp.protocol import MCPError, MCPRequest, MCPResponse
 from openjarvis.mcp.transport import MCPTransport
 from openjarvis.tools._stubs import ToolSpec
@@ -98,24 +99,39 @@ class MCPClient:
             self._transport.send_notification(request)
 
     def list_tools(self) -> List[ToolSpec]:
-        """Discover available tools from the server.
-
-        Returns a list of ``ToolSpec`` objects.
-        """
-        response = self._send("tools/list")
-        tools = response.result.get("tools", [])
-        # MCP tools often wrap long-running pentest/scan commands. The default
-        # ToolSpec timeout (30s) kills them mid-scan. Bump to 600s — individual
-        # MCP servers can shorten via their own protocol if needed.
-        return [
-            ToolSpec(
-                name=t["name"],
-                description=t.get("description", ""),
-                parameters=t.get("inputSchema", {}),
-                timeout_seconds=600.0,
-            )
-            for t in tools
-        ]
+        """Return a complete, bounded catalog or fail without partial results."""
+        tools: List[ToolSpec] = []
+        names: set[str] = set()
+        cursors: set[str] = set()
+        cursor = None
+        size = 0
+        for _ in range(catalog.MAX_PAGES):
+            response = self._send("tools/list", {"cursor": cursor} if cursor else {})
+            result = response.result
+            if not isinstance(result, dict) or not isinstance(
+                result.get("tools"), list,
+            ):
+                raise ValueError("MCP catalog response must contain a tools list")
+            if len(tools) + len(result["tools"]) > catalog.MAX_TOOLS:
+                raise ValueError("MCP catalog exceeds tool limit")
+            for entry in result["tools"]:
+                spec, entry_size = catalog.parse_tool(entry)
+                size += entry_size
+                if size > catalog.MAX_CATALOG_BYTES:
+                    raise ValueError("MCP catalog exceeds size limit")
+                if spec.name in names:
+                    raise ValueError("MCP catalog contains duplicate tool names")
+                names.add(spec.name)
+                tools.append(spec)
+            cursor = result.get("nextCursor")
+            if cursor is None:
+                return tools
+            if not isinstance(cursor, str) or not cursor or len(cursor) > 4096:
+                raise ValueError("MCP catalog has an invalid continuation cursor")
+            if cursor in cursors:
+                raise ValueError("MCP catalog repeats a continuation cursor")
+            cursors.add(cursor)
+        raise ValueError("MCP catalog exceeds page limit")
 
     def call_tool(
         self,

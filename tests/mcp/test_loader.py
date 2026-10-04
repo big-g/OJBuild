@@ -199,6 +199,25 @@ class TestLoaderClientLifetime:
 
 
 class TestLoaderFailureIsolation:
+    def test_failed_catalog_closes_client_and_preserves_other_servers(
+        self, _mock_mcp_stack,
+    ):
+        from openjarvis.mcp.loader import load_mcp_tools_from_config
+
+        bad, good = MagicMock(), MagicMock()
+        _mock_mcp_stack["client"].side_effect = [bad, good]
+        _mock_mcp_stack["provider"].return_value.discover.side_effect = [
+            ValueError("incomplete catalog"), [_fake_tool("survivor")],
+        ]
+        tools, clients = load_mcp_tools_from_config(_make_mcp_cfg(servers=[
+            {"name": "bad", "url": "http://bad"},
+            {"name": "good", "url": "http://good"},
+        ]))
+        assert [tool.spec.name for tool in tools] == ["survivor"]
+        assert clients == [good]
+        bad.close.assert_called_once()
+        good.close.assert_not_called()
+
     def test_one_server_failure_doesnt_abort_others(self, _mock_mcp_stack, caplog):
         """When one server's initialize() raises, the loader logs and
         moves on — the remaining servers still contribute tools."""

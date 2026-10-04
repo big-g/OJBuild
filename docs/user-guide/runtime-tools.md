@@ -70,6 +70,33 @@ active streams and recreate account-bound state. If the backend is unreachable,
 local sign-out completes after at most five seconds; server revocation requires
 a reachable backend or session expiry.
 
+## MCP discovery contracts
+
+Configured MCP servers are discovered across every `tools/list` page before
+their adapters are exposed. Discovery rejects malformed/incomplete catalogs,
+duplicate names and repeated or invalid continuation cursors. Limits are 32
+pages, 1,000 tools, 256 KiB per canonical tool contract and 2 MiB across tool
+contracts; each tool is limited to 20,000 JSON values and 32 nesting levels.
+These limits apply after transport decoding, not to wire response buffering.
+A failed discovery closes that server's connection and leaves other configured
+servers available.
+
+Input schemas must be objects and describe object arguments (legacy empty schemas
+remain supported). Structural checks cover types, required fields, common nested
+schema maps/lists and annotations. This is not full JSON Schema validation or
+runtime argument validation. References must be local; discovery never fetches
+schemas. Unsupported or malformed contracts must be corrected at the server.
+
+When MCP tool management is enabled, approval now binds the full remote contract,
+including descriptions, annotations and extensions. Existing managed MCP tools
+need fresh approval after this upgrade. Subsequent unchanged discovery preserves
+approval; changed contracts withdraw it on rediscovery. Returned schemas and
+metadata are detached copies. Remote annotations remain untrusted: a read-only
+hint cannot grant privileges, bypass approval or establish factual evidence.
+This does not add automatic refresh or detect remote implementation changes
+that leave the advertised contract unchanged. Runtime MCP installation through
+the administrator web interface remains roadmap work.
+
 ## Ubuntu and client acceptance
 
 After pulling and rebuilding the frontend, use the existing service. Sign in as
