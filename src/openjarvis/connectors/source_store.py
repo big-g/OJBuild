@@ -30,7 +30,7 @@ class SourceStore:
         with self.connection() as conn:
             initialize_wal(conn)
             version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version > 4:
+            if version > 5:
                 raise ValueError("Source database uses an unsupported schema version")
             conn.executescript("""
                 CREATE TABLE IF NOT EXISTS sources (
@@ -53,7 +53,40 @@ class SourceStore:
             from openjarvis.connectors.source_audit import SCHEMA as AUDIT_SCHEMA
             from openjarvis.connectors.source_jobs import SCHEMA
 
-            conn.executescript(SCHEMA + AUDIT_SCHEMA + "PRAGMA user_version=4;")
+            conn.executescript(SCHEMA + AUDIT_SCHEMA)
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(sources)")}
+            if "owner_id" not in columns:
+                conn.execute(
+                    "ALTER TABLE sources ADD COLUMN owner_id TEXT NOT NULL DEFAULT ''"
+                )
+                conn.execute(
+                    "ALTER TABLE sources ADD COLUMN sharing TEXT NOT NULL DEFAULT"
+                    " 'personal'"
+                )
+                conn.execute(
+                    "ALTER TABLE sources ADD COLUMN approved_by TEXT NOT NULL "
+                    "DEFAULT ''"
+                )
+                # Historical audit identifies the creator without guessing an owner.
+                conn.execute(
+                    "UPDATE sources SET owner_id=COALESCE((SELECT substr(actor,6)"
+                    " FROM source_audit WHERE source_id=sources.id AND action IN "
+                    "('created','imported') AND actor LIKE 'user:%' ORDER BY id "
+                    "LIMIT 1),'')"
+                )
+            if "approved_credential_revision" not in columns:
+                conn.execute(
+                    "ALTER TABLE sources ADD COLUMN "
+                    "approved_credential_revision INTEGER NOT NULL DEFAULT 0"
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS source_preferences (user_id TEXT "
+                "NOT NULL, source_id TEXT NOT NULL REFERENCES sources(id) ON "
+                "DELETE CASCADE, enabled INTEGER NOT NULL, PRIMARY "
+                "KEY(user_id,source_id))"
+            )
+            conn.execute("PRAGMA user_version=5")
         legacy = (
             Path(legacy_path)
             if legacy_path
@@ -125,6 +158,10 @@ class SourceStore:
             "VALUES (?,?,?,?,?,1,1,0,?,?)",
             (source_id, adapter_id, name, json.dumps(config), version, now, now),
         )
+        if actor.startswith("user:"):
+            conn.execute(
+                "UPDATE sources SET owner_id=? WHERE id=?", (actor[5:], source_id)
+            )
         record = self._record(
             conn.execute("SELECT * FROM sources WHERE id=?", (source_id,)).fetchone()
         )
@@ -135,6 +172,70 @@ class SourceStore:
             actor=actor,
             fields=("name", "config", "enabled"),
         )
+
+    def set_sharing(self, source_id, revision, sharing, *, actor):
+        if sharing not in {"personal", "pending", "shared"}:
+            raise ValueError("Invalid sharing state")
+        with self.connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if actor.startswith("user:"):
+                conn.execute(
+                    "UPDATE sources SET owner_id=? WHERE id=? AND owner_id=''",
+                    (actor[5:], source_id),
+                )
+            credential_revision = 0
+            if sharing == "shared":
+                from openjarvis.connectors.source_credentials import CredentialStore
+
+                row = conn.execute(
+                    "SELECT config FROM sources WHERE id=?", (source_id,)
+                ).fetchone()
+                credential_id = json.loads(row[0]).get("credential_id") if row else None
+                if credential_id:
+                    credential_revision = CredentialStore(
+                        self.path.with_name("source_credentials.db")
+                    )._row(credential_id)["revision"]
+            changed = conn.execute(
+                "UPDATE sources SET "
+                "sharing=?,approved_by=?,approved_credential_revision=?,"
+                "revision=revision+1,updated_at=? "
+                "WHERE id=? AND revision=?",
+                (
+                    sharing,
+                    actor if sharing == "shared" else "",
+                    credential_revision,
+                    datetime.now(timezone.utc).isoformat(),
+                    source_id,
+                    revision,
+                ),
+            ).rowcount
+            if not changed:
+                raise SourceConflict("Source changed; refresh before sharing")
+            record = self._record(
+                conn.execute(
+                    "SELECT * FROM sources WHERE id=?", (source_id,)
+                ).fetchone()
+            )
+            append_event(
+                conn, record, "sharing_" + sharing, actor=actor, fields=("sharing",)
+            )
+        return self.get(source_id)
+
+    def set_preference(self, user_id, source_id, enabled):
+        with self.connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO source_preferences VALUES (?,?,?)",
+                (user_id, source_id, enabled),
+            )
+
+    def preference(self, user_id, source_id):
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT enabled FROM source_preferences WHERE user_id=? AND "
+                "source_id=?",
+                (user_id, source_id),
+            ).fetchone()
+        return row is None or bool(row[0])
 
     def update(
         self,
@@ -160,7 +261,9 @@ class SourceStore:
             old = self._record(row)
             changed = conn.execute(
                 "UPDATE sources SET name=?,config=?,enabled=?,revision=revision+1,"
-                "updated_at=?,config_version=?,legacy_document_ids=? "
+                "updated_at=?,config_version=?,legacy_document_ids=?,sharing="
+                "CASE WHEN sharing='shared' THEN 'pending' ELSE sharing "
+                "END,approved_by='' "
                 "WHERE id=? AND revision=?",
                 (
                     name,

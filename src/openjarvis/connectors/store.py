@@ -453,6 +453,13 @@ class KnowledgeStore(MemoryBackend):
         )
         params.extend(trust_tiers)
 
+        from openjarvis.connectors.source_access import source_visibility_sql
+
+        visibility, visibility_params = source_visibility_sql(
+            "kc.metadata", "kc.doc_id"
+        )
+        filters.append(visibility)
+        params.extend(visibility_params)
         where_clause = "AND " + " AND ".join(filters)
 
         # FTS5 bm25() returns negative scores; abs() gives a positive rank

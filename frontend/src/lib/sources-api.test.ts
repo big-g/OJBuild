@@ -118,3 +118,15 @@ it('sends IMAP credentials in an authenticated, revision-bound body', async () =
   expect(options?.method).toBe('PUT');
   expect(JSON.parse(String(options?.body))).toEqual({ revision: 7, username: 'mail@example.com', password: 'protected password' });
 });
+
+it('keeps universal approval separate from per-account source selection', async () => {
+  const { setSourceSharing, setSourcePreference } = await import('./sources-api');
+  await setSourceSharing(source, 'pending');
+  await setSourceSharing(source, 'shared');
+  await setSourcePreference(source.id, false);
+  expect(apiFetch.mock.calls.map(([url, options]) => [url, options?.method, JSON.parse(String(options?.body))])).toEqual([
+    ['/v1/sources/instance-1/sharing', 'PUT', { revision: 7, sharing: 'pending' }],
+    ['/v1/sources/instance-1/sharing', 'PUT', { revision: 7, sharing: 'shared' }],
+    ['/v1/sources/instance-1/preference', 'PUT', { enabled: false }],
+  ]);
+});

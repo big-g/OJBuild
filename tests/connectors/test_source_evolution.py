@@ -286,7 +286,7 @@ def test_schema_two_upgrade_retains_sources_and_does_not_invent_history(
     assert reopened.get(item["id"])["config"] == item["config"]
     assert list_events(reopened) == []
     with reopened.connection() as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 4
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
 
 
 def test_legacy_upgrade_converts_path_bound_identities_before_fields_evolve(

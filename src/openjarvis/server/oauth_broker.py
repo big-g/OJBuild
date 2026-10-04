@@ -6,6 +6,11 @@ from fastapi import HTTPException, Request
 
 
 def install_oauth_routes(router, context, serialized):
+    def authorize_actor(connector_id, payload, request):
+        check = getattr(context, "authorize_actor", None)
+        if check is not None:
+            check(connector_id, payload.get("actor"), request)
+
     def oauth_store():
         from openjarvis.connectors.oauth_state import OAuthStateStore
 
@@ -65,6 +70,7 @@ def install_oauth_routes(router, context, serialized):
                 400, "Authorization attempt is invalid or expired; start again"
             ) from None
         context.ensure(connector_id)
+        authorize_actor(connector_id, payload, request)
         if context.binding(connector_id) != payload.get("connection_binding"):
             raise HTTPException(400, "Connection changed; start authorization again")
         provider = get_provider_for_connector(context.service(connector_id))
@@ -217,6 +223,7 @@ def install_oauth_routes(router, context, serialized):
 
         try:
             context.ensure(connector_id)
+            authorize_actor(connector_id, payload, request)
         except HTTPException:
             return result("Connection is stopping; start authorization again", 409)
         if context.binding(connector_id) != payload.get("connection_binding"):
@@ -266,11 +273,14 @@ def install_oauth_routes(router, context, serialized):
                 "requested_scopes": payload["scopes"],
                 "expires_at": time.time() + expiry,
             }
+            authorize_actor(connector_id, payload, request)
             context.before_save(connector_id)
             save_tokens(
                 str(context.token_path(connector_id, provider)),
                 token_payload,
             )
+        except HTTPException:
+            return result("Source authorization permission changed", 403)
         except Exception:
             return result("Token Exchange Failed. Start authorization again.", 500)
         context.connected(connector_id, payload.get("actor"))

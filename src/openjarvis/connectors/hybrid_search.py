@@ -358,6 +358,13 @@ class HybridSearch:
             f"IN ({placeholders}) ELSE 0 END ELSE 0 END"
         )
         params: List[Any] = list(trust_tiers)
+        from openjarvis.connectors.source_access import source_visibility_sql
+
+        visibility, values = source_visibility_sql(
+            metadata, f"{prefix}doc_id", f"{prefix}source"
+        )
+        clauses.append(visibility)
+        params.extend(values)
 
         if person:
             clauses.append(

@@ -82,6 +82,21 @@ class AuthStore:
                 """
             )
 
+            conn.execute("BEGIN IMMEDIATE")
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            if "is_admin" not in columns:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
+                )
+
+    def set_admin(self, user_id: str, enabled: bool) -> None:
+        """Local administrator operation; never inferred from an API key."""
+        with self._connect() as conn:
+            if not conn.execute(
+                "UPDATE users SET is_admin=? WHERE user_id=?", (enabled, user_id)
+            ).rowcount:
+                raise ValueError("Account not found")
+
     # ------------------------------------------------------------------
     # Password hashing
     # ------------------------------------------------------------------
@@ -191,9 +206,12 @@ class AuthStore:
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            if conn.execute(
-                "SELECT 1 FROM users WHERE user_id = ?", (user_id,)
-            ).fetchone() is None:
+            if (
+                conn.execute(
+                    "SELECT 1 FROM users WHERE user_id = ?", (user_id,)
+                ).fetchone()
+                is None
+            ):
                 raise ValueError("Account not found")
             conn.execute("DELETE FROM auth_sessions WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM account_recovery WHERE user_id = ?", (user_id,))
@@ -203,7 +221,7 @@ class AuthStore:
         """Return local account labels and status, never hashes or session tokens."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT user_id, username, display_name, disabled "
+                "SELECT user_id, username, display_name, disabled, is_admin "
                 "FROM users ORDER BY username"
             ).fetchall()
             return [dict(row) for row in rows]

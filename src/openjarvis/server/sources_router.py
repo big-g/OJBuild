@@ -20,6 +20,17 @@ class SourceInput(BaseModel):
     config: dict
 
 
+class SharingInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    sharing: str = Field(pattern="^(personal|pending|shared)$")
+
+
+class SourcePreference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: StrictBool
+
+
 class SourceEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
@@ -98,8 +109,129 @@ class MigrationApply(MigrationPreview):
 
 def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     manager = manager or SourceManager()
+    from openjarvis.connectors.source_access import SourceAccess
+    from openjarvis.server.auth import get_auth_store
+
+    def access(request):
+        user = None
+        token = request.headers.get("X-OpenJarvis-Session", "").strip()
+        if token:
+            user = get_auth_store(request).get_user_for_token(token)
+            if user is None:
+                raise HTTPException(401, "Invalid session")
+        if user is not None:
+            request.state.auth_user_id = str(user["user_id"])
+            return SourceAccess(
+                manager.store, str(user["user_id"]), bool(user["is_admin"])
+            )
+        if getattr(request.state, "server_admin_access", False):
+            return SourceAccess(manager.store, admin=True)
+        raise HTTPException(401, "Sign in to manage sources")
+
+    class AuthorizedSourceRoute(SafeSourceRoute):
+        def get_route_handler(self):
+            original = super().get_route_handler()
+
+            async def handler(request):
+                # External OAuth tickets have their own one-use caller binding.
+                if self.path.endswith(("/oauth/launch", "/oauth/callback")):
+                    return await original(request)
+                policy = access(request)
+                request.state.source_access = policy
+                source_id = next(
+                    (
+                        request.path_params[k]
+                        for k in ("source_id", "identity", "connector_id")
+                        if k in request.path_params
+                    ),
+                    None,
+                )
+                if source_id:
+                    import uuid
+
+                    try:
+                        uuid.UUID(source_id)
+                    except ValueError:
+                        raise HTTPException(400, "Invalid source identity") from None
+                    if policy.admin and request.url.path.endswith("/audit"):
+                        return await original(request)
+                    try:
+                        record = manager.store.get(source_id)
+                    except KeyError:
+                        raise HTTPException(404, "Source not found") from None
+                    if not policy.visible(record):
+                        raise HTTPException(404, "Source not found")
+                    preference = request.url.path.endswith("/preference")
+                    sharing = request.url.path.endswith("/sharing")
+                    if (
+                        not preference
+                        and not policy.manages(record)
+                        and not (sharing and policy.admin)
+                    ):
+                        raise HTTPException(
+                            403,
+                            "Only the source owner or administrator may manage this "
+                            "source",
+                        )
+                elif "/imports" in request.url.path or request.url.path.endswith(
+                    "/audit"
+                ):
+                    if not policy.admin:
+                        raise HTTPException(403, "Administrator access required")
+                credential_id = request.path_params.get("credential_id")
+                if credential_id and not policy.credential_allowed(
+                    manager.credentials, credential_id
+                ):
+                    raise HTTPException(404, "Credential not found")
+                if credential_id and request.method != "GET":
+                    shared = [
+                        r
+                        for r in manager.store.list()
+                        if r["sharing"] == "shared"
+                        and r["config"].get("credential_id") == credential_id
+                    ]
+                    if shared and not policy.admin:
+                        raise HTTPException(
+                            403,
+                            "An approved universal source uses this credential; "
+                            "administrator access required",
+                        )
+                    for record in shared:
+                        with manager._locked(record["id"]):
+                            invoke(
+                                manager.store.set_sharing,
+                                record["id"],
+                                record["revision"],
+                                "pending",
+                                actor=actor(request),
+                            )
+                if (
+                    request.method in {"POST", "PUT"}
+                    and request.url.path in {"/v1/sources", "/v1/sources/test"}
+                    or request.method == "PUT"
+                    and source_id
+                    and request.url.path == f"/v1/sources/{source_id}"
+                ):
+                    try:
+                        body = await request.json()
+                    except ValueError:
+                        raise HTTPException(422, "Invalid source request") from None
+                    config = body.get("config", {}) if isinstance(body, dict) else {}
+                    credential_id = (
+                        config.get("credential_id")
+                        if isinstance(config, dict)
+                        else None
+                    )
+                    if credential_id and not policy.credential_allowed(
+                        manager.credentials, credential_id
+                    ):
+                        raise HTTPException(404, "Credential not found")
+                return await original(request)
+
+            return handler
+
     router = APIRouter(
-        prefix="/v1/sources", tags=["sources"], route_class=SafeSourceRoute
+        prefix="/v1/sources", tags=["sources"], route_class=AuthorizedSourceRoute
     )
 
     @router.on_event("startup")
@@ -153,11 +285,18 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
         return {"events": invoke(list_events, manager.store, before_id=before_id)}
 
     @router.get("/credentials")
-    def credentials():
-        return {"credentials": invoke(manager.credentials.list)}
+    def credentials(request: Request):
+        policy = request.state.source_access
+        return {
+            "credentials": [
+                row
+                for row in invoke(manager.credentials.list)
+                if policy.credential_allowed(manager.credentials, row["id"])
+            ]
+        }
 
     @router.post("/credentials", status_code=201)
-    def create_credential(req: CredentialInput):
+    def create_credential(req: CredentialInput, request: Request):
         return invoke(
             manager.credentials.create,
             req.name,
@@ -165,6 +304,7 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
             req.origin,
             req.secret.get_secret_value(),
             req.header_name,
+            owner_id=request.state.source_access.user_id,
         )
 
     @router.put("/credentials/{credential_id}")
@@ -189,8 +329,60 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
         return invoke(manager.test, req.adapter_id, req.config)
 
     @router.get("")
-    def sources():
-        return {"sources": manager.list()}
+    def sources(request: Request):
+        policy = request.state.source_access
+        records = []
+        for record in manager.list():
+            if not policy.visible(record):
+                continue
+            record["can_manage"] = policy.manages(record)
+            record["use_enabled"] = manager.store.preference(
+                policy.user_id, record["id"]
+            )
+            if not record["can_manage"]:
+                record = {
+                    key: record[key]
+                    for key in (
+                        "id",
+                        "adapter_id",
+                        "name",
+                        "enabled",
+                        "sharing",
+                        "revision",
+                        "owner_id",
+                        "can_manage",
+                        "use_enabled",
+                        "config_version",
+                        "state",
+                        "configuration_state",
+                    )
+                    if key in record
+                }
+                record.update(config={}, error=None)
+            records.append(record)
+        return {"sources": records, "can_approve": policy.admin}
+
+    @router.put("/{source_id}/sharing")
+    def sharing(source_id: str, req: SharingInput, request: Request):
+        policy = request.state.source_access
+        if req.sharing == "shared" and not policy.admin:
+            raise HTTPException(403, "Administrator approval required")
+        with manager._locked(source_id):
+            return invoke(
+                manager.store.set_sharing,
+                source_id,
+                req.revision,
+                req.sharing,
+                actor=actor(request),
+            )
+
+    @router.put("/{source_id}/preference")
+    def preference(source_id: str, req: SourcePreference, request: Request):
+        policy = request.state.source_access
+        if not policy.user_id:
+            raise HTTPException(401, "Human login required")
+        invoke(manager.store.set_preference, policy.user_id, source_id, req.enabled)
+        return {"enabled": req.enabled}
 
     @router.post("", status_code=201)
     def create_source(req: SourceInput, request: Request):

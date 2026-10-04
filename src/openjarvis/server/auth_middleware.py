@@ -48,6 +48,24 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if self._is_cors_preflight(request):
             return await call_next(request)
 
+        if (
+            not self._api_key
+            and request.url.path.startswith("/v1/connectors")
+            and self._requires_auth(request.url.path)
+        ):
+            from openjarvis.server.auth import get_auth_store
+
+            user = get_auth_store(request).get_user_for_token(
+                request.headers.get("X-OpenJarvis-Session", "").strip()
+            )
+            if user is None or not user["is_admin"]:
+                return JSONResponse(
+                    {"detail": "Legacy connectors require administrator access"},
+                    status_code=403 if user is not None else 401,
+                )
+            request.state.auth_user_id = str(user["user_id"])
+            request.state.auth_user = user
+
         if self._api_key and self._requires_auth(request.url.path):
             # Human session authentication is an alternative to the
             # master server API key for normal authenticated API routes.
@@ -65,6 +83,23 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 if user is not None:
                     request.state.auth_user_id = str(user["user_id"])
                     request.state.auth_user = user
+                    if (
+                        request.url.path.startswith("/v1/connectors")
+                        and not user["is_admin"]
+                    ):
+                        return JSONResponse(
+                            {
+                                "detail": (
+                                    "Legacy connectors require administrator access; "
+                                    "use named sources for personal or universal "
+                                    "connections"
+                                )
+                            },
+                            status_code=403,
+                        )
+                    from openjarvis.core.correlation import bind_verified_identity
+
+                    bind_verified_identity(user_id=str(user["user_id"]))
                     return await call_next(request)
 
             # Fall back to the existing master API-key authentication.
@@ -82,6 +117,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     {"detail": "Invalid API key"},
                     status_code=401,
                 )
+
+            request.state.server_admin_access = True
 
         return await call_next(request)
 

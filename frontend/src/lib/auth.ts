@@ -6,6 +6,7 @@ export interface AuthUser {
   user_id: string;
   username: string;
   display_name: string;
+  is_admin?: boolean;
 }
 
 interface StoredAuth extends AuthUser {
@@ -44,6 +45,7 @@ export function getStoredUser(): AuthUser | null {
       user_id: auth.user_id,
       username: auth.username,
       display_name: auth.display_name,
+      is_admin: auth.is_admin === true,
     };
   } catch {
     return null;
@@ -89,12 +91,14 @@ export async function login(
     username: string;
     display_name: string;
     session_token: string;
+    is_admin?: boolean;
   };
 
   const user: AuthUser = {
     user_id: data.user_id,
     username: data.username,
     display_name: data.display_name,
+    is_admin: data.is_admin === true,
   };
 
   storeAuth(user, data.session_token);

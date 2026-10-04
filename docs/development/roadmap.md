@@ -40,6 +40,27 @@ administrator recovery when the user is already locked out with no saved code.
 See [Account recovery](../user-guide/account-recovery.md). Browser/client runtime
 acceptance remains pending; no email delivery service is assumed.
 
+## Phase 2: source ownership and universal access
+
+**Implemented:** personal named-source ownership, explicit administrator roles,
+sharing requests and administrator-approved universal connections; web sharing
+and per-account use controls. Metadata-only consumer cards; owner/administrator
+management checks for settings, credentials, OAuth, sync, schedules and audits.
+Changes to approved configuration/authorization withdraw shared approval.
+Named-source live reads, keyword/hybrid retrieval and SQL aggregation honor
+ownership, current approval and per-account selection. Legacy controls require
+administrator access; migration recovers proven creators and leaves unowned
+sources for administrator review. Existing indexes/checkpoints/vaults persist.
+See [Personal and universal sources](../user-guide/shared-sources.md).
+**Pending:** runtime validation of personal/shared Weather connections across
+accounts, including approval, withdrawal and per-account use selection.
+
+**Confirmed by user (2026-10-04):** new-account login succeeds after server
+extras were installed in the service environment. Account/backend chat-cache
+isolation and health probes using the configured API URL resolve the stale chat
+list and false backend-warning reports. Recovery and device-continuity acceptance
+remain open.
+
 ## Phase 2: dynamic source management
 
 1. **Implemented:** database-backed, named source instances;

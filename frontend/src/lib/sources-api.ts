@@ -36,6 +36,10 @@ export interface SourceAdapter {
 
 export type SourceConfig = Record<string, string | number | boolean>;
 export interface SourceInstance {
+  owner_id?: string;
+  sharing?: 'personal' | 'pending' | 'shared';
+  can_manage?: boolean;
+  use_enabled?: boolean;
   id: string;
   adapter_id: string;
   name: string;
@@ -68,7 +72,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 }
 
 export const listSourceAdapters = () => request<{ adapters: SourceAdapter[] }>('/adapters');
-export const listSourceInstances = () => request<{ sources: SourceInstance[] }>('');
+export const listSourceInstances = () => request<{ sources: SourceInstance[]; can_approve?: boolean }>('');
 export const testSourceConfiguration = (adapter_id: string, config: SourceConfig) =>
   request<{ ok: boolean; config: SourceConfig; documents?: number; sample_titles?: string[]; final_url?: string }>('/test', 'POST', { adapter_id, config });
 export const createSourceInstance = (adapter_id: string, name: string, config: SourceConfig) =>
@@ -159,3 +163,8 @@ export const disconnectSourceAccount = (source: SourceInstance) =>
 
 export const setSourceAccountPassword = (source: SourceInstance, username: string, password: string) =>
   request(`/${encodeURIComponent(source.id)}/connection/password`, 'PUT', { revision: source.revision, username, password });
+
+export const setSourceSharing = (source: SourceInstance, sharing: 'personal' | 'pending' | 'shared') =>
+  request<SourceInstance>(`/${encodeURIComponent(source.id)}/sharing`, 'PUT', { revision: source.revision, sharing });
+export const setSourcePreference = (id: string, enabled: boolean) =>
+  request<{ enabled: boolean }>(`/${encodeURIComponent(id)}/preference`, 'PUT', { enabled });

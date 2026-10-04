@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  createSourceInstance, listSourceAdapters, listSourceInstances, listSourceCredentials,
+  setSourceSharing, setSourcePreference, createSourceInstance, listSourceAdapters, listSourceInstances, listSourceCredentials,
   removeSourceInstance, syncSourceInstance, testSourceConfiguration, updateSourceInstance,
 } from '../../lib/sources-api';
 import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } from '../../lib/sources-api';
@@ -68,6 +68,7 @@ export function SourceManagerPanel() {
   const [credentials, setCredentials] = useState<SourceCredential[]>([]);
   const [adapters, setAdapters] = useState<SourceAdapter[]>([]);
   const [sources, setSources] = useState<SourceInstance[]>([]);
+  const [canApprove, setCanApprove] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState<SourceInstance | null | undefined>(undefined);
   const [adapterId, setAdapterId] = useState('');
@@ -86,6 +87,7 @@ export function SourceManagerPanel() {
     setCredentials(protectedValues.credentials);
     setAdapters(definitions.adapters);
     setSources(connections.sources);
+    setCanApprove(connections.can_approve === true);
     setLoaded(true);
   }, []);
 
@@ -138,7 +140,7 @@ export function SourceManagerPanel() {
       <button type="button" disabled={busy || !loaded || !adapters.length} onClick={() => openEditor(null)}>Add source</button>
     </div>
     <p style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
-      Manage named connections, each with its own settings and indexed documents.
+      Personal connections belong to your account. Approved universal sources are available to everyone; choose which connections Jarvis may use for you.
     </p>
     {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
@@ -150,11 +152,15 @@ export function SourceManagerPanel() {
         {source.enabled ? 'Enabled' : 'Disabled'} · {(source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') ? (source.state === 'queued' ? 'Queued…' : 'Syncing…') : `${source.chunks ?? 0} indexed chunks`}
         {source.checkpoint?.last_sync && ` · Last sync ${new Date(source.checkpoint.last_sync).toLocaleString()}`}
       </div>
-      {adapters.find((item) => item.adapter_id === source.adapter_id)?.connection_auth && <SourceAccountConnection source={source} authType={adapters.find((item) => item.adapter_id === source.adapter_id)!.connection_auth!} refresh={refresh} />}
-      <SourceSyncControls source={source} refresh={refresh} />
-      <SourceEvolutionControls source={source} refresh={refresh} />
+      {source.can_manage !== false && adapters.find((item) => item.adapter_id === source.adapter_id)?.connection_auth && <SourceAccountConnection source={source} authType={adapters.find((item) => item.adapter_id === source.adapter_id)!.connection_auth!} refresh={refresh} />}
+      {source.can_manage !== false && <SourceSyncControls source={source} refresh={refresh} />}
+      {source.can_manage !== false && <SourceEvolutionControls source={source} refresh={refresh} />}
       {source.error && <p role="alert">{source.error}</p>}
-      <div className="flex flex-wrap gap-3">
+      <p>{source.sharing === 'shared' ? 'Universal · approved' : source.sharing === 'pending' ? 'Personal · sharing awaiting approval' : 'Personal'}</p>
+      <label><input type="checkbox" checked={source.use_enabled !== false} disabled={busy} onChange={(event) => void perform(() => setSourcePreference(source.id, event.target.checked), 'Your source selection was saved.')} /> Use this source for my account</label>
+      {source.can_manage !== false && <div className="flex flex-wrap gap-3">
+        {source.sharing !== 'shared' && <button disabled={busy} onClick={() => void perform(() => setSourceSharing(source, canApprove ? 'shared' : 'pending'), canApprove ? 'Universal source approved.' : 'Sharing requested; administrator approval required.')}>{canApprove ? 'Approve for everyone' : 'Request universal access'}</button>}
+        {source.sharing !== 'personal' && <button disabled={busy} onClick={() => void perform(() => setSourceSharing(source, 'personal'), 'Universal access withdrawn.')}>Make personal</button>}
         <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || !source.enabled || (!!source.configuration_state && source.configuration_state !== 'current')} onClick={() => void perform(() => syncSourceInstance(source.id), 'Sync started.')}>Sync</button>
         <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || (!!source.configuration_state && source.configuration_state !== 'current')} onClick={() => openEditor(source)}>Edit</button>
         <button disabled={busy || (source.state === 'syncing' || source.state === 'queued' || source.latest_job?.state === 'running') || (!source.enabled && !!source.configuration_state && source.configuration_state !== 'current')} onClick={() => void perform(() => updateSourceInstance({ ...source, enabled: !source.enabled }), 'Source updated.')}>{source.enabled ? 'Disable' : 'Enable'}</button>
@@ -163,10 +169,10 @@ export function SourceManagerPanel() {
             void perform(() => removeSourceInstance(source), 'Source and its indexed documents removed.');
           }
         }}>Remove</button>
-      </div>
+      </div>}
     </article>)}
-    <LegacySourceImportsPanel refresh={refresh} />
-    <SourceAuditHistory />
+    {canApprove && <LegacySourceImportsPanel refresh={refresh} />}
+    {canApprove && <SourceAuditHistory />}
     <CredentialManagerPanel credentials={credentials} refresh={refresh} />
     {editing !== undefined && adapter && <form className="flex flex-col gap-3" onSubmit={(event) => { event.preventDefault(); void save(); }}>
       <fieldset disabled={busy} className="flex flex-col gap-3">

@@ -167,13 +167,20 @@ class KnowledgeSQLTool(BaseTool):
             "'" + tier.replace("'", "''") + "'"
             for tier in sorted(RECALLABLE_TRUST_TIERS)
         )
+        from openjarvis.connectors.source_access import source_visibility_sql
+
+        visibility, ids = source_visibility_sql()
+        for identity in ids:
+            visibility = visibility.replace(
+                "?", "'" + identity.replace("'", "''") + "'", 1
+            )
         conn.execute(
             "CREATE TEMP VIEW knowledge_chunks AS "
             "SELECT * FROM main.knowledge_chunks "
             "WHERE deleted_at IS NULL "
             "AND json_valid(metadata) "
             "AND COALESCE(json_extract(metadata, '$.trust'), '') "
-            f"IN ({trust_literals})"
+            f"IN ({trust_literals}) AND {visibility}"
         )
         conn.execute("PRAGMA query_only=ON")
 
@@ -239,9 +246,7 @@ class KnowledgeSQLTool(BaseTool):
                 success=False,
             )
 
-        valid, query, error = self._validate_query(
-            str(params.get("query", "") or "")
-        )
+        valid, query, error = self._validate_query(str(params.get("query", "") or ""))
         if not valid:
             return ToolResult(
                 tool_name="knowledge_sql",
@@ -292,9 +297,9 @@ class KnowledgeSQLTool(BaseTool):
         output = "\n".join(lines)
 
         derivation_material = query + "\n" + repr(snapshot) + "\n" + output
-        derivation_id = hashlib.sha256(
-            derivation_material.encode("utf-8")
-        ).hexdigest()[:24]
+        derivation_id = hashlib.sha256(derivation_material.encode("utf-8")).hexdigest()[
+            :24
+        ]
 
         return ToolResult(
             tool_name="knowledge_sql",

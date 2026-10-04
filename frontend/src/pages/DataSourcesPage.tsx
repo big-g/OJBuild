@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { SOURCE_CATALOG } from '../types/connectors';
+import { getStoredUser } from '../lib/auth';
 import { SourceManagerPanel } from '../components/setup/SourceManagerPanel';
 import type { ConnectRequest, ConnectorMeta, SyncStatus, OAuthSetupInfo } from '../types/connectors';
 import { listConnectors, connectSource, disconnectSourceUntilComplete, getConnector, getSyncStatus, triggerSync, startServerOAuth } from '../lib/connectors-api';
@@ -2368,7 +2369,7 @@ export function DataSourcesPage() {
       </div>
 
       <div>
-        {activeTab === 'sources' && <><SourceManagerPanel /><DataSourcesSection /></>}
+        {activeTab === 'sources' && <><SourceManagerPanel />{getStoredUser()?.is_admin && <DataSourcesSection />}</>}
         {activeTab === 'messaging' && (
           firstAgent ? (
             <MessagingSection agentId={firstAgent.id} />

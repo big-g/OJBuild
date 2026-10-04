@@ -226,3 +226,16 @@ def recovery_code(username: str) -> None:
     click.echo(
         "Use Forgot username or password on the login screen. Keep this code private."
     )
+
+
+@auth.command("set-admin")
+@click.option("--username", prompt=True, help="Existing login username.")
+@click.option("--revoke", is_flag=True, help="Remove administrator privileges.")
+def set_admin(username: str, revoke: bool) -> None:
+    """Designate a source-sharing administrator using local server access."""
+    store = AuthStore()
+    user = store.get_user_by_username(username.strip())
+    if user is None:
+        raise click.ClickException("Account not found.")
+    store.set_admin(str(user["user_id"]), not revoke)
+    click.echo("Administrator privileges " + ("removed." if revoke else "granted."))

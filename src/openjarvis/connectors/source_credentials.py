@@ -68,7 +68,7 @@ class CredentialStore:
         with self._lock("schema", exclusive=True, blocking=True):
             with self._connection() as conn:
                 version = conn.execute("PRAGMA user_version").fetchone()[0]
-                if version > 2:
+                if version > 3:
                     raise ValueError("Unsupported credential database version")
                 conn.execute("""CREATE TABLE IF NOT EXISTS credentials (
                     id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL,
@@ -81,7 +81,15 @@ class CredentialStore:
                     id TEXT PRIMARY KEY, sealed BLOB NOT NULL,
                     revision INTEGER NOT NULL
                 )""")
-                conn.execute("PRAGMA user_version=2")
+                columns = {
+                    row[1] for row in conn.execute("PRAGMA table_info(credentials)")
+                }
+                if "owner_id" not in columns:
+                    conn.execute(
+                        "ALTER TABLE credentials ADD COLUMN owner_id TEXT NOT NULL "
+                        "DEFAULT ''"
+                    )
+                conn.execute("PRAGMA user_version=3")
 
     @contextmanager
     def _connection(self):
@@ -176,10 +184,29 @@ class CredentialStore:
             | {"secret": secret}
         ).encode()
 
-    def create(self, name: str, kind: str, origin: str, secret: str, header_name=""):
-        return self._create(name, kind, origin, secret, header_name, str(uuid.uuid4()))
+    def create(
+        self,
+        name: str,
+        kind: str,
+        origin: str,
+        secret: str,
+        header_name="",
+        *,
+        owner_id="",
+    ):
+        return self._create(
+            name,
+            kind,
+            origin,
+            secret,
+            header_name,
+            str(uuid.uuid4()),
+            owner_id=owner_id,
+        )
 
-    def _create(self, name, kind, origin, secret, header_name, identity):
+    def _create(
+        self, name, kind, origin, secret, header_name, identity, *, owner_id=""
+    ):
         secret = _secret(secret)
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
             raise ValueError("Credential name must contain 1–120 characters")
@@ -211,7 +238,9 @@ class CredentialStore:
         cipher = self._cipher()
         with self._connection() as conn:
             conn.execute(
-                "INSERT INTO credentials VALUES (?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO credentials (id,name,kind,origin,header_name,sea"
+                "led,revision,created_at,updated_at,owner_id) VALUES "
+                "(?,?,?,?,?,?,?,?,?,?)",
                 (
                     row["id"],
                     row["name"],
@@ -222,6 +251,7 @@ class CredentialStore:
                     1,
                     now,
                     now,
+                    owner_id,
                 ),
             )
         return self._public(row)

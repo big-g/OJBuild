@@ -22,6 +22,7 @@ def test_list_users_excludes_password_hashes_and_tokens(tmp_path, monkeypatch):
             "username": "gary",
             "display_name": "Gary",
             "disabled": 0,
+            "is_admin": 0,
         }
     ]
     assert "password" not in result.output
@@ -69,3 +70,18 @@ def test_empty_store_and_unknown_reset_do_not_create_accounts(tmp_path, monkeypa
     result = runner.invoke(auth, ["reset-password", "--username", "missing"])
     assert result.exit_code != 0
     assert store.list_users() == []
+
+
+def test_administrator_designation_is_explicit_and_revocable(tmp_path, monkeypatch):
+    store = AuthStore(tmp_path / "auth.db")
+    store.create_user("owner", "gary", "password")
+    monkeypatch.setattr("openjarvis.cli.auth_cmd.AuthStore", lambda: store)
+    runner = CliRunner()
+    assert store.get_user("owner")["is_admin"] == 0
+    assert runner.invoke(auth, ["set-admin", "--username", "gary"]).exit_code == 0
+    assert store.get_user("owner")["is_admin"] == 1
+    assert (
+        runner.invoke(auth, ["set-admin", "--username", "gary", "--revoke"]).exit_code
+        == 0
+    )
+    assert store.get_user("owner")["is_admin"] == 0

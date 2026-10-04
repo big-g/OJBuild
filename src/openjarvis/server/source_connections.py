@@ -50,7 +50,10 @@ def install_source_connections(router, manager, invoke):
         record = manager.store.get(identity)
         with manager.store.connection() as conn:
             conn.execute(
-                "UPDATE sources SET revision=revision+1,updated_at=? WHERE id=?",
+                "UPDATE sources SET "
+                "revision=revision+1,updated_at=?,sharing=CASE WHEN "
+                "sharing='shared' THEN 'pending' ELSE sharing "
+                "END,approved_by='' WHERE id=?",
                 (datetime.now(timezone.utc).isoformat(), identity),
             )
             record["revision"] += 1
@@ -75,6 +78,22 @@ def install_source_connections(router, manager, invoke):
         return call
 
     class Context:
+        def authorize_actor(self, identity, actor, request):
+            if actor is None:
+                return  # A ticket issued through privileged server-key access.
+            from openjarvis.connectors.source_access import SourceAccess
+            from openjarvis.server.auth import get_auth_store
+
+            user = get_auth_store(request).get_user(actor)
+            if (
+                user is None
+                or user["disabled"]
+                or not SourceAccess(
+                    manager.store, actor, bool(user["is_admin"])
+                ).manages(manager.store.get(identity))
+            ):
+                raise HTTPException(403, "Source authorization permission changed")
+
         def directory(self):
             return directory
 

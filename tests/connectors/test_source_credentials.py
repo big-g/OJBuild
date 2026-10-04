@@ -231,7 +231,10 @@ def test_unknown_reference_rejected_and_api_key_binding(manager, monkeypatch):
     with pytest.raises(ValueError):
         source(manager, "00000000-0000-0000-0000-000000000001")
     record = credential(manager, kind="api_key", header_name="X-Api-Key")
-    source(manager, record["id"])
+    configured = source(manager, record["id"])
+    manager.store.set_sharing(
+        configured["id"], configured["revision"], "shared", actor="user:admin"
+    )
 
     def fetch(*args, **kwargs):
         assert kwargs["authentication"]["headers"] == {"X-Api-Key": SECRET}

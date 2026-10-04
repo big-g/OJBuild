@@ -16,9 +16,14 @@ from openjarvis.connectors.store import KnowledgeStore
 
 
 @pytest.fixture
-def manager(tmp_path):
+def manager(tmp_path, monkeypatch):
     store = SourceStore(
         str(tmp_path / "sources.db"), legacy_path=str(tmp_path / "legacy.json")
+    )
+    # Index-lifecycle tests exercise administrative retrieval over their test DB.
+    monkeypatch.setattr(
+        "openjarvis.connectors.source_access.allowed_source_ids",
+        lambda: {row["id"] for row in store.list()},
     )
     return SourceManager(store, knowledge_path=str(tmp_path / "knowledge.db"))
 

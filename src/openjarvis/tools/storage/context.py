@@ -58,7 +58,26 @@ def trusted_results(
     results: Sequence[RetrievalResult],
 ) -> List[RetrievalResult]:
     """Return only retrieved documents safe for model-facing recall."""
-    return [result for result in results if result_trusted_for_recall(result)]
+    trusted = [result for result in results if result_trusted_for_recall(result)]
+    if any(
+        isinstance(result.metadata, Mapping)
+        and result.metadata.get("source_instance_id")
+        for result in trusted
+    ):
+        from openjarvis.connectors.source_access import allowed_source_ids
+
+        allowed = allowed_source_ids()
+        trusted = [
+            result
+            for result in trusted
+            if not isinstance(result.metadata, Mapping)
+            or not result.metadata.get("source_instance_id")
+            or (
+                isinstance(result.metadata["source_instance_id"], str)
+                and result.metadata["source_instance_id"] in allowed
+            )
+        ]
+    return trusted
 
 
 # Backward-compatible private aliases for existing internal callers.

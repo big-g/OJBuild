@@ -585,11 +585,16 @@ class SourceManager:
 
     def collect(self, adapter_id: str, *, since=None) -> Iterator[Document]:
         """Tool-side reads preserve adapter capability checks in the caller."""
+        from openjarvis.connectors.source_access import execution_access
+
+        policy = execution_access(self.store)
         for record in self.store.list():
-            if record["adapter_id"] != adapter_id or not record["enabled"]:
+            if record["adapter_id"] != adapter_id or not policy.consumes(record):
                 continue
             with self._locked(record["id"]):
                 current = self.store.get(record["id"])
+                if not policy.consumes(current):
+                    continue
                 with self._reading(current) as connector:
                     for doc in connector.sync():
                         if since is None or doc.timestamp.replace(
@@ -606,8 +611,11 @@ class ManagedSourcesReader:
         self.adapter_id = adapter_id
 
     def is_connected(self) -> bool:
+        from openjarvis.connectors.source_access import execution_access
+
         return any(
-            record["adapter_id"] == self.adapter_id and record["enabled"]
+            record["adapter_id"] == self.adapter_id
+            and execution_access(self.manager.store).consumes(record)
             for record in self.manager.store.list()
         )
 

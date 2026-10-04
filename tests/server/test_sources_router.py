@@ -339,11 +339,17 @@ def test_schedule_history_and_cancel_routes_require_api_authentication(
         {"revision": 0, "enabled": True, "interval_seconds": True},
     ],
 )
-def test_schedule_request_validation_is_strict(client, payload):
+def test_schedule_request_validation_is_strict(client, payload, tmp_path):
+    source = client.post(
+        "/v1/sources",
+        json={
+            "adapter_id": "local_files",
+            "name": "Validation",
+            "config": {"path": str(tmp_path)},
+        },
+    ).json()
     assert (
-        client.put(
-            "/v1/sources/00000000-0000-0000-0000-000000000001/schedule", json=payload
-        ).status_code
+        client.put(f"/v1/sources/{source['id']}/schedule", json=payload).status_code
         == 422
     )
 

@@ -39,6 +39,7 @@ async def login(req: LoginRequest, request: Request):
         "user_id": str(user["user_id"]),
         "username": str(user["username"]),
         "display_name": str(user["display_name"]),
+        "is_admin": bool(user["is_admin"]),
         "session_token": token,
     }
 
@@ -67,6 +68,7 @@ async def me(request: Request):
         "user_id": str(user["user_id"]),
         "username": str(user["username"]),
         "display_name": str(user["display_name"]),
+        "is_admin": bool(user["is_admin"]),
     }
 
 
