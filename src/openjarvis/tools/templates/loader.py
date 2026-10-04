@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ast
+import hashlib
 import json
 import logging
 import operator
 import shlex
 import subprocess
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -179,6 +181,8 @@ class ToolTemplate(BaseTool):
         capability_registry: Any = None,
         source_id: str = "",
     ) -> None:
+        # Own the definition: caller mutations must not change an approved tool.
+        template_data = deepcopy(template_data)
         self._data = template_data
         self.tool_id = template_data.get("name", "template")
         self._name = template_data.get("name", "template")
@@ -215,10 +219,24 @@ class ToolTemplate(BaseTool):
         return ToolSpec(
             name=self._name,
             description=self._description,
-            parameters=self._parameters,
+            parameters=deepcopy(self._parameters),
             category="template",
             required_capabilities=required_capabilities,
-            metadata={"template": True},
+            metadata={
+                "template": True,
+                # Recompute for every spec, including executor checks. Changes to
+                # executable behavior require fresh validation and approval even
+                # when the name, source path and parameter schema stay the same.
+                "action_sha256": hashlib.sha256(
+                    json.dumps(
+                        self._action,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                        ensure_ascii=False,
+                        allow_nan=False,
+                    ).encode("utf-8")
+                ).hexdigest(),
+            },
         )
 
     def execute(self, **params: Any) -> ToolResult:

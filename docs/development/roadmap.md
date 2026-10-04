@@ -61,6 +61,21 @@ isolation and health probes using the configured API URL resolve the stale chat
 list and false backend-warning reports. Recovery and device-continuity acceptance
 remain open.
 
+## Phase 2: runtime tool approval integrity
+
+**Implemented:** template approval fingerprints include a canonical digest of the
+executable action. Editing a command, expression or transformation at the same
+source path withdraws approval on rediscovery; live definition changes are blocked
+by the existing ToolExecutor management gate. Loaded definitions and returned
+parameter schemas are detached from caller-owned dictionaries. Unchanged reloads
+preserve approval. Existing managed templates require one fresh approval after
+this fingerprint upgrade. Regression coverage includes file reloads, all three
+action types, live mutation and approved execution.
+
+**Pending:** persistent runtime tool installation and web approval/configuration
+controls, including restart and client acceptance. This closes an approval-binding
+gap; it does not complete the runtime tool addition objective.
+
 ## Phase 2: dynamic source management
 
 1. **Implemented:** database-backed, named source instances;
