@@ -446,6 +446,7 @@ def test_cancelled_websocket_restores_ambient_identity():
         observed = []
 
         class Socket:
+            url = SimpleNamespace(path="/v1/chat/stream")
             app = SimpleNamespace(state=SimpleNamespace(api_key="", model="test"))
             headers = {}
             query_params = {}

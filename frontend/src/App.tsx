@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Routes, Route } from 'react-router';
+import { Routes, Route, Navigate } from 'react-router';
 import { Layout } from './components/Layout';
 import { ChatPage } from './pages/ChatPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -269,9 +269,9 @@ useEffect(() => {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="get-started" element={<GetStartedPage />} />
           <Route path="data-sources" element={<DataSourcesPage />} />
-          <Route path="agents" element={<AgentsPage />} />
-          <Route path="logs" element={<LogsPage />} />
-          <Route path="tools" element={<ToolsPage />} />
+          <Route path="agents" element={authUser.is_admin ? <AgentsPage /> : <Navigate to="/settings" replace />} />
+          <Route path="logs" element={authUser.is_admin ? <LogsPage /> : <Navigate to="/settings" replace />} />
+          <Route path="tools" element={authUser.is_admin ? <ToolsPage /> : <Navigate to="/settings" replace />} />
           <Route path="files" element={<FilesPage />} />
         </Route>
       </Routes>

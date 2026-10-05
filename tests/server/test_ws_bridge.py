@@ -11,10 +11,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from openjarvis.core.events import EventBus, EventType
+from openjarvis.server.auth_store import AuthStore
+from tests.server.helpers import authenticated_client
 
 try:
     from fastapi import FastAPI
-    from fastapi.testclient import TestClient
 
     HAS_FASTAPI = True
 except ImportError:
@@ -35,12 +36,14 @@ def app(event_bus):
     app = FastAPI()
     router = create_ws_router(event_bus)
     app.include_router(router)
+    app.state.auth_store = AuthStore()
     return app
 
 
 class TestWSBridge:
     def test_websocket_receives_events(self, app, event_bus):
-        client = TestClient(app)
+        app.state.auth_store = getattr(app.state, "auth_store", None) or AuthStore()
+        client = authenticated_client(app, admin=True)
         with client.websocket_connect("/v1/agents/events") as ws:
             event_bus.publish(
                 EventType.AGENT_TICK_START,
@@ -55,7 +58,8 @@ class TestWSBridge:
             assert data["data"]["agent_id"] == "test-123"
 
     def test_websocket_filters_by_agent_id(self, app, event_bus):
-        client = TestClient(app)
+        app.state.auth_store = getattr(app.state, "auth_store", None) or AuthStore()
+        client = authenticated_client(app, admin=True)
         with client.websocket_connect("/v1/agents/events?agent_id=agent-A") as ws:
             # This event should NOT be received (different agent)
             event_bus.publish(EventType.AGENT_TICK_START, {"agent_id": "agent-B"})
@@ -81,7 +85,11 @@ class TestWSBridge:
                     return {"type": "websocket.disconnect"}
 
             endpoint = create_ws_router(event_bus).routes[0].endpoint
-            await asyncio.wait_for(endpoint(FakeWebSocket()), timeout=1)
+            with patch(
+                "openjarvis.server.auth_middleware.authenticate_websocket",
+                return_value=(True, None, "admin"),
+            ):
+                await asyncio.wait_for(endpoint(FakeWebSocket()), timeout=1)
 
         asyncio.run(exercise())
 
@@ -118,7 +126,11 @@ class TestWSBridge:
             websocket = FakeWebSocket()
             endpoint = create_ws_router(event_bus).routes[0].endpoint
 
-            await asyncio.wait_for(endpoint(websocket), timeout=1)
+            with patch(
+                "openjarvis.server.auth_middleware.authenticate_websocket",
+                return_value=(True, None, "admin"),
+            ):
+                await asyncio.wait_for(endpoint(websocket), timeout=1)
 
             assert websocket.sent[0]["data"]["agent_id"] == "not-dropped"
 
@@ -148,7 +160,15 @@ class TestWSBridge:
 
             websocket = FakeWebSocket()
             endpoint = create_ws_router(event_bus).routes[0].endpoint
-            handler = asyncio.create_task(endpoint(websocket))
+
+            async def authorized_endpoint():
+                with patch(
+                    "openjarvis.server.auth_middleware.authenticate_websocket",
+                    return_value=(True, None, "admin"),
+                ):
+                    await endpoint(websocket)
+
+            handler = asyncio.create_task(authorized_endpoint())
             await websocket.receiving.wait()
 
             handler.cancel()
@@ -181,7 +201,8 @@ class TestIncludeAllRoutesBusWiring:
         app.state.bus = real_bus
         include_all_routes(app)
 
-        client = TestClient(app)
+        app.state.auth_store = getattr(app.state, "auth_store", None) or AuthStore()
+        client = authenticated_client(app, admin=True)
         with client.websocket_connect("/v1/agents/events") as ws:
             real_bus.publish(EventType.AGENT_TICK_START, {"agent_id": "test-123"})
             time.sleep(0.05)
@@ -232,7 +253,8 @@ class TestIncludeAllRoutesBusWiring:
             executor._bus.publish(EventType.AGENT_TICK_START, {"agent_id": agent_id})
             executed.set()
 
-        client = TestClient(app)
+        app.state.auth_store = getattr(app.state, "auth_store", None) or AuthStore()
+        client = authenticated_client(app, admin=True)
         with (
             patch.object(AgentExecutor, "execute_tick", publish_tick),
             patch(
@@ -257,7 +279,9 @@ def test_event_stream_preserves_emitter_correlation(app, event_bus):
     from openjarvis.core.correlation import ExecutionIdentity, execution_scope
 
     identity = ExecutionIdentity(user_id="emitter")
-    with TestClient(app).websocket_connect("/v1/agents/events") as ws:
+    with authenticated_client(app, admin=True).websocket_connect(
+        "/v1/agents/events"
+    ) as ws:
         with execution_scope(identity):
             event_bus.publish(
                 EventType.AGENT_TICK_START, {"correlation": {"trace_id": "forged"}}

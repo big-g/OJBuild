@@ -53,6 +53,19 @@ the Phase 3 text-to-3D model pipeline. Live Ubuntu/browser/desktop/Android accep
 content scanning, retention policies, larger-file streaming and additional inert
 preview formats remain follow-ups.
 
+## Phase 2: account roles and system administration
+
+**Implemented:** explicit User/Administrator creation roles in the local CLI and
+admin-only Settings account management. User is the default; upgrades preserve
+existing roles. The backend requires a live human administrator for shared system
+management, including keyless installations and shared agent event streams.
+API keys and client-side role flags do not grant administrator authority. Role
+changes revoke affected login sessions; web administration prevents self-removal
+or self-demotion and checks actor authority again inside write transactions.
+Personal projects, chats, files and named sources retain their ownership checks.
+See [Account roles](../user-guide/account-roles.md) for administrator bootstrap and
+permissions. Live Ubuntu/browser acceptance remains required.
+
 ## Phase 2: account recovery
 
 **Implemented:** login-screen username retrieval/password reset using a high-entropy
@@ -341,7 +354,8 @@ user or browser session from the initiating request.
 **Implemented:** `scripts/check_session_continuity.py` provides a live service
 acceptance workflow for HTTP → WebSocket → reconnect, saved history, matching
 trace IDs, missing-session rejection and logout revocation. It uses a disposable
-login, retains one labeled test conversation for device checks, and reports
+administrator login for trace inspection, retains one labeled test conversation
+for device checks, and reports
 failures without printing credentials or answer text. The workflow itself is
 covered by offline integration tests; this is not evidence of a live-server pass.
 See [Phase 2 acceptance](phase-2-acceptance.md) for the server command and device

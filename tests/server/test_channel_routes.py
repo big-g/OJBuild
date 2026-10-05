@@ -64,17 +64,17 @@ def app_without_bridge(mock_engine):
 @pytest.fixture
 def client_with_bridge(app_with_bridge):
     """Test client with channel bridge."""
-    from starlette.testclient import TestClient
+    from tests.server.helpers import authenticated_client
 
-    return TestClient(app_with_bridge)
+    return authenticated_client(app_with_bridge, admin=True)
 
 
 @pytest.fixture
 def client_without_bridge(app_without_bridge):
     """Test client without channel bridge."""
-    from starlette.testclient import TestClient
+    from tests.server.helpers import authenticated_client
 
-    return TestClient(app_without_bridge)
+    return authenticated_client(app_without_bridge, admin=True)
 
 
 class TestListChannels:

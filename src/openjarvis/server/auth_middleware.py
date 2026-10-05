@@ -33,8 +33,9 @@ def _api_keys_match(presented: str, expected: str) -> bool:
 class AuthMiddleware(BaseHTTPMiddleware):
     """Validates ``Authorization: Bearer <key>`` on ``/v1/*`` and ``/api/*`` routes.
 
-    Webhook routes and health checks are exempt — they use
-    per-channel signature verification instead.
+    System management additionally requires a current human administrator,
+    including keyless installations. Webhooks use per-channel signature checks;
+    health checks are exempt.
     """
 
     def __init__(self, app, api_key: str = "") -> None:  # noqa: ANN001
@@ -46,6 +47,22 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # them here means they never reach CORSMiddleware to get
         # Access-Control-Allow-* headers.
         if self._is_cors_preflight(request):
+            return await call_next(request)
+
+        from openjarvis.server.role_policy import requires_admin
+
+        if requires_admin(request.url.path, request.method):
+            from fastapi import HTTPException
+
+            from openjarvis.server.auth import authenticate_admin_request
+
+            try:
+                authenticate_admin_request(request)
+            except HTTPException as exc:
+                return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+            from openjarvis.core.correlation import bind_verified_identity
+
+            bind_verified_identity(user_id=request.state.auth_user_id)
             return await call_next(request)
 
         if (
@@ -294,7 +311,10 @@ def authenticate_websocket(
         and _api_keys_match(credential_protocol, expected_key_protocol)
     )
 
-    if header_valid or protocol_key_valid:
+    from openjarvis.server.role_policy import requires_admin
+
+    admin_required = requires_admin(websocket.url.path, "GET")
+    if (header_valid or protocol_key_valid) and not admin_required:
         return True, selected_protocol, None
 
     # Browser session-token authentication.
@@ -320,7 +340,7 @@ def authenticate_websocket(
                     websocket.app.state.auth_store = store
 
                 user = store.get_user_for_token(session_token)
-                if user is not None:
+                if user is not None and (not admin_required or user["is_admin"]):
                     user_id = str(user["user_id"])
                     websocket.state.auth_user_id = user_id
                     websocket.state.auth_user = user
@@ -336,7 +356,7 @@ def authenticate_websocket(
             websocket.app.state.auth_store = store
 
         user = store.get_user_for_token(session_header)
-        if user is not None:
+        if user is not None and (not admin_required or user["is_admin"]):
             user_id = str(user["user_id"])
             websocket.state.auth_user_id = user_id
             websocket.state.auth_user = user
@@ -346,7 +366,7 @@ def authenticate_websocket(
             return True, selected_protocol, user_id
 
     # Preserve keyless/local behavior.
-    if not expected_key:
+    if not expected_key and not admin_required:
         return True, selected_protocol, None
 
     return False, selected_protocol, None
@@ -359,10 +379,10 @@ def websocket_authorized(websocket, expected_key: str) -> bool:  # noqa: ANN001
     upgrade requests, so streaming endpoints must check the token themselves
     in the handshake before calling ``websocket.accept()``.
 
-    When *expected_key* is empty, authentication is disabled (the loopback /
-    local-only default, matching :class:`AuthMiddleware`) and all connections
-    are allowed. See :func:`authenticate_websocket` for the supported
-    credential transports. URL query parameters are deliberately not accepted
+    An empty key permits legacy keyless chat transport. Shared administrative
+    event streams always require a current human administrator session.
+    See :func:`authenticate_websocket` for supported credential transports.
+    URL query parameters are deliberately not accepted
     because request targets commonly appear in access logs and browser history.
     """
     return authenticate_websocket(websocket, expected_key)[0]

@@ -1,3 +1,5 @@
+import { AccountManagementPanel } from '../components/AccountManagementPanel';
+import { getStoredUser } from '../lib/auth';
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel';
 import { useState, useEffect, useCallback } from 'react';
 import {
@@ -235,6 +237,7 @@ const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
 ];
 
 export function SettingsPage() {
+  const isAdmin = getStoredUser()?.is_admin === true;
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const conversations = useAppStore((s) => s.conversations);
@@ -315,7 +318,7 @@ export function SettingsPage() {
     fetchSpeechHealth()
       .then((h) => setSpeechBackendAvailable(h.available))
       .catch(() => setSpeechBackendAvailable(false));
-    getMemoryStats()
+    if (isAdmin) getMemoryStats()
       .then(setMemoryStats)
       .catch(() => setMemoryStats(null));
   }, []);
@@ -394,6 +397,7 @@ export function SettingsPage() {
           </p>
         </header>
         <AccountSecurityPanel />
+        <AccountManagementPanel />
 
         <div className="flex flex-col gap-4">
           {/* Appearance */}
@@ -482,6 +486,7 @@ export function SettingsPage() {
             </SettingRow>
           </Section>
 
+          {isAdmin && <>
           {/* Inference source */}
           <Section title="Inference source">
             <SettingRow label="Source" description="Where the app runs models. Applies after restart.">
@@ -575,9 +580,10 @@ export function SettingsPage() {
             </SettingRow>
           </Section>
 
+          </>}
           {/* Memory */}
           <Section title="Memory">
-            <SettingRow label="Memory status" description={memoryStats ? `${memoryStats.backend} backend — ${memoryStats.entries} entries` : 'Unable to reach memory service'}>
+            <SettingRow label="Memory status" description={!isAdmin ? 'Shared memory statistics require administrator access' : memoryStats ? `${memoryStats.backend} backend — ${memoryStats.entries} entries` : 'Unable to reach memory service'}>
               <div className="flex items-center gap-2">
                 <Brain size={14} style={{ color: memoryStats ? 'var(--color-accent)' : 'var(--color-text-tertiary)' }} />
                 <span className="text-xs" style={{ color: 'var(--color-text-secondary)' }}>

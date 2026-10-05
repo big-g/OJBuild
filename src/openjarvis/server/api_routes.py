@@ -1491,9 +1491,24 @@ async def submit_feedback(req: FeedbackScoreRequest, request: Request):
         if not db_path.exists():
             raise HTTPException(status_code=404, detail="No trace database")
 
+        from openjarvis.server.auth import authenticate_request
+
+        actor = authenticate_request(request)
         store = TraceStore(db_path)
-        updated = store.update_feedback(req.trace_id, req.score)
-        store.close()
+        try:
+            trace = store.get(req.trace_id)
+            owner = (
+                (trace.metadata.get("correlation") or {}).get("user_id")
+                if trace
+                else None
+            )
+            if trace is None or (
+                owner != actor and not request.state.auth_user["is_admin"]
+            ):
+                raise HTTPException(status_code=404, detail="Trace not found")
+            updated = store.update_feedback(req.trace_id, req.score)
+        finally:
+            store.close()
 
         if not updated:
             raise HTTPException(

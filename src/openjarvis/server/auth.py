@@ -6,7 +6,6 @@ from fastapi import HTTPException, Request
 
 from openjarvis.server.auth_store import AuthStore
 
-
 SESSION_HEADER = "X-OpenJarvis-Session"
 
 
@@ -63,3 +62,11 @@ def get_authenticated_user_id(request: Request) -> str:
         return authenticate_request(request)
 
     return str(user_id)
+
+
+def authenticate_admin_request(request: Request) -> str:
+    """Require a live human administrator; API keys and cached roles do not grant it."""
+    user_id = authenticate_request(request)
+    if not request.state.auth_user["is_admin"]:
+        raise HTTPException(403, "Administrator account required")
+    return user_id

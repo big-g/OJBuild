@@ -226,16 +226,22 @@ def create_app(
     from openjarvis.tools.runtime_manager import RuntimeToolManager
 
     runtime_tools = RuntimeToolManager(
-        getattr(getattr(config, "security", None), "runtime_tools_db_path",
-                SecurityConfig().runtime_tools_db_path)
+        getattr(
+            getattr(config, "security", None),
+            "runtime_tools_db_path",
+            SecurityConfig().runtime_tools_db_path,
+        )
     )
     from openjarvis.artifacts.store import ArtifactStore
     from openjarvis.server.artifacts_router import create_artifacts_router
 
     try:
         artifact_store = ArtifactStore(
-            getattr(getattr(config, "security", None), "generated_files_dir",
-                    SecurityConfig().generated_files_dir)
+            getattr(
+                getattr(config, "security", None),
+                "generated_files_dir",
+                SecurityConfig().generated_files_dir,
+            )
         )
     except NotImplementedError:
         artifact_store = None
@@ -468,6 +474,9 @@ def create_app(
     app.include_router(research_router)
     app.include_router(analytics_router)
     app.include_router(auth_router)
+    from openjarvis.server.account_admin_router import router as account_admin_router
+
+    app.include_router(account_admin_router)
     include_all_routes(app)
 
     # Restore SendBlue channel bindings from database on startup
@@ -484,15 +493,11 @@ def create_app(
         logger.debug("Security middleware init skipped: %s", exc)
 
     # API key authentication middleware
+    # Human role enforcement is mandatory even on keyless installations.
+    from openjarvis.server.auth_middleware import AuthMiddleware
     from openjarvis.server.correlation import CORRELATION_HEADERS, CorrelationMiddleware
 
-    if api_key:
-        try:
-            from openjarvis.server.auth_middleware import AuthMiddleware
-
-            app.add_middleware(AuthMiddleware, api_key=api_key)
-        except Exception as exc:
-            logger.debug("Auth middleware init skipped: %s", exc)
+    app.add_middleware(AuthMiddleware, api_key=api_key)
 
     app.add_middleware(CorrelationMiddleware)
 

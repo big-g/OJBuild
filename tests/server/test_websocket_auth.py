@@ -18,7 +18,7 @@ from fastapi import FastAPI  # noqa: E402
 from starlette.testclient import TestClient  # noqa: E402
 from starlette.websockets import WebSocketDisconnect  # noqa: E402
 
-from openjarvis.core.events import EventBus, EventType  # noqa: E402
+from openjarvis.core.events import EventBus  # noqa: E402
 from openjarvis.server.api_routes import include_all_routes  # noqa: E402
 from openjarvis.server.auth_middleware import websocket_authorized  # noqa: E402
 from openjarvis.server.ws_bridge import create_ws_router  # noqa: E402
@@ -36,6 +36,7 @@ def _ws(query=None, headers=None, subprotocols=None):
     stub = MagicMock()
     stub.query_params = query or {}
     stub.headers = headers or {}
+    stub.url.path = "/v1/chat/stream"
     stub.scope = {"subprotocols": subprotocols or []}
     return stub
 
@@ -193,29 +194,18 @@ class TestAgentEventsAuth:
             with client.websocket_connect("/v1/agents/events?token=secret") as ws:
                 ws.receive_text()
 
-    def test_accepted_with_correct_token(self):
-        bus = EventBus()
-        app = FastAPI()
-        api_key = "secret+/="
-        app.state.api_key = api_key
-        app.include_router(create_ws_router(bus))
-        client = TestClient(app)
-        with client.websocket_connect(
-            "/v1/agents/events", subprotocols=_auth_subprotocols(api_key)
-        ) as ws:
-            assert ws.accepted_subprotocol == AUTH_PROTOCOL
-            bus.publish(EventType.AGENT_TICK_START, {"agent_id": "a"})
-            assert ws.receive_json()["data"]["agent_id"] == "a"
+    def test_master_key_subprotocol_does_not_grant_administrator(self):
+        client = TestClient(self._app(api_key="secret"))
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                "/v1/agents/events", subprotocols=_auth_subprotocols("secret")
+            ):
+                pytest.fail("Master key alone accepted")
 
-    def test_accepted_with_authorization_header(self):
-        bus = EventBus()
-        app = FastAPI()
-        app.state.api_key = "secret"
-        app.include_router(create_ws_router(bus))
-        client = TestClient(app)
-        with client.websocket_connect(
-            "/v1/agents/events", headers={"Authorization": "Bearer secret"}
-        ) as ws:
-            assert ws.accepted_subprotocol is None
-            bus.publish(EventType.AGENT_TICK_START, {"agent_id": "a"})
-            assert ws.receive_json()["data"]["agent_id"] == "a"
+    def test_master_key_header_does_not_grant_administrator(self):
+        client = TestClient(self._app(api_key="secret"))
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(
+                "/v1/agents/events", headers={"Authorization": "Bearer secret"}
+            ):
+                pytest.fail("Master key alone accepted")

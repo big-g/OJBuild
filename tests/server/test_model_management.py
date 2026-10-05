@@ -57,20 +57,20 @@ def _app(engine, engine_name="mock"):
 class TestModelPull:
     def test_pull_requires_model_field(self):
         engine = _make_ollama_engine()
-        client = TestClient(_app(engine, engine_name="ollama"))
+        client = authenticated_client(_app(engine, engine_name="ollama"), admin=True)
         resp = client.post("/v1/models/pull", json={})
         assert resp.status_code == 400
         assert "model" in resp.json()["detail"].lower()
 
     def test_pull_rejects_non_ollama_engine(self):
         engine = _make_engine(engine_id="vllm")
-        client = TestClient(_app(engine, engine_name="vllm"))
+        client = authenticated_client(_app(engine, engine_name="vllm"), admin=True)
         resp = client.post("/v1/models/pull", json={"model": "foo"})
         assert resp.status_code == 501
 
     def test_pull_success(self):
         engine = _make_ollama_engine()
-        client = TestClient(_app(engine, engine_name="ollama"))
+        client = authenticated_client(_app(engine, engine_name="ollama"), admin=True)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -93,7 +93,7 @@ class TestModelPull:
 
     def test_pull_ollama_unreachable(self):
         engine = _make_ollama_engine()
-        client = TestClient(_app(engine, engine_name="ollama"))
+        client = authenticated_client(_app(engine, engine_name="ollama"), admin=True)
 
         import httpx
 
@@ -114,13 +114,13 @@ class TestModelPull:
 class TestModelDelete:
     def test_delete_rejects_non_ollama(self):
         engine = _make_engine(engine_id="vllm")
-        client = TestClient(_app(engine, engine_name="vllm"))
+        client = authenticated_client(_app(engine, engine_name="vllm"), admin=True)
         resp = client.delete("/v1/models/test-model")
         assert resp.status_code == 501
 
     def test_delete_success(self):
         engine = _make_ollama_engine()
-        client = TestClient(_app(engine, engine_name="ollama"))
+        client = authenticated_client(_app(engine, engine_name="ollama"), admin=True)
 
         mock_resp = MagicMock()
         mock_resp.status_code = 200
@@ -206,9 +206,8 @@ class TestStreamingResilience:
 
         assert tokens == ["Hello", " ", "world"]
 
-    def test_stream_without_agent_uses_direct_engine(self):
-        """When no tools in request, streaming should use engine.stream directly
-        even if an agent is configured (for real token-by-token output)."""
+    def test_configured_agent_remains_active_without_requested_tools(self):
+        """An authenticated request retains the configured agent response."""
         from openjarvis.agents._stubs import AgentResult
 
         engine = _make_engine()
@@ -234,7 +233,7 @@ class TestStreamingResilience:
         )
         assert resp.status_code == 200
 
-        # Should get engine tokens, not agent response
+        # The configured agent remains authoritative for this conversation.
         tokens = []
         for line in resp.text.strip().split("\n"):
             if line.startswith("data:") and "[DONE]" not in line:
@@ -243,9 +242,8 @@ class TestStreamingResilience:
                 if content:
                     tokens.append(content)
 
-        assert "".join(tokens) == "Hello world"
-        # Agent.run should NOT have been called
-        agent.run.assert_not_called()
+        assert "".join(tokens) == "agent response"
+        agent.run.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

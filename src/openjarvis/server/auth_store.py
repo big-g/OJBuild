@@ -97,6 +97,46 @@ class AuthStore:
             ).rowcount:
                 raise ValueError("Account not found")
 
+    @staticmethod
+    def _require_admin(conn, actor_id):
+        actor = conn.execute(
+            "SELECT is_admin, disabled FROM users WHERE user_id=?", (actor_id,)
+        ).fetchone()
+        if actor is None or actor["disabled"] or not actor["is_admin"]:
+            raise PermissionError("Administrator account required")
+
+    @staticmethod
+    def _protect_admin(conn, actor_id, target_id):
+        if actor_id == target_id:
+            raise ValueError("You cannot remove or demote your own account")
+        target = conn.execute(
+            "SELECT is_admin, disabled FROM users WHERE user_id=?", (target_id,)
+        ).fetchone()
+        if target is None:
+            raise ValueError("Account not found")
+        if (
+            target["is_admin"]
+            and not target["disabled"]
+            and conn.execute(
+                "SELECT count(*) FROM users WHERE is_admin=1 AND disabled=0"
+            ).fetchone()[0]
+            <= 1
+        ):
+            raise ValueError("Cannot remove the last active administrator")
+
+    def change_role(self, actor_id: str, target_id: str, is_admin: bool) -> None:
+        if not isinstance(is_admin, bool):
+            raise ValueError("Administrator role must be boolean")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_admin(conn, actor_id)
+            self._protect_admin(conn, actor_id, target_id)
+            conn.execute(
+                "UPDATE users SET is_admin=?, updated_at=? WHERE user_id=?",
+                (is_admin, time.time(), target_id),
+            )
+            conn.execute("DELETE FROM auth_sessions WHERE user_id=?", (target_id,))
+
     # ------------------------------------------------------------------
     # Password hashing
     # ------------------------------------------------------------------
@@ -165,6 +205,9 @@ class AuthStore:
         username: str,
         password: str,
         display_name: str = "",
+        *,
+        is_admin: bool = False,
+        actor_id: str | None = None,
     ) -> None:
         """Create a new authenticated user."""
         if not user_id:
@@ -173,10 +216,15 @@ class AuthStore:
         if not username:
             raise ValueError("username cannot be empty")
 
+        if not isinstance(is_admin, bool):
+            raise ValueError("Administrator role must be boolean")
         now = time.time()
         password_hash = self.hash_password(password)
 
         with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            if actor_id is not None:
+                self._require_admin(conn, actor_id)
             conn.execute(
                 """
                 INSERT INTO users (
@@ -185,9 +233,10 @@ class AuthStore:
                     display_name,
                     password_hash,
                     created_at,
-                    updated_at
+                    updated_at,
+                    is_admin
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user_id,
@@ -196,16 +245,20 @@ class AuthStore:
                     password_hash,
                     now,
                     now,
+                    is_admin,
                 ),
             )
 
-    def delete_user(self, user_id: str) -> None:
+    def delete_user(self, user_id: str, *, actor_id: str | None = None) -> None:
         """Remove an account and its login/recovery credentials atomically.
 
         Historical application data remains under the original user ID.
         """
         with self._connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            if actor_id is not None:
+                self._require_admin(conn, actor_id)
+                self._protect_admin(conn, actor_id, user_id)
             if (
                 conn.execute(
                     "SELECT 1 FROM users WHERE user_id = ?", (user_id,)

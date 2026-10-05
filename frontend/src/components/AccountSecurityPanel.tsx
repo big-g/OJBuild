@@ -26,6 +26,7 @@ export function AccountSecurityPanel() {
   return <section className="mb-6 rounded-lg border p-4 space-y-3" aria-label="Account security">
     <h2 className="font-semibold">Account</h2>
     <p className="text-sm">Username: <strong>{user?.username || 'Sign in required'}</strong></p>
+    <p className="text-sm">Role: <strong>{user?.is_admin ? 'Administrator' : 'User'}</strong></p>
     <form className="space-y-3" onSubmit={(e: FormEvent) => { e.preventDefault(); void submit(true); }}>
       <label className="block text-sm">Current password<input className={inputClass} type="password" autoComplete="current-password" required maxLength={1024} value={current} onChange={e => setCurrent(e.target.value)} /></label>
       <label className="block text-sm">New password<input className={inputClass} type="password" autoComplete="new-password" required minLength={8} maxLength={1024} value={password} onChange={e => setPassword(e.target.value)} /></label>

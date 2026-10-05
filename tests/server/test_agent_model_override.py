@@ -55,7 +55,8 @@ class _FakeAgent:
 class _UnhashableNonWeakrefAgent:
     """A valid custom agent with neither hash nor weak-reference support."""
 
-    __slots__ = ("_model",)
+    # The shared-agent request contract now includes output budget and finish state.
+    __slots__ = ("_model", "_max_tokens", "_last_finish_reason")
     __hash__ = None
 
     def __init__(self, model: str) -> None:

@@ -18,7 +18,9 @@ uv run python scripts/check_session_continuity.py
 ```
 
 The script prompts for your OpenJarvis username/password and an existing project.
-Use the application's human login, not the shared API key. The password is entered
+Use an Administrator account because the workflow inspects shared traces.
+An API key alone does not grant trace access. See [Account roles](../user-guide/account-roles.md)
+if you need to designate your first administrator with local server access. The password is entered
 without echo and is not accepted as a command-line argument. The default server
 is `http://127.0.0.1:8000`; the default model is `qwen3.5:9b`. Override these with
 `--url` and `--model` if necessary. `--project-id` skips the project chooser.

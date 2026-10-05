@@ -217,6 +217,10 @@ def main():
                     "password": getpass.getpass("OpenJarvis password: "),
                 },
             ).json()
+            require(
+                login.get("is_admin") is True,
+                "Use an administrator account to inspect acceptance traces",
+            )
             token = login["session_token"]
             client.headers["X-OpenJarvis-Session"] = token
 

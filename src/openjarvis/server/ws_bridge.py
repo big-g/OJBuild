@@ -103,6 +103,10 @@ def create_ws_router(event_bus: EventBus) -> Any:
                         break
                     recv = asyncio.create_task(websocket.receive())
                 if payload in done:
+                    if not authenticate_websocket(websocket, expected_key)[0]:
+                        await websocket.close(code=1008)
+                        disconnected = True
+                        break
                     await websocket.send_json(payload.result())
                     payload = asyncio.create_task(queue.get())
         except WebSocketDisconnect:

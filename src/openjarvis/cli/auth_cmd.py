@@ -78,7 +78,14 @@ def revoke_key() -> None:
 @auth.command("create-user")
 @click.option("--username", prompt=True, help="Login username.")
 @click.option("--display-name", prompt=True, help="User's display name.")
-def create_user(username: str, display_name: str) -> None:
+@click.option(
+    "--role",
+    type=click.Choice(["user", "administrator"]),
+    default="user",
+    show_default=True,
+    help="Account role; administrator can change server settings.",
+)
+def create_user(username: str, display_name: str, role: str) -> None:
     """Create a local OpenJarvis user account."""
     username = username.strip()
     display_name = display_name.strip()
@@ -109,6 +116,7 @@ def create_user(username: str, display_name: str) -> None:
             username=username,
             display_name=display_name,
             password=password,
+            is_admin=(role == "administrator"),
         )
     except Exception as exc:
         raise click.ClickException(
@@ -128,6 +136,7 @@ def create_user(username: str, display_name: str) -> None:
     click.echo(f"User ID:      {user_id}")
     click.echo(f"Username:     {username}")
     click.echo(f"Display name: {display_name}")
+    click.echo(f"Role:         {role}")
 
 
 @auth.command("reset-password")
@@ -232,7 +241,7 @@ def recovery_code(username: str) -> None:
 @click.option("--username", prompt=True, help="Existing login username.")
 @click.option("--revoke", is_flag=True, help="Remove administrator privileges.")
 def set_admin(username: str, revoke: bool) -> None:
-    """Designate a source-sharing administrator using local server access."""
+    """Designate a system administrator using local server access."""
     store = AuthStore()
     user = store.get_user_by_username(username.strip())
     if user is None:

@@ -76,9 +76,11 @@ export function Sidebar() {
     { path: '/dashboard', icon: BarChart3, label: 'Dashboard' },
     { path: '/files', icon: Files, label: 'Files' },
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
-    ...(getStoredUser()?.is_admin ? [{ path: '/tools', icon: Wrench, label: 'Tools' }] : []),
-    { path: '/agents', icon: Bot, label: 'Agents' },
-    { path: '/logs', icon: ScrollText, label: 'Logs' },
+    ...(getStoredUser()?.is_admin ? [
+      { path: '/tools', icon: Wrench, label: 'Tools' },
+      { path: '/agents', icon: Bot, label: 'Agents' },
+      { path: '/logs', icon: ScrollText, label: 'Logs' },
+    ] : []),
     { path: '/settings', icon: Settings, label: 'Settings' },
     { path: '/get-started', icon: Rocket, label: 'Get Started' },
   ];

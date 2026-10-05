@@ -15,6 +15,8 @@ from tests.server.test_websocket_sessions import setup  # noqa: F401
 @pytest.mark.parametrize("tracing", [True, False])
 def test_acceptance_workflow_and_missing_trace_fail_closed(setup, tracing):  # noqa: F811
     app, engine, token, session_id = setup
+    # This acceptance workflow inspects global traces using an administrator.
+    app.state.auth_store.set_admin("owner", True)
     engine.stream = None
     project_id = app.state.session_store.get_session(session_id).project_id
     saved_trace_store = app.state.trace_store
