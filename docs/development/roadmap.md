@@ -104,9 +104,22 @@ Detached specs prevent caller mutation; failed discovery closes its connection.
 Annotations do not grant capabilities or factual evidence authority. This is
 discovery hardening, not a full JSON Schema validator or runtime MCP installer.
 
-**Pending:** additional installable tool adapters and package/MCP installation;
+**Implemented:** administrator web management of database-backed public HTTPS MCP
+connections: add/edit/remove, encrypted origin-bound bearer tokens, complete
+catalog discovery/review, revision-bound approval, enable/disable and retained
+audit history. Saving/discovery never authorize calls. Approved tools refresh in
+existing runtime chat/managed/scheduled paths; mandatory live database checks
+block stale instances, and changed remote catalogs block invocation and withdraw
+approval. Explicit local confirmation settings remain independent of server hints
+and capability grants. Pinned requests reject private DNS, redirects, credential
+reflection and implicit POST retries. Short-lived clients terminate sessions on
+close when possible. Offline regressions cover lifecycle, races, network guards
+and administrator/secret boundaries; live acceptance remains pending.
+
+**Pending:** LAN MCP connections through explicit endpoint approval, legacy MCP
+configuration import, further installable tool adapters and local package installation;
 live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
-and logout. The first adapter does not complete runtime tool addition acceptance.
+and logout. Implemented adapters do not complete runtime tool addition acceptance.
 
 ## Phase 2: dynamic source management
 

@@ -15,6 +15,12 @@ If a server is unreachable or returns an error, OpenJarvis logs a warning and co
 
 ## Configuration
 
+Administrators can now manage public HTTPS MCP connections dynamically from
+**Tools → MCP connections**, with encrypted tokens, catalog review and mandatory
+approval. See [Runtime tools](runtime-tools.md#web-managed-mcp-connections).
+The file-based configuration below remains the legacy path, including stdio
+servers; existing entries are not automatically imported into web management.
+
 External MCP servers are configured in `config.toml` under `[tools.mcp]`. The
 `servers` field accepts either inline JSON or a path to a JSON file:
 

@@ -444,6 +444,9 @@ def create_app(
     from openjarvis.server.runtime_tools_router import create_runtime_tools_router
 
     app.include_router(create_runtime_tools_router(runtime_tools))
+    from openjarvis.server.runtime_mcp_router import create_runtime_mcp_router
+
+    app.include_router(create_runtime_mcp_router(runtime_tools.mcp))
     app.include_router(create_digest_router())
     app.include_router(upload_router)
     app.include_router(research_router)

@@ -1,0 +1,132 @@
+import { useCallback, useEffect, useState } from 'react';
+import { connectionDefinition, mcpRequest, type MCPConnection, type MCPDefinition } from '../lib/runtime-mcp-api';
+import type { ToolAudit } from '../lib/runtime-tools-api';
+
+const empty: MCPDefinition = { name: '', url: '', allow_without_confirmation: false };
+const button = 'rounded-lg border px-3 py-2 text-sm cursor-pointer disabled:opacity-50';
+const field = 'w-full rounded-lg border px-3 py-2 text-sm';
+const style = { background: 'var(--color-bg-secondary)', color: 'var(--color-text)', borderColor: 'var(--color-border)' };
+
+export function MCPCatalogReview({ connection }: { connection: MCPConnection }) {
+  return <div className="space-y-3 text-sm">
+    <p>{connection.allow_without_confirmation
+      ? 'Approval allows calls without per-call confirmation, including chat and scheduled agents.'
+      : 'Each call requires interactive confirmation. Clients and schedules without a confirmation callback will block calls.'}</p>
+    <p>Required capability: tool:invoke. Server hints are untrusted and provide no factual evidence authority.</p>
+    <p className="text-xs break-all">Review fingerprint: {connection.fingerprint}</p>
+    <details><summary className="cursor-pointer">Review all {connection.tools.length} remote tool contracts</summary>
+      <div className="space-y-3 mt-3">{connection.tools.map(tool => <article key={tool.name} className="border rounded-lg p-3" style={{ borderColor: 'var(--color-border)' }}>
+        <p className="font-medium break-all">{tool.remote_name}</p>
+        <p className="break-all text-xs">Jarvis name: {tool.name}</p>
+        <p className="whitespace-pre-wrap">{tool.description}</p>
+        <p className="mt-2">Input schema</p>
+        <pre className="overflow-x-auto text-xs whitespace-pre-wrap">{JSON.stringify(tool.parameters, null, 2)}</pre>
+        <p className="mt-2">Untrusted server annotations</p>
+        <pre className="overflow-x-auto text-xs whitespace-pre-wrap">{JSON.stringify(tool.annotations, null, 2)}</pre>
+        <p className="text-xs break-all">Contract digest: {tool.contract_digest}</p>
+      </article>)}</div>
+    </details>
+  </div>;
+}
+
+export function MCPConnectionsPanel() {
+  const [connections, setConnections] = useState<MCPConnection[]>([]);
+  const [definition, setDefinition] = useState<MCPDefinition>({ ...empty });
+  const [editing, setEditing] = useState<MCPConnection | null>(null);
+  const [token, setToken] = useState('');
+  const [clearToken, setClearToken] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [audit, setAudit] = useState<{ name: string; events: ToolAudit[] } | null>(null);
+  const load = useCallback(async () => {
+    setConnections((await mcpRequest<{ connections: MCPConnection[] }>()).connections);
+  }, []);
+  useEffect(() => { void load().catch(e => setError(String(e.message || e))); }, [load]);
+  const reset = () => { setEditing(null); setDefinition({ ...empty }); setToken(''); setClearToken(false); };
+  const perform = async (action: () => Promise<unknown>, message: string) => {
+    setBusy(true); setError(''); setNotice('');
+    try { await action(); setNotice(message); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); await load().catch(() => {}); }
+    finally { setBusy(false); }
+  };
+  return <section className="space-y-5 pt-8 border-t" style={{ borderColor: 'var(--color-border)' }}>
+    <header><h2 className="text-lg font-semibold">MCP connections</h2>
+      <p className="text-sm mt-2">Save a public HTTPS connection, discover its tools, then review and approve the whole catalog.
+        Approved tools are shared across accounts. Saving and discovery do not authorize calls.</p></header>
+    {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
+    {notice && <p role="status">{notice}</p>}
+    <form className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }} onSubmit={e => {
+      e.preventDefault();
+      const saved = { ...definition, ...(token || clearToken ? { bearer_token: token } : {}) };
+      void perform(async () => {
+        if (editing) await mcpRequest(`/${editing.id}`, 'PUT', { revision: editing.revision, definition: saved });
+        else await mcpRequest('', 'POST', saved);
+        reset();
+      }, 'Connection saved and disabled. Discover and review the catalog before approving.');
+    }}>
+      <h3 className="font-medium">{editing ? `Edit ${editing.name}` : 'Add MCP connection'}</h3>
+      <label className="block text-sm">Connection name
+        <input className={field} style={style} required maxLength={24} pattern="[a-z][a-z0-9_]{0,23}"
+          value={definition.name} onChange={e => setDefinition({ ...definition, name: e.target.value })} /></label>
+      <label className="block text-sm">Public HTTPS endpoint
+        <input className={field} style={style} required type="url" maxLength={4096} placeholder="https://example.com/mcp"
+          value={definition.url} onChange={e => setDefinition({ ...definition, url: e.target.value })} /></label>
+      <p className="text-xs">Use a URL without query credentials. LAN endpoints and local package installation are not supported here yet.</p>
+      <label className="block text-sm">{editing ? 'Replace bearer token (blank keeps the current token)' : 'Bearer token (optional)'}
+        <input className={field} style={style} type="password" autoComplete="off" maxLength={8192}
+          value={token} onChange={e => { setToken(e.target.value); setClearToken(false); }} /></label>
+      {editing?.has_token && <label className="flex gap-2 text-sm"><input type="checkbox" checked={clearToken}
+        onChange={e => { setClearToken(e.target.checked); setToken(''); }} />Remove saved token</label>}
+      <p className="text-xs">Tokens are encrypted on the server and never returned to this form. Changing the endpoint clears a retained token.</p>
+      <label className="flex gap-2 text-sm"><input type="checkbox" checked={definition.allow_without_confirmation}
+        onChange={e => setDefinition({ ...definition, allow_without_confirmation: e.target.checked })} />
+        Allow approved tool calls without per-call confirmation</label>
+      <p className="text-xs">Enable this only after reviewing tools for automated use. Editing any setting withdraws approval.</p>
+      <div className="flex gap-2"><button className={button} disabled={busy} type="submit">Save connection</button>
+        {editing && <button className={button} disabled={busy} type="button" onClick={reset}>Cancel edit</button>}</div>
+    </form>
+    {!connections.length && <p className="text-sm">No MCP connections saved.</p>}
+    {connections.map(connection => <article key={connection.id} className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }}>
+      <div className="flex flex-wrap justify-between gap-2"><h3 className="font-medium">{connection.name}</h3>
+        <span className="text-sm">{connection.validation_error ? 'Needs repair' : connection.approved
+          ? connection.enabled ? 'Approved · enabled' : 'Approved · disabled' : connection.discovered ? 'Catalog awaiting approval' : 'Needs discovery'}</span></div>
+      <p className="text-sm break-all">{connection.url}</p>
+      <p className="text-xs">Revision {connection.revision} · {connection.has_token ? 'Encrypted token saved' : 'No bearer token'}</p>
+      {connection.validation_error && <p role="alert">{connection.validation_error}</p>}
+      <MCPCatalogReview connection={connection} />
+      <div className="flex flex-wrap gap-2">
+        <button className={button} disabled={busy} onClick={() => void perform(
+          () => mcpRequest(`/${connection.id}/discover`, 'POST', { revision: connection.revision }),
+          'Catalog refreshed. Changed catalogs withdraw approval.',
+        )}>Discover / refresh</button>
+        {!connection.approved && <button className={button} disabled={busy || !connection.discovered || !connection.tools.length || !!connection.validation_error} onClick={() => {
+          if (!window.confirm(`Approve all ${connection.tools.length} tools from ${connection.name}? Review their contracts and confirmation setting first.`)) return;
+          void perform(() => mcpRequest(`/${connection.id}/approve`, 'POST', { revision: connection.revision }), 'Catalog approved and enabled.');
+        }}>Approve catalog &amp; enable</button>}
+        {connection.approved && <button className={button} disabled={busy} onClick={() => void perform(
+          () => mcpRequest(`/${connection.id}/enabled`, 'PUT', { revision: connection.revision, enabled: !connection.enabled }),
+          connection.enabled ? 'Connection disabled.' : 'Connection enabled.',
+        )}>{connection.enabled ? 'Disable' : 'Enable'}</button>}
+        <button className={button} disabled={busy} onClick={() => {
+          setEditing(connection); setDefinition(connectionDefinition(connection)); setToken(''); setClearToken(false);
+        }}>Edit</button>
+        <button className={button} disabled={busy} onClick={() => void perform(async () => {
+          setAudit({ name: connection.name, events: (await mcpRequest<{ events: ToolAudit[] }>(`/${connection.id}/audit`)).events });
+        }, '')}>Audit history</button>
+        <button className={button} disabled={busy} onClick={() => {
+          if (!window.confirm(`Remove ${connection.name} and its encrypted token? Audit history will remain.`)) return;
+          void perform(async () => {
+            await mcpRequest(`/${connection.id}`, 'DELETE', { revision: connection.revision });
+            if (editing?.id === connection.id) reset();
+          }, 'Connection removed.');
+        }}>Remove</button>
+      </div>
+    </article>)}
+    {audit && <section className="rounded-xl border p-5" style={{ borderColor: 'var(--color-border)' }}>
+      <h3 className="font-medium">Audit history · {audit.name}</h3>
+      <ul className="text-sm space-y-2">{audit.events.map(event => <li key={event.seq}>
+        {new Date(event.timestamp * 1000).toLocaleString()} · {event.event} · Revision {event.revision} · {event.actor}
+      </li>)}</ul></section>}
+  </section>;
+}

@@ -121,6 +121,11 @@ class RuntimeRegistry(ToolManagementRegistry):
 class RuntimeToolManager:
     def __init__(self, db_path):
         self.store = RuntimeToolStore(db_path)
+        from openjarvis.mcp.runtime_manager import RuntimeMCPManager
+
+        self.mcp = RuntimeMCPManager(
+            self.store.path.with_name(f"{self.store.path.stem}_mcp.db")
+        )
         self.registry = RuntimeRegistry(self)
         self.capabilities = create_builtin_capability_registry()
 
@@ -225,7 +230,7 @@ class RuntimeToolManager:
                     tools.append(RuntimeTransformTool(row, self))
             except (ValueError, TypeError, KeyError, OverflowError):
                 continue
-        return tools
+        return tools + self.mcp.available()
 
     @contextmanager
     def bind_agent(self, agent):

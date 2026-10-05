@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { getStoredUser } from '../lib/auth';
 import { editableDefinition, runtimeRequest, type RuntimeAdapter, type RuntimeDefinition, type RuntimeTool, type ToolAudit } from '../lib/runtime-tools-api';
 import { RuntimeConfigurationFields, RuntimeConfigurationSummary } from '../components/RuntimeConfigurationFields';
+import { MCPConnectionsPanel } from '../components/MCPConnectionsPanel';
 
 const empty: RuntimeDefinition = { name: 'custom_', description: '', adapter_id: 'text_transform', config: { transform: 'upper' } };
 const fieldClass = 'w-full rounded-lg px-3 py-2 text-sm border';
@@ -139,6 +140,7 @@ export function ToolsPage() {
           {new Date(event.timestamp * 1000).toLocaleString()} · {event.event} · Revision {event.revision} · {event.actor}
         </li>)}</ul>
       </section>}
+      <MCPConnectionsPanel />
     </div>
   </div>;
 }

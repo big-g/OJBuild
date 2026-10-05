@@ -38,6 +38,8 @@ def validate_definition(definition: dict) -> dict:
     ):
         raise ValueError("Tool names must start with custom_ and use lowercase letters")
     description = definition["description"]
+    if name.startswith("custom_mcp_"):
+        raise ValueError("The custom_mcp_ prefix is reserved for managed MCP tools")
     if (
         not isinstance(description, str)
         or not description.strip()

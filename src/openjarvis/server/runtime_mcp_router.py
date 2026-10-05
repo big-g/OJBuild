@@ -1,0 +1,139 @@
+"""Administrator configuration never implies remote tool approval."""
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.routing import APIRoute
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, StrictInt
+
+from openjarvis.server.auth import authenticate_request
+from openjarvis.tools.runtime_store import RuntimeToolConflict
+
+
+class Connection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,23}$")
+    url: str = Field(min_length=1, max_length=4096)
+    bearer_token: SecretStr | None = None
+    allow_without_confirmation: StrictBool = False
+
+
+class Revision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: StrictInt = Field(ge=1)
+
+
+class Edit(Revision):
+    definition: Connection
+
+
+class Enabled(Revision):
+    enabled: StrictBool
+
+
+class SecretSafeRoute(APIRoute):
+    def get_route_handler(self):
+        handler = super().get_route_handler()
+
+        async def safe(request):
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                raise HTTPException(422, "Invalid MCP connection request") from None
+
+        return safe
+
+
+def create_runtime_mcp_router(manager):
+    def admin(request: Request):
+        authenticate_request(request)
+        if not request.state.auth_user["is_admin"]:
+            raise HTTPException(403, "Administrator account required")
+        return f"user:{request.state.auth_user_id}"
+
+    router = APIRouter(
+        prefix="/v1/runtime-mcp",
+        tags=["Runtime MCP"],
+        dependencies=[Depends(admin)],
+        route_class=SecretSafeRoute,
+    )
+
+    def config(body):
+        return {
+            "name": body.name,
+            "url": body.url,
+            "allow_without_confirmation": body.allow_without_confirmation,
+        }
+
+    def token(body):
+        return (
+            body.bearer_token.get_secret_value()
+            if body.bearer_token is not None
+            else None
+        )
+
+    def operation(fn):
+        try:
+            row = fn()
+            return manager.view(row) if row else {"deleted": True}
+        except KeyError:
+            raise HTTPException(404, "MCP connection not found") from None
+        except RuntimeToolConflict as exc:
+            raise HTTPException(409, str(exc)) from None
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @router.get("")
+    def list_connections():
+        return {"connections": [manager.view(row) for row in manager.store.list()]}
+
+    @router.post("", status_code=201)
+    def create(body: Connection, actor: str = Depends(admin)):
+        return operation(
+            lambda: manager.store.create(config(body), actor, token(body) or "")
+        )
+
+    @router.put("/{identity}")
+    def edit(identity: str, body: Edit, actor: str = Depends(admin)):
+        return operation(
+            lambda: manager.change(
+                identity,
+                body.revision,
+                "updated",
+                actor,
+                config=config(body.definition),
+                token=token(body.definition),
+            )
+        )
+
+    @router.post("/{identity}/discover")
+    def discover(identity: str, body: Revision, actor: str = Depends(admin)):
+        return operation(lambda: manager.discover(identity, body.revision, actor))
+
+    @router.post("/{identity}/approve")
+    def approve(identity: str, body: Revision, actor: str = Depends(admin)):
+        return operation(
+            lambda: manager.change(identity, body.revision, "approved", actor)
+        )
+
+    @router.put("/{identity}/enabled")
+    def enabled(identity: str, body: Enabled, actor: str = Depends(admin)):
+        return operation(
+            lambda: manager.change(
+                identity,
+                body.revision,
+                "enabled" if body.enabled else "disabled",
+                actor,
+            )
+        )
+
+    @router.delete("/{identity}")
+    def remove(identity: str, body: Revision, actor: str = Depends(admin)):
+        return operation(
+            lambda: manager.change(identity, body.revision, "deleted", actor)
+        )
+
+    @router.get("/{identity}/audit")
+    def audit(identity: str):
+        return {"events": manager.store.audit(identity)}
+
+    return router

@@ -94,8 +94,69 @@ approval; changed contracts withdraw it on rediscovery. Returned schemas and
 metadata are detached copies. Remote annotations remain untrusted: a read-only
 hint cannot grant privileges, bypass approval or establish factual evidence.
 This does not add automatic refresh or detect remote implementation changes
-that leave the advertised contract unchanged. Runtime MCP installation through
-the administrator web interface remains roadmap work.
+that leave the advertised contract unchanged. Web-managed connections additionally
+check their live catalog before every invocation, as described below.
+
+## Web-managed MCP connections
+
+An administrator can open **Tools → MCP connections**, save a connection, select
+**Discover / refresh**, review every tool's name, description, input schema,
+untrusted annotations and contract digest, then **Approve catalog & enable**.
+Approval covers the entire saved catalog. Saving and discovery never call a remote
+tool or authorize its execution. Approved tools are available across accounts
+without restarting Jarvis. Managed agents select the displayed Jarvis tool name;
+aliases include the connection name, a readable remote-name fragment and a digest.
+The `custom_mcp_` prefix is reserved for these tools.
+
+The first managed transport supports public HTTPS endpoints on standard ports,
+without query strings or URL credentials. Optional bearer tokens are encrypted in
+the server vault and never returned through management APIs or prefilled in forms.
+Leaving the token field blank while editing keeps it; explicitly removing it clears
+it. Changing the endpoint clears a retained token. Supplying a replacement token
+binds it to the new endpoint. Every edit disables the connection and withdraws its
+catalog approval. Missing/wrong encryption keys block unlocking and token replacement;
+restore the original key backup, or explicitly remove the connection to start over.
+
+**Allow approved tool calls without per-call confirmation** defaults off. Leave it
+off for interactive CLI use with a confirmation callback. Browser chat and schedules
+currently have no such callback and will block those calls. Enable the option only
+when reviewing a connection for automated use. Approval, confirmation and capability
+authorization are separate: tools require `tool:invoke`, remain external/tainted,
+and still pass existing boundary, capability, confirmation, tracing and executor
+checks. A server's read-only hint cannot change these permissions. MCP success
+does not establish factual evidence; these tools declare no factual evidence kinds.
+
+Before calling a tool, Jarvis opens a short-lived client, negotiates a supported
+handshake protocol (2025-03-26, 2025-06-18 or 2025-11-25), verifies the complete live
+catalog matches the approved snapshot, then checks current database approval again.
+A changed catalog blocks invocation and withdraws approval; discover and review it
+again. Unchanged refresh preserves approval. Disable and remove block previously
+resolved instances, including in another server process. Already dispatched remote
+work is not undone. Remote implementation changes with identical advertised
+contracts cannot be detected by this check.
+
+Each request resolves and pins public DNS addresses with TLS verification. Redirects
+and ambient proxies are not used, and tool POSTs are never retried automatically.
+Responses are limited to 2 MiB; outbound JSON requests to 64 KiB. An operation shares
+a 60-second I/O deadline across initialization, catalog scan and call, with existing
+source socket limits; DNS lookup time is outside the socket deadline. Four concurrent
+connection operations per manager are admitted, and at most 24 connections can be
+saved. Clients close after each operation and attempt bounded session termination
+when the server supplies a session ID. Failed or malformed results propagate as
+tool failures. Configured bearer-token reflections are rejected rather than stored
+in catalogs or returned in tool results. Text content is exposed; richer MCP content
+and provider-specific factual evidence validation remain follow-ups.
+
+The MCP database is beside the configured runtime tool database: the default is
+`~/.openjarvis/runtime_tools_mcp.db`, with its encryption key in
+`runtime_tools_mcp.key`. A custom `example.db` runtime tool path uses the sibling
+`example_mcp.db`/`example_mcp.key`. Back up both the database and key; the key is
+essential to restore tokens. Audit records contain actor, action, revision and time,
+remain after removal, and show the latest 100 events per connection.
+
+Legacy MCP configuration remains supported separately and is not automatically
+imported or approved. LAN endpoint approval, local package installation, legacy
+imports and the newer handshake-free protocol are subsequent roadmap work.
 
 ## Ubuntu and client acceptance
 
@@ -114,3 +175,13 @@ result, edit the formula and confirm it stays unavailable until reapproved.
 Restart the service and verify both the original text tool and the formula still
 honor their current approvals. Failed formulas must surface a tool error rather
 than provide fabricated results.
+
+For MCP acceptance, use a public HTTPS MCP endpoint you operate or trust. Verify
+saving makes no request, discovery makes no tool call, and unapproved catalogs
+cannot execute. Review and approve it with the desired confirmation setting, then
+use its displayed tool name from chat and a configured managed agent. Disable it
+and verify a previously selected tool is blocked. Rotate the token or change the
+endpoint and confirm fresh discovery/approval is required. Change a remote tool's
+schema/annotations and confirm Jarvis blocks the call before dispatch and withdraws
+approval. Restart and repeat from browser, Tauri and Android. Provider/device
+acceptance remains pending; offline fake-server regressions are not live acceptance.
