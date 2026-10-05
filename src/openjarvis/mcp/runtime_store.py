@@ -32,7 +32,11 @@ def definition(value):
         r"[a-z][a-z0-9_]{0,23}",
         value["name"],
     ):
-        raise ValueError("Connection name must use 1–24 lowercase letters/digits")
+        raise ValueError(
+            "Connection name must be 1–24 characters: start with a lowercase "
+            "letter, then use lowercase letters, digits or underscores. "
+            "Example: home_tools."
+        )
     automatic = value.get("allow_without_confirmation", False)
     if not isinstance(automatic, bool):
         raise ValueError("Execution confirmation setting must be boolean")

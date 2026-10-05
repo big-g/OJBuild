@@ -14,6 +14,16 @@ ToolSpec/ToolExecutor, capability governance, provenance, and evidence hard gate
 Use explicit migrations and independent identities for configuration, sync state,
 and indexed data. Extensibility must retain bounded execution and observable errors.
 
+## Design requirement: understandable configuration
+
+Configuration forms must provide visible format/range hints and realistic examples
+next to constrained fields, with accessible associations to their inputs. Explain
+unfamiliar terms and multi-step setup in expandable help available within the app.
+Validation failures must explain how to correct the input without echoing secrets.
+MCP connection setup now supplies naming rules/examples, actionable name errors
+and an in-app guide covering endpoints, tokens, LAN trust and catalog approval.
+Apply this standard as other configuration forms are added or revised.
+
 ## Project phases
 
 | Phase | Status | Scope |

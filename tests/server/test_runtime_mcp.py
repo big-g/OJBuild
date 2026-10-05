@@ -126,3 +126,38 @@ def test_invalid_requests_do_not_echo_tokens(setup, changes, status):
     assert response.status_code == status, response.text
     assert "TEST-SECRET" not in response.text
     assert not manager.store.list() and not remote["clients"]
+
+
+@pytest.mark.parametrize("name", ["Home Tools", "home-tools", "2home", "a" * 25, ""])
+def test_invalid_name_returns_actionable_secret_safe_guidance(setup, name):
+    client, manager, headers, _, remote = setup
+    response = client.post(
+        "/v1/runtime-mcp",
+        headers=headers["admin"],
+        json=body(name=name, bearer_token="TEST-SECRET"),
+    )
+    assert response.status_code == 422
+    assert "lowercase letter" in response.json()["detail"]
+    assert "underscores" in response.json()["detail"]
+    assert "home_tools" in response.json()["detail"]
+    assert "TEST-SECRET" not in response.text
+    assert not manager.store.list() and not remote["clients"]
+
+
+def test_edit_name_error_has_same_guidance_and_keeps_saved_connection(setup):
+    client, manager, headers, _, _ = setup
+    response = client.post("/v1/runtime-mcp", headers=headers["admin"], json=body())
+    saved = response.json()
+    response = client.put(
+        f"/v1/runtime-mcp/{saved['id']}",
+        headers=headers["admin"],
+        json={
+            "revision": saved["revision"],
+            "definition": body(name="Invalid Name", bearer_token="TEST-SECRET"),
+        },
+    )
+    assert response.status_code == 422
+    assert (
+        "home_tools" in response.json()["detail"] and "TEST-SECRET" not in response.text
+    )
+    assert manager.store.get(saved["id"])["revision"] == saved["revision"]

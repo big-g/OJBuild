@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useId } from 'react';
 import { connectionDefinition, mcpRequest, type MCPConnection, type MCPDefinition } from '../lib/runtime-mcp-api';
 import { importLegacyMCP, reviewLegacyMCP, type LegacyMCPEntry } from '../lib/runtime-mcp-api';
 import type { ToolAudit } from '../lib/runtime-tools-api';
@@ -48,6 +48,7 @@ export function LegacyMCPReview({ entries, busy, onImport }: {
 }
 
 export function MCPConnectionsPanel() {
+  const nameHelpId = useId();
   const [connections, setConnections] = useState<MCPConnection[]>([]);
   const [legacy, setLegacy] = useState<LegacyMCPEntry[] | null>(null);
   const [definition, setDefinition] = useState<MCPDefinition>({ ...empty });
@@ -72,7 +73,13 @@ export function MCPConnectionsPanel() {
   return <section className="space-y-5 pt-8 border-t" style={{ borderColor: 'var(--color-border)' }}>
     <header><h2 className="text-lg font-semibold">MCP connections</h2>
       <p className="text-sm mt-2">Save a public or explicitly authorized LAN HTTPS connection, discover its tools, then review and approve the whole catalog.
-        Approved tools are shared across accounts. Saving and discovery do not authorize calls.</p></header>
+        Approved tools are shared across accounts. Saving and discovery do not authorize calls.</p>
+      <details className="mt-3 text-sm space-y-2"><summary className="cursor-pointer">What is MCP? Connection setup help</summary>
+        <p>MCP (Model Context Protocol) lets Jarvis use tools provided by another service. Ask the service provider for its MCP HTTPS endpoint and, if required, an access token.</p>
+        <ol className="list-decimal pl-5 space-y-1"><li>Choose a short connection name, such as <code>home_tools</code>. This is your label for the connection, not the provider’s display name.</li><li>Paste the provider’s full HTTPS endpoint, such as <code>https://example.com/mcp</code>. A website homepage may not be an MCP endpoint.</li><li>Use Public HTTPS for an internet service. For a service on your home or office network, select Authorized private LAN and list its exact IP addresses.</li><li>Save, then select Discover / refresh to fetch the list of tools. Review what each tool can do and what information it accepts.</li><li>Select Approve catalog &amp; enable only when you trust the tools. Saving or discovering alone does not let Jarvis call them.</li></ol>
+        <p>A bearer token is a secret access key supplied by the provider. Paste it into the token field, not the URL. Leave it blank when the provider does not require one.</p>
+        <p>Certificate trust checks the service’s identity and encrypted connection. Start with System trust. Choose Private CA certificates only when your LAN service administrator supplies a PEM CA certificate; never paste a private key.</p>
+      </details></header>
     {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
     <form className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }} onSubmit={e => {
@@ -86,8 +93,11 @@ export function MCPConnectionsPanel() {
     }}>
       <h3 className="font-medium">{editing ? `Edit ${editing.name}` : 'Add MCP connection'}</h3>
       <label className="block text-sm">Connection name
-        <input className={field} style={style} required maxLength={24} pattern="[a-z][a-z0-9_]{0,23}"
-          value={definition.name} onChange={e => setDefinition({ ...definition, name: e.target.value })} /></label>
+        <input className={field} style={style} required maxLength={24} pattern="[a-z][a-z0-9_]{0,23}" placeholder="home_tools"
+          aria-describedby={nameHelpId} title="Use 1–24 characters: start with a lowercase letter, then use lowercase letters, digits or underscores."
+          onInvalid={e => e.currentTarget.setCustomValidity('Enter a connection name with 1–24 characters. Start with a lowercase letter; use only lowercase letters, digits or underscores. Example: home_tools.')}
+          value={definition.name} onChange={e => { e.currentTarget.setCustomValidity(''); setDefinition({ ...definition, name: e.target.value }); }} /></label>
+      <p id={nameHelpId} className="text-xs">Use 1–24 characters. Start with a lowercase letter (a–z); use only lowercase letters, digits (0–9) or underscores (_). No spaces, capital letters or hyphens. Examples: <code>home_tools</code>, <code>weather2</code>.</p>
       <label className="block text-sm">HTTPS endpoint
         <input className={field} style={style} required type="url" maxLength={4096} placeholder="https://example.com/mcp"
           value={definition.url} onChange={e => setDefinition({ ...definition, url: e.target.value })} /></label>
@@ -109,7 +119,7 @@ export function MCPConnectionsPanel() {
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={definition.allow_without_confirmation}
         onChange={e => setDefinition({ ...definition, allow_without_confirmation: e.target.checked })} />
         Allow approved tool calls without per-call confirmation</label>
-      <p className="text-xs">Enable this only after reviewing tools for automated use. Editing any setting withdraws approval.</p>
+      <p className="text-xs">Enable this only after reviewing tools for automated use. Browser chat and scheduled tasks need this option because they cannot ask for interactive confirmation. Leave it off for clients that can ask before each call. Editing any setting withdraws approval.</p>
       <div className="flex gap-2"><button className={button} disabled={busy} type="submit">Save connection</button>
         {editing && <button className={button} disabled={busy} type="button" onClick={reset}>Cancel edit</button>}</div>
     </form>

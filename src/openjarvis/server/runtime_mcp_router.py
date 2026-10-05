@@ -49,7 +49,20 @@ class SecretSafeRoute(APIRoute):
         async def safe(request):
             try:
                 return await handler(request)
-            except RequestValidationError:
+            except RequestValidationError as exc:
+                # Return fixed guidance only; validation inputs can contain secrets.
+                if any(
+                    error["type"] == "string_pattern_mismatch"
+                    and tuple(error["loc"])
+                    in {("body", "name"), ("body", "definition", "name")}
+                    for error in exc.errors()
+                ):
+                    raise HTTPException(
+                        422,
+                        "Connection name must be 1–24 characters: start with a "
+                        "lowercase letter and use only lowercase letters, digits "
+                        "or underscores. No spaces or hyphens. Example: home_tools.",
+                    ) from None
                 raise HTTPException(422, "Invalid MCP connection request") from None
 
         return safe

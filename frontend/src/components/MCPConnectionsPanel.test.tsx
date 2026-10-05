@@ -62,3 +62,26 @@ it('offers explicit LAN authorization while keeping public HTTPS as the default'
   expect(html).toContain('authorized addresses or certificate trust clears a retained token');
   expect(html).not.toContain('LAN endpoints and local package installation are not supported');
 });
+
+it('explains the connection name format before submission and associates help with the input', () => {
+  const html = renderToStaticMarkup(<MCPConnectionsPanel />);
+  expect(html).toContain('Use 1–24 characters. Start with a lowercase letter');
+  expect(html).toContain('No spaces, capital letters or hyphens');
+  expect(html).toContain('home_tools</code>');
+  expect(html).toContain('weather2</code>');
+  const description = html.match(/aria-describedby="([^"]+)"/);
+  expect(description).not.toBeNull();
+  expect(html).toContain(`id="${description![1]}"`);
+  expect(html).toContain('title="Use 1–24 characters');
+});
+
+it('provides setup help in the app for users unfamiliar with MCP and its approval steps', () => {
+  const html = renderToStaticMarkup(<MCPConnectionsPanel />);
+  expect(html).toContain('What is MCP? Connection setup help');
+  expect(html).toContain('Model Context Protocol');
+  expect(html).toContain('not the provider’s display name');
+  expect(html).toContain('homepage may not be an MCP endpoint');
+  expect(html).toContain('A bearer token is a secret access key');
+  expect(html).toContain('never paste a private key');
+  expect(html).toContain('Browser chat and scheduled tasks need this option');
+});
