@@ -934,6 +934,11 @@ def _handle_agent(
     )
     with _get_agent_model_lock(agent), runtime_context:
         original_model = agent._model
+        missing = object()
+        original_tokens = getattr(agent, "_max_tokens", missing)
+        original_finish = getattr(agent, "_last_finish_reason", missing)
+        agent._max_tokens = req.max_tokens
+        agent._last_finish_reason = "stop"
         if model:
             agent._model = model
         try:
@@ -954,8 +959,19 @@ def _handle_agent(
             else:
                 result = agent.run(input_text, context=ctx)
                 result = _finalize_result(result)
+            result.metadata.setdefault(
+                "finish_reason", getattr(agent, "_last_finish_reason", "stop")
+            )
         finally:
             agent._model = original_model
+            for attribute, original in (
+                ("_max_tokens", original_tokens),
+                ("_last_finish_reason", original_finish),
+            ):
+                if original is missing:
+                    delattr(agent, attribute)
+                else:
+                    setattr(agent, attribute, original)
 
     usage = UsageInfo(
         prompt_tokens=result.metadata.get("prompt_tokens", 0),
@@ -983,7 +999,7 @@ def _handle_agent(
                     content=result.content,
                     audio=audio_meta,
                 ),
-                finish_reason="stop",
+                finish_reason=result.metadata.get("finish_reason", "stop"),
             )
         ],
         usage=usage,
@@ -1084,7 +1100,10 @@ async def _handle_agent_stream(
             id=chunk_id,
             model=model,
             choices=[
-                StreamChoice(delta=DeltaMessage(), finish_reason="stop"),
+                StreamChoice(
+                    delta=DeltaMessage(),
+                    finish_reason=response.choices[0].finish_reason,
+                ),
             ],
         )
         finish_data = _json.loads(finish_chunk.model_dump_json())
@@ -1359,6 +1378,7 @@ async def _handle_stream(
     async def generate():
         started_at = time.time()
         full_content = ""
+        outcome = {"finish_reason": "stop"}
         # Start with the configured route, then correct it below if the
         # MultiEngine safety path deliberately bypasses that route.
         actual_telemetry_engine = telemetry_engine
@@ -1428,7 +1448,7 @@ async def _handle_stream(
             # is_cloud attribute.
             if use_cloud:
                 token_iter = stream_cloud(
-                    model, messages, req.temperature, req.max_tokens
+                    model, messages, req.temperature, req.max_tokens, outcome=outcome
                 )
             else:
                 # Use engine.stream() by default (preserves mock-engine
@@ -1450,15 +1470,31 @@ async def _handle_stream(
                 if _use_local_fallback:
                     actual_telemetry_engine = "ollama"
                     token_iter = stream_local(
-                        model, messages, req.temperature, req.max_tokens
+                        model, messages, req.temperature, req.max_tokens,
+                        outcome=outcome
                     )
                 else:
-                    token_iter = engine.stream(
-                        messages,
-                        model=model,
-                        temperature=req.temperature,
-                        max_tokens=req.max_tokens,
-                    )
+                    from openjarvis.engine._stubs import InferenceEngine
+
+                    async def full_tokens():
+                        async for sc in engine.stream_full(
+                            messages, model=model, temperature=req.temperature,
+                            max_tokens=req.max_tokens,
+                        ):
+                            if sc.finish_reason:
+                                outcome["finish_reason"] = sc.finish_reason
+                            if sc.content:
+                                yield sc.content
+
+                    if isinstance(engine, InferenceEngine):
+                        token_iter = full_tokens()
+                    else:
+                        token_iter = engine.stream(
+                            messages,
+                            model=model,
+                            temperature=req.temperature,
+                            max_tokens=req.max_tokens,
+                        )
             async for token in token_iter:
                 full_content += token
                 chunk = ChatCompletionChunk(
@@ -1539,7 +1575,7 @@ async def _handle_stream(
             choices=[
                 StreamChoice(
                     delta=DeltaMessage(),
-                    finish_reason="stop",
+                    finish_reason=outcome["finish_reason"],
                 )
             ],
         )

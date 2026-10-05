@@ -234,4 +234,5 @@ def test_chat_loads_new_tools_and_honors_revocation_without_restart(tmp_path, st
     result = client.post("/v1/chat/completions", headers=consumer, json=request)
     assert result.status_code == 200
     assert "HELLO" not in result.text
-    assert ("No tools enabled" if stream else "Unknown tool") in result.text
+    # The user-owned file tool remains available after custom-tool revocation.
+    assert "Unknown tool" in result.text

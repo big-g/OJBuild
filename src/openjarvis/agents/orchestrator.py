@@ -430,7 +430,16 @@ class OrchestratorAgent(ToolUsingAgent):
 
             # No tool calls -> check continuation, then final answer
             if not raw_tool_calls:
+                initial_prompt = usage.get("prompt_tokens", 0)
+                initial_completion = usage.get("completion_tokens", 0)
                 content = self._check_continuation(result, messages)
+                total_prompt_tokens += (
+                    result.get("usage", {}).get("prompt_tokens", 0) - initial_prompt
+                )
+                total_completion_tokens += (
+                    result.get("usage", {}).get("completion_tokens", 0)
+                    - initial_completion
+                )
                 content = self._strip_think_tags(content)
                 self._emit_turn_end(turns=turns, content_length=len(content))
                 return AgentResult(
@@ -438,6 +447,7 @@ class OrchestratorAgent(ToolUsingAgent):
                     tool_results=all_tool_results,
                     turns=turns,
                     metadata={
+                        "finish_reason": result.get("finish_reason", "stop"),
                         "prompt_tokens": total_prompt_tokens,
                         "completion_tokens": total_completion_tokens,
                         "total_tokens": total_prompt_tokens + total_completion_tokens,

@@ -1431,6 +1431,9 @@ class SecurityConfig:
     )
     enforce_tool_confirmation: bool = True
     enforce_tool_management: bool = False
+    generated_files_dir: str = field(
+        default_factory=lambda: str(get_config_dir() / "artifacts")
+    )
     runtime_tools_db_path: str = field(
         default_factory=lambda: str(get_config_dir() / "runtime_tools.db")
     )

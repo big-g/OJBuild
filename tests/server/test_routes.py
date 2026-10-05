@@ -10,12 +10,13 @@ import pytest
 fastapi = pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from openjarvis.agents._stubs import AgentContext, AgentResult
-
+from openjarvis.agents._stubs import AgentResult  # noqa: E402
 from openjarvis.core.events import EventBus, EventType  # noqa: E402
 from openjarvis.core.types import Role  # noqa: E402
 from openjarvis.server.app import create_app  # noqa: E402
-from tests.server.helpers import authenticated_client as _authenticated_client  # noqa: E402
+from tests.server.helpers import (  # noqa: E402
+    authenticated_client as _authenticated_client,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -735,7 +736,7 @@ class TestChatCompletions:
         routed_cloud.health.return_value = True
         engine = MultiEngine([("cloud", routed_cloud)])
 
-        async def local_stream(model, messages, temperature, max_tokens):
+        async def local_stream(model, messages, temperature, max_tokens, **kwargs):
             yield "actual-local"
 
         app = create_app(engine, "qwen3:8b", config=_test_config())
@@ -1041,7 +1042,9 @@ class TestIdentityPromptInjection:
     def test_stream_injects_identity_when_absent(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1062,7 +1065,9 @@ class TestIdentityPromptInjection:
     def test_stream_no_double_injection_when_client_supplies_system(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1127,7 +1132,9 @@ class TestIdentityPromptInjection:
         captured: list = []
         engine = _make_capturing_engine(captured)
         # No agent -> non-stream request goes through _handle_direct.
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1145,7 +1152,9 @@ class TestIdentityPromptInjection:
     def test_direct_no_double_injection_when_client_supplies_system(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1166,7 +1175,9 @@ class TestIdentityPromptInjection:
     def test_direct_normalizes_mid_history_system_messages(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1200,7 +1211,9 @@ class TestIdentityPromptInjection:
     def test_stream_normalizes_mid_history_system_messages(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1249,7 +1262,9 @@ class TestIdentityPromptInjection:
                 system_prompt_config=cfg.system_prompt,
             ),
         )
-        client = _authenticated_client(create_app(engine, "test-model", agent=agent, config=cfg))
+        client = _authenticated_client(
+            create_app(engine, "test-model", agent=agent, config=cfg)
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1501,7 +1516,9 @@ class TestIdentityPromptInjection:
     def test_stream_tools_injects_identity_when_absent(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",
@@ -1531,7 +1548,9 @@ class TestIdentityPromptInjection:
     def test_stream_tools_normalizes_mid_history_system_messages(self):
         captured: list = []
         engine = _make_capturing_engine(captured)
-        client = _authenticated_client(create_app(engine, "test-model", config=_identity_config()))
+        client = _authenticated_client(
+            create_app(engine, "test-model", config=_identity_config())
+        )
 
         resp = client.post(
             "/v1/chat/completions",

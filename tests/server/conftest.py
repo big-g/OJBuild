@@ -65,3 +65,19 @@ def _isolate_traces_db(tmp_path, monkeypatch):
 
     monkeypatch.setattr(_config, "load_config", _patched_load_config)
     return db_path
+
+
+@pytest.fixture(autouse=True)
+def _isolate_artifact_storage(tmp_path, monkeypatch):
+    from openjarvis.artifacts import store
+    from openjarvis.core.paths import get_config_dir
+
+    original = store.ArtifactStore
+
+    def isolated(root):
+        from pathlib import Path
+        if Path(root).expanduser() == get_config_dir() / "artifacts":
+            root = tmp_path / "artifacts"
+        return original(root)
+
+    monkeypatch.setattr(store, "ArtifactStore", isolated)

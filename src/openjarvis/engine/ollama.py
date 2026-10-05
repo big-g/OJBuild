@@ -206,7 +206,10 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                     payload["format"] = "json"
         try:
             resp = self._client.post("/api/chat", json=payload)
-            if resp.status_code == 400 and tools and not kwargs.get("require_tools", False):
+            if (
+                resp.status_code == 400 and tools
+                and not kwargs.get("require_tools", False)
+            ):
                 # Model may not support function calling -- retry without tools
                 payload.pop("tools", None)
                 resp = self._client.post("/api/chat", json=payload)
@@ -243,7 +246,7 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                 "total_tokens": prompt_tokens + completion_tokens,
             },
             "model": data.get("model", model),
-            "finish_reason": "stop",
+            "finish_reason": data.get("done_reason") or "stop",
         }
         # Extract timing from Ollama response (nanoseconds → seconds)
         result["ttft"] = data.get("prompt_eval_duration", 0) / 1e9
@@ -414,8 +417,8 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
             payload["tools"] = tools
 
         async for chunk in self._run_stream(
-            payload, 
-            messages, 
+            payload,
+            messages,
             retry_without_tools=bool(tools) and not kwargs.get("require_tools", False),
         ):
             yield chunk

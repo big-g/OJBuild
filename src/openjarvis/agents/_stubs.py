@@ -246,6 +246,8 @@ class BaseAgent(ABC):
             **gen_kwargs,
         )
 
+        self._last_finish_reason = result.get("finish_reason") or "stop"
+
         if self._bus and not getattr(self._engine, "_publishes_events", False):
             usage = result.get("usage", {})
             self._bus.publish(
@@ -295,6 +297,7 @@ class BaseAgent(ABC):
         """
         content = result.get("content", "")
         finish_reason = result.get("finish_reason", "")
+        combined_usage = dict(result.get("usage", {}))
 
         for _ in range(max_continuations):
             if finish_reason != "length":
@@ -313,7 +316,12 @@ class BaseAgent(ABC):
             continuation = cont.get("content", "")
             content += continuation
             finish_reason = cont.get("finish_reason", "")
+            for key, value in cont.get("usage", {}).items():
+                if isinstance(value, (int, float)):
+                    combined_usage[key] = combined_usage.get(key, 0) + value
 
+        result["usage"] = combined_usage
+        result["finish_reason"] = finish_reason or "stop"
         return content
 
     @staticmethod

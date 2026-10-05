@@ -19,6 +19,7 @@ import {
   Database,
   LogOut,
   Wrench,
+  Files,
 } from 'lucide-react';
 import { ConversationList } from './ConversationList';
 import { useAppStore } from '../../lib/store';
@@ -73,6 +74,7 @@ export function Sidebar() {
   const navItems = [
     { path: '/', icon: MessageSquare, label: 'Chat' },
     { path: '/dashboard', icon: BarChart3, label: 'Dashboard' },
+    { path: '/files', icon: Files, label: 'Files' },
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
     ...(getStoredUser()?.is_admin ? [{ path: '/tools', icon: Wrench, label: 'Tools' }] : []),
     { path: '/agents', icon: Bot, label: 'Agents' },

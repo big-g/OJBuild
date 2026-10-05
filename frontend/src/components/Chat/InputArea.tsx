@@ -403,6 +403,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
 
     let accumulatedContent = '';
     let usage: TokenUsage | undefined;
+    let finishReason: string | undefined;
     let complexity: { score: number; tier: string; suggested_max_tokens: number } | undefined;
     let routedEngine: string | undefined;
     const toolCalls: ToolCallInfo[] = [];
@@ -653,7 +654,10 @@ const sendMessage = useCallback(async (messageText?: string) => {
                 lastFlush = now;
               }
             }
-            if (data.choices?.[0]?.finish_reason === 'stop') break;
+            if (data.choices?.[0]?.finish_reason) {
+              finishReason = data.choices[0].finish_reason;
+              break;
+            }
           } catch {}
         }
       }
@@ -692,6 +696,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
         selectedOwner,
       });
       const telemetry: MessageTelemetry = {
+        finish_reason: finishReason,
         engine: engineLabel,
         model_id: selectedModel,
         total_ms: totalMs,

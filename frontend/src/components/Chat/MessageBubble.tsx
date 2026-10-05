@@ -1,5 +1,6 @@
-import { useState, useMemo } from 'react';
+import { createContext, useContext, useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
+import { Link } from 'react-router';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
@@ -11,6 +12,7 @@ import { ToolCallCard } from './ToolCallCard';
 import { ResearchTimeline } from './ResearchTimeline';
 import { rehypeCitations } from '../../lib/rehype-citations';
 import { XRayFooter } from './XRayFooter';
+import { saveFile, suggestedFilename } from '../../lib/files-api';
 import type { ChatMessage } from '../../types';
 
 function stripThinkTags(text: string): string {
@@ -37,8 +39,14 @@ function getTextContent(node: any): string {
   return '';
 }
 
+const FileSaveEnabled = createContext(true);
+
 function CodeBlockPre({ children, ...props }: any) {
+  const saveEnabled = useContext(FileSaveEnabled);
   const [copied, setCopied] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedId, setSavedId] = useState('');
+  const [saveError, setSaveError] = useState('');
   const codeElement = Array.isArray(children) ? children[0] : children;
   const className = codeElement?.props?.className || '';
   const match = /language-([\w-]+)/.exec(className);
@@ -51,6 +59,15 @@ function CodeBlockPre({ children, ...props }: any) {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleSave = async () => {
+    const filename = window.prompt('Filename for this code block', suggestedFilename(lang));
+    if (!filename) return;
+    setSaving(true); setSaveError('');
+    try { setSavedId((await saveFile(filename, code)).id); }
+    catch (error: any) { setSaveError(error.message); }
+    finally { setSaving(false); }
+  };
+
   return (
     <div
       className="code-block-wrapper relative my-3"
@@ -61,6 +78,10 @@ function CodeBlockPre({ children, ...props }: any) {
         style={{ background: 'var(--color-bg-tertiary)', color: 'var(--color-text-tertiary)' }}
       >
         <span className="font-mono">{lang || 'code'}</span>
+        <button disabled={saving || !saveEnabled} onClick={() => void handleSave()} className="px-2 py-0.5 rounded">
+          {saving ? 'Saving…' : 'Save file'}
+        </button>
+        {savedId && <Link to={`/files?file=${encodeURIComponent(savedId)}`}>Preview saved file</Link>}
         <button
           onClick={handleCopy}
           className="flex items-center gap-1 px-2 py-0.5 rounded transition-colors cursor-pointer"
@@ -72,6 +93,7 @@ function CodeBlockPre({ children, ...props }: any) {
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
+      {saveError && <p role="alert" className="px-4 py-2 text-sm">{saveError}</p>}
       <pre {...props} style={{ margin: 0, borderRadius: 0 }}>
         {children}
       </pre>
@@ -166,6 +188,7 @@ export function MessageBubble({ message, isLive = false }: Props) {
       {/* Assistant message */}
       {cleanContent && (
         <div className="prose max-w-none">
+          <FileSaveEnabled.Provider value={!isLive}>
           <ReactMarkdown
             remarkPlugins={[remarkGfm, remarkMath]}
             rehypePlugins={rehypePlugins}
@@ -175,7 +198,15 @@ export function MessageBubble({ message, isLive = false }: Props) {
           >
             {cleanContent}
           </ReactMarkdown>
+          </FileSaveEnabled.Provider>
         </div>
+      )}
+
+      {message.telemetry?.finish_reason === 'length' && (
+        <p role="status" className="text-sm mt-3" style={{ color: 'var(--color-text-secondary)' }}>
+          This response reached the output limit and may be incomplete. Ask Jarvis to
+          continue, or increase Max output tokens in Settings.
+        </p>
       )}
 
       {/* Footer: copy + x-ray */}

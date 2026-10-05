@@ -157,6 +157,7 @@ async def _stream_openai(
     max_tokens: int,
     base_url: str = "https://api.openai.com/v1",
     api_key_name: str = "OPENAI_API_KEY",
+    outcome: dict | None = None,
 ) -> AsyncIterator[str]:
     keys = _load_keys()
     api_key = keys.get(api_key_name, "")
@@ -190,7 +191,10 @@ async def _stream_openai(
                     break
                 try:
                     chunk = json.loads(data)
-                    delta = chunk["choices"][0]["delta"].get("content") or ""
+                    choice = chunk["choices"][0]
+                    if outcome is not None and choice.get("finish_reason"):
+                        outcome["finish_reason"] = choice["finish_reason"]
+                    delta = choice["delta"].get("content") or ""
                     if delta:
                         yield delta
                 except Exception:
@@ -202,6 +206,7 @@ async def _stream_anthropic(
     messages: Sequence[Message],
     temperature: float,
     max_tokens: int,
+    outcome: dict | None = None,
 ) -> AsyncIterator[str]:
     keys = _load_keys()
     api_key = keys.get("ANTHROPIC_API_KEY", "")
@@ -237,6 +242,12 @@ async def _stream_anthropic(
                 data = line[6:].strip()
                 try:
                     event = json.loads(data)
+                    if outcome is not None and event.get("type") == "message_delta":
+                        reason = event.get("delta", {}).get("stop_reason")
+                        if reason:
+                            outcome["finish_reason"] = (
+                                "length" if reason == "max_tokens" else "stop"
+                            )
                     if event.get("type") == "content_block_delta":
                         text = event.get("delta", {}).get("text", "")
                         if text:
@@ -250,6 +261,7 @@ async def _stream_google(
     messages: Sequence[Message],
     temperature: float,
     max_tokens: int,
+    outcome: dict | None = None,
 ) -> AsyncIterator[str]:
     keys = _load_keys()
     api_key = keys.get("GEMINI_API_KEY") or keys.get("GOOGLE_API_KEY", "")
@@ -279,8 +291,14 @@ async def _stream_google(
                 data = line[6:].strip()
                 try:
                     chunk = json.loads(data)
+                    candidate = chunk.get("candidates", [{}])[0]
+                    if outcome is not None and candidate.get("finishReason"):
+                        outcome["finish_reason"] = (
+                            "length"
+                            if candidate["finishReason"] == "MAX_TOKENS" else "stop"
+                        )
                     parts = (
-                        chunk.get("candidates", [{}])[0]
+                        candidate
                         .get("content", {})
                         .get("parts", [])
                     )
@@ -306,6 +324,7 @@ async def stream_local(
     messages: Sequence[Message],
     temperature: float = 0.7,
     max_tokens: int = 1024,
+    outcome: dict | None = None,
 ) -> AsyncIterator[str]:
     """Stream tokens directly from Ollama, bypassing the engine system."""
     payload = {
@@ -333,6 +352,8 @@ async def stream_local(
                     if token:
                         yield token
                     if data.get("done"):
+                        if outcome is not None:
+                            outcome["finish_reason"] = data.get("done_reason") or "stop"
                         break
                 except Exception:
                     pass
@@ -361,20 +382,27 @@ async def stream_cloud(
     messages: Sequence[Message],
     temperature: float = 0.7,
     max_tokens: int = 1024,
+    outcome: dict | None = None,
 ) -> AsyncIterator[str]:
     """Stream tokens from a cloud provider for the given model."""
     provider = get_provider(model)
 
     if provider == "openai":
-        async for token in _stream_openai(model, messages, temperature, max_tokens):
+        async for token in _stream_openai(
+            model, messages, temperature, max_tokens, outcome=outcome
+        ):
             yield token
 
     elif provider == "anthropic":
-        async for token in _stream_anthropic(model, messages, temperature, max_tokens):
+        async for token in _stream_anthropic(
+            model, messages, temperature, max_tokens, outcome=outcome
+        ):
             yield token
 
     elif provider == "google":
-        async for token in _stream_google(model, messages, temperature, max_tokens):
+        async for token in _stream_google(
+            model, messages, temperature, max_tokens, outcome=outcome
+        ):
             yield token
 
     elif provider == "openrouter":
@@ -391,6 +419,7 @@ async def stream_cloud(
             max_tokens,
             base_url="https://openrouter.ai/api/v1",
             api_key_name="OPENROUTER_API_KEY",
+            outcome=outcome,
         ):
             yield token
 
@@ -406,6 +435,7 @@ async def stream_cloud(
             max_tokens,
             base_url="https://api.minimax.io/v1",
             api_key_name="MINIMAX_API_KEY",
+            outcome=outcome,
         ):
             yield token
 

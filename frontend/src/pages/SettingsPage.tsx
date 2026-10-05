@@ -692,7 +692,7 @@ export function SettingsPage() {
                 className="w-32 cursor-pointer accent-[var(--color-accent)]"
               />
             </SettingRow>
-            <SettingRow label="Max tokens" description={`${settings.maxTokens}`}>
+            <SettingRow label="Max output tokens" description={`${settings.maxTokens} per generation; the selected model may impose a lower limit`}>
               <input
                 type="range"
                 min="256"

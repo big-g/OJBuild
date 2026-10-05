@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import openjarvis.tools.artifact_save  # noqa: F401
 from openjarvis.tools._stubs import BaseTool, ToolExecutor, ToolSpec
 
 # Import built-in tools to trigger @ToolRegistry.register() decorators.

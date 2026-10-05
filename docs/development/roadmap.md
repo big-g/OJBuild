@@ -24,8 +24,34 @@ and indexed data. Extensibility must retain bounded execution and observable err
 | 4 | Planned | Home Assistant integration; Echo devices as Jarvis clients in Phase 4.1 |
 | 5 | Planned | Nextcloud monitoring/notifications and a self-hosted email server |
 
-Multi-user separation and Apple client work are outside the current Phase 2 scope.
+Account-owned conversations, source access and generated files are in Phase 2.
+Operating-system isolation for privileged code tools and Apple client work remain
+outside the current Phase 2 scope.
 Automatic model routing is deferred; explicit model selection remains supported.
+
+## Phase 2: complete output and generated downloads
+
+**Implemented:** authenticated chat respects the request's output-token budget,
+restores shared-agent settings on success or failure, and preserves provider
+length-limit signals through agent and direct streams. Simple and function-calling
+orchestrator responses attempt at most two continuations and include their token
+usage. The chat UI retains an incomplete-output warning when the provider still
+reports `length`; model context/output limits still apply.
+
+**Implemented:** a dedicated, configurable server file directory with database
+ownership, immutable blob IDs, SHA-256 integrity checks, per-user quotas and
+non-executable file permissions. Authenticated users can create, list, preview,
+download and delete only their own files; administrators do not bypass ownership.
+The verified chat identity binds `artifact_save` through the existing tool executor,
+capability and approval gates. Code blocks also provide an explicit Save file action.
+The Files page displays escaped text, bounded binary summaries and STL wireframes
+without executing scripts or rendering active documents.
+
+See [Generated files](../user-guide/generated-files.md) for configuration and limits.
+This supplies file delivery for generated scripts/STL content; it does not implement
+the Phase 3 text-to-3D model pipeline. Live Ubuntu/browser/desktop/Android acceptance,
+content scanning, retention policies, larger-file streaming and additional inert
+preview formats remain follow-ups.
 
 ## Phase 2: account recovery
 

@@ -27,6 +27,15 @@ DEFAULT_SENSITIVE_PATTERNS: frozenset[str] = frozenset(
 )
 
 
+_PROTECTED_DIRECTORIES: frozenset[Path] = frozenset()
+
+
+def protect_directory(path: Union[str, Path]) -> None:
+    """Reserve private catalogs/blobs for their owner-aware APIs and tools."""
+    global _PROTECTED_DIRECTORIES
+    _PROTECTED_DIRECTORIES = _PROTECTED_DIRECTORIES | {Path(path).resolve()}
+
+
 def is_sensitive_file(path: Union[str, Path]) -> bool:
     """Return ``True`` if *path* matches a sensitive file pattern.
 
@@ -34,6 +43,10 @@ def is_sensitive_file(path: Union[str, Path]) -> bool:
     ``DEFAULT_SENSITIVE_PATTERNS`` using :func:`fnmatch.fnmatch`.
     Uses the Rust implementation when available, falls back to Python.
     """
+    resolved = Path(path).resolve()
+    if any(resolved == root or resolved.is_relative_to(root)
+           for root in _PROTECTED_DIRECTORIES):
+        return True
     try:
         from openjarvis._rust_bridge import get_rust_module
 

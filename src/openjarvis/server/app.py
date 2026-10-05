@@ -229,6 +229,22 @@ def create_app(
         getattr(getattr(config, "security", None), "runtime_tools_db_path",
                 SecurityConfig().runtime_tools_db_path)
     )
+    from openjarvis.artifacts.store import ArtifactStore
+    from openjarvis.server.artifacts_router import create_artifacts_router
+
+    try:
+        artifact_store = ArtifactStore(
+            getattr(getattr(config, "security", None), "generated_files_dir",
+                    SecurityConfig().generated_files_dir)
+        )
+    except NotImplementedError:
+        artifact_store = None
+        logging.getLogger(__name__).warning(
+            "Private file storage is unavailable on this server filesystem"
+        )
+    app.state.artifact_store = artifact_store
+    runtime_tools.artifact_store = artifact_store
+    app.include_router(create_artifacts_router(artifact_store))
     app.state.runtime_tool_manager = runtime_tools
     if agent is not None:
         agent._runtime_tool_manager = runtime_tools

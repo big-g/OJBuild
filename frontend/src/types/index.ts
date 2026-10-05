@@ -51,6 +51,7 @@ export interface TokenUsage {
 }
 
 export interface MessageTelemetry {
+  finish_reason?: string;
   engine?: string;
   model_id?: string;
   tokens_per_sec?: number;

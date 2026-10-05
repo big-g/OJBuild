@@ -120,6 +120,7 @@ class RuntimeRegistry(ToolManagementRegistry):
 
 class RuntimeToolManager:
     def __init__(self, db_path):
+        self.artifact_store = None
         self.store = RuntimeToolStore(db_path)
         from openjarvis.mcp.runtime_manager import RuntimeMCPManager
 
@@ -230,6 +231,15 @@ class RuntimeToolManager:
                     tools.append(RuntimeTransformTool(row, self))
             except (ValueError, TypeError, KeyError, OverflowError):
                 continue
+        from openjarvis.core.correlation import current_identity
+        from openjarvis.tools.artifact_save import ArtifactSaveTool
+
+        identity = current_identity()
+        if (
+            self.artifact_store is not None and identity is not None
+            and identity.user_id
+        ):
+            tools.append(ArtifactSaveTool(self.artifact_store))
         return tools + self.mcp.available()
 
     @contextmanager
@@ -246,7 +256,9 @@ class RuntimeToolManager:
             yield
             return
         old_tools, old_dispatch = agent._tools, executor._tools
-        tools = list(old_tools)
+        replacements = {tool.spec.name for tool in runtime_tools
+                        if tool.spec.name == "artifact_save"}
+        tools = [tool for tool in old_tools if tool.spec.name not in replacements]
         names = {tool.spec.name for tool in tools}
         tools.extend(tool for tool in runtime_tools if tool.spec.name not in names)
         agent._tools = tools
