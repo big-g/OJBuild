@@ -1,5 +1,7 @@
 """Administrator configuration never implies remote tool approval."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
@@ -15,6 +17,10 @@ class Connection(BaseModel):
     url: str = Field(min_length=1, max_length=4096)
     bearer_token: SecretStr | None = None
     allow_without_confirmation: StrictBool = False
+    network_access: Literal["public", "lan"] = "public"
+    lan_addresses: str = Field(default="", max_length=2048)
+    tls_trust: Literal["system", "custom_ca"] = "system"
+    ca_certificate: str = Field(default="", max_length=16384)
 
 
 class Revision(BaseModel):
@@ -81,6 +87,10 @@ def create_runtime_mcp_router(manager):
         return {
             "name": body.name,
             "url": body.url,
+            "network_access": body.network_access,
+            "lan_addresses": body.lan_addresses,
+            "tls_trust": body.tls_trust,
+            "ca_certificate": body.ca_certificate,
             "allow_without_confirmation": body.allow_without_confirmation,
         }
 

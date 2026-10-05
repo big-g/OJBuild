@@ -1,4 +1,4 @@
-"""Nonredirecting, bounded public HTTPS transport for web-managed MCP servers."""
+"""Nonredirecting, bounded HTTPS transport for web-managed MCP servers."""
 
 from __future__ import annotations
 
@@ -7,27 +7,22 @@ import threading
 import time
 from dataclasses import replace
 
+from openjarvis.mcp.network import context, endpoint, policy
+from openjarvis.mcp.network import target as network_target
 from openjarvis.mcp.protocol import MCPResponse
 from openjarvis.mcp.transport import MCPTransport, StreamableHTTPTransport
-from openjarvis.security.public_http import (
-    _request_source,
-    normalize_source_url,
-    validate_public_url,
-)
-
-
-def endpoint(url):
-    normalized = normalize_source_url(url)
-    if not normalized.startswith("https://") or "?" in normalized:
-        raise ValueError("Managed MCP requires a public HTTPS URL without a query")
-    return normalized
+from openjarvis.security.public_http import _request_source, validate_public_url
 
 
 class RuntimeHTTPTransport(MCPTransport):
     """Reuse pinned source connections; never execute a configured subprocess."""
 
-    def __init__(self, url, token=""):
-        self.url = endpoint(url)
+    def __init__(self, url, token="", *, network=None):
+        self.network = policy(network or {})
+        self.url = endpoint(url, self.network)
+        self._ssl_context = (
+            context(self.network) if self.network["network_access"] == "lan" else None
+        )
         self._token = token
         self._session = None
         self._target = None
@@ -49,7 +44,11 @@ class RuntimeHTTPTransport(MCPTransport):
         if self._session:
             headers["Mcp-Session-Id"] = self._session
         # Revalidate DNS and pin every request; no ambient proxy or redirect.
-        target = validate_public_url(self.url)
+        target = (
+            validate_public_url(self.url)
+            if self.network["network_access"] == "public"
+            else network_target(self.url, self.network)
+        )
         # Source reads may retry addresses. Tool calls may have side effects;
         # choose one pinned address so a lost response never repeats a POST.
         target = replace(target, addresses=target.addresses[:1])
@@ -64,6 +63,11 @@ class RuntimeHTTPTransport(MCPTransport):
             method="POST",
             body=body,
             cancel_event=self._closed,
+            **(
+                {"ssl_context": self._ssl_context}
+                if self._ssl_context is not None
+                else {}
+            ),
         )
         if response.status_code not in {200, 202, 204}:
             raise ValueError("MCP endpoint rejected the request")
@@ -118,6 +122,11 @@ class RuntimeHTTPTransport(MCPTransport):
                     deadline=min(self.deadline, time.monotonic() + 3),
                     accept="application/json",
                     credential_headers=headers,
+                    **(
+                        {"ssl_context": self._ssl_context}
+                        if self._ssl_context is not None
+                        else {}
+                    ),
                 )
         except Exception:
             pass

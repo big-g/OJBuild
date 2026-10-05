@@ -165,8 +165,19 @@ Commands, unsupported settings and tool filters are blocked rather than silently
 executed or broadened. Legacy files/settings remain unchanged and must be disabled
 or removed before activating replacements. No remote connection occurs during import.
 
-**Pending:** LAN MCP connections through explicit endpoint approval,
-further installable tool adapters and local package installation;
+**Implemented:** per-connection LAN MCP settings managed by administrators in
+Tools: exact RFC1918/IPv6 unique-local addresses, HTTPS including custom ports,
+and optional bounded PEM private CA trust. Saving explicitly authorizes catalog
+discovery at that endpoint; tool calls still require revision-bound catalog
+approval and existing capability/confirmation gates. Every DNS answer must be
+listed, with per-request resolution and address pinning. Public/mixed/unlisted,
+loopback, link-local and metadata destinations fail closed; certificate and
+hostname verification remain mandatory. Endpoint/address/trust edits withdraw
+approval, clear discovery and clear retained tokens unless explicitly replaced.
+Existing public definitions and approvals retain their public/system-trust defaults.
+Offline DNS/TLS/lifecycle regressions pass; live LAN/provider acceptance remains pending.
+
+**Pending:** further installable tool adapters and local package installation;
 live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
 and logout. Implemented adapters do not complete runtime tool addition acceptance.
 

@@ -253,8 +253,17 @@ class RuntimeMCPManager:
         client = None
         try:
             token = self.store.token(row)
+            config = definition(json.loads(row["definition"]))
             client = RuntimeMCPClient(
-                RuntimeHTTPTransport(json.loads(row["definition"])["url"], token)
+                RuntimeHTTPTransport(
+                    config["url"],
+                    token,
+                    **(
+                        {"network": config}
+                        if config.get("network_access") == "lan"
+                        else {}
+                    ),
+                )
             )
             client.initialize()
             yield client

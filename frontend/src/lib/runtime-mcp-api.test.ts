@@ -38,3 +38,10 @@ it('imports only the reviewed server entry without sending credentials or an own
   await importLegacyMCP(entry);
   expect(JSON.parse(apiFetch.mock.calls[apiFetch.mock.calls.length - 1][1].body)).toEqual({ index: 2, review_digest: 'a'.repeat(64) });
 });
+
+it('retains explicit LAN endpoint and certificate policy when editing a connection', () => {
+  const saved = { name: 'lan', url: 'https://mcp.internal:8443/mcp', allow_without_confirmation: false,
+    network_access: 'lan', lan_addresses: '192.168.1.20', tls_trust: 'custom_ca', ca_certificate: 'PEM' } as MCPConnection;
+  expect(connectionDefinition(saved)).toEqual(saved);
+  expect(connectionDefinition(saved, 'replacement').bearer_token).toBe('replacement');
+});

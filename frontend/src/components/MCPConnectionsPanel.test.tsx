@@ -54,3 +54,11 @@ it('allows importing ready entries only and escapes imported metadata', async ()
   const busy = renderToStaticMarkup(<LegacyMCPReview entries={rows} busy onImport={() => {}} />);
   expect((busy.match(/disabled=""/g) || []).length).toBe(3);
 });
+
+it('offers explicit LAN authorization while keeping public HTTPS as the default', () => {
+  const html = renderToStaticMarkup(<MCPConnectionsPanel />);
+  expect(html).toContain('<option value="public" selected="">Public HTTPS (default)</option>');
+  expect(html).toContain('Authorized private LAN');
+  expect(html).toContain('authorized addresses or certificate trust clears a retained token');
+  expect(html).not.toContain('LAN endpoints and local package installation are not supported');
+});

@@ -71,7 +71,7 @@ export function MCPConnectionsPanel() {
   };
   return <section className="space-y-5 pt-8 border-t" style={{ borderColor: 'var(--color-border)' }}>
     <header><h2 className="text-lg font-semibold">MCP connections</h2>
-      <p className="text-sm mt-2">Save a public HTTPS connection, discover its tools, then review and approve the whole catalog.
+      <p className="text-sm mt-2">Save a public or explicitly authorized LAN HTTPS connection, discover its tools, then review and approve the whole catalog.
         Approved tools are shared across accounts. Saving and discovery do not authorize calls.</p></header>
     {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
@@ -88,16 +88,24 @@ export function MCPConnectionsPanel() {
       <label className="block text-sm">Connection name
         <input className={field} style={style} required maxLength={24} pattern="[a-z][a-z0-9_]{0,23}"
           value={definition.name} onChange={e => setDefinition({ ...definition, name: e.target.value })} /></label>
-      <label className="block text-sm">Public HTTPS endpoint
+      <label className="block text-sm">HTTPS endpoint
         <input className={field} style={style} required type="url" maxLength={4096} placeholder="https://example.com/mcp"
           value={definition.url} onChange={e => setDefinition({ ...definition, url: e.target.value })} /></label>
-      <p className="text-xs">Use a URL without query credentials. LAN endpoints and local package installation are not supported here yet.</p>
+      <p className="text-xs">Use HTTPS without URL credentials or queries. Local package installation remains a separate roadmap item.</p>
+      <label className="block text-sm">Network access<select className={field} style={style} value={definition.network_access || 'public'} onChange={e => setDefinition({ ...definition, network_access: e.target.value as 'public' | 'lan', lan_addresses: '', tls_trust: 'system', ca_certificate: '' })}><option value="public">Public HTTPS (default)</option><option value="lan">Authorized private LAN</option></select></label>
+      {definition.network_access === 'lan' && <>
+        <label className="block text-sm">Authorized LAN IP addresses<textarea className={field} style={style} required maxLength={2048} placeholder="192.168.1.20, fd00::20" value={definition.lan_addresses || ''} onChange={e => setDefinition({ ...definition, lan_addresses: e.target.value })} /></label>
+        <p className="text-xs">Authorize 1–32 exact RFC1918 or IPv6 unique-local addresses, not subnets. Every DNS answer must be listed. Loopback, link-local and metadata endpoints remain blocked. Saving authorizes catalog discovery at this endpoint; tool calls still require review and approval.</p>
+        <label className="block text-sm">Certificate trust<select className={field} style={style} value={definition.tls_trust || 'system'} onChange={e => setDefinition({ ...definition, tls_trust: e.target.value as 'system' | 'custom_ca', ca_certificate: '' })}><option value="system">System trust</option><option value="custom_ca">Private CA certificates</option></select></label>
+        {definition.tls_trust === 'custom_ca' && <label className="block text-sm">PEM CA certificates<textarea className={field} style={style} required maxLength={16384} value={definition.ca_certificate || ''} onChange={e => setDefinition({ ...definition, ca_certificate: e.target.value })} /></label>}
+        <p className="text-xs">Certificate and hostname verification stay enabled. Private CA trust applies only to this connection. LAN HTTPS may use a custom port.</p>
+      </>}
       <label className="block text-sm">{editing ? 'Replace bearer token (blank keeps the current token)' : 'Bearer token (optional)'}
         <input className={field} style={style} type="password" autoComplete="off" maxLength={8192}
           value={token} onChange={e => { setToken(e.target.value); setClearToken(false); }} /></label>
       {editing?.has_token && <label className="flex gap-2 text-sm"><input type="checkbox" checked={clearToken}
         onChange={e => { setClearToken(e.target.checked); setToken(''); }} />Remove saved token</label>}
-      <p className="text-xs">Tokens are encrypted on the server and never returned to this form. Changing the endpoint clears a retained token.</p>
+      <p className="text-xs">Tokens are encrypted on the server and never returned to this form. Changing the endpoint, authorized addresses or certificate trust clears a retained token unless you explicitly replace it.</p>
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={definition.allow_without_confirmation}
         onChange={e => setDefinition({ ...definition, allow_without_confirmation: e.target.checked })} />
         Allow approved tool calls without per-call confirmation</label>
@@ -128,6 +136,7 @@ export function MCPConnectionsPanel() {
         <span className="text-sm">{connection.validation_error ? 'Needs repair' : connection.approved
           ? connection.enabled ? 'Approved · enabled' : 'Approved · disabled' : connection.discovered ? 'Catalog awaiting approval' : 'Needs discovery'}</span></div>
       <p className="text-sm break-all">{connection.url}</p>
+      {connection.network_access === 'lan' && <p className="text-xs break-all">Authorized LAN addresses: {connection.lan_addresses}. Certificate trust: {connection.tls_trust === 'custom_ca' ? 'Private CA' : 'System'}.</p>}
       <p className="text-xs">Revision {connection.revision} · {connection.has_token ? 'Encrypted token saved' : 'No bearer token'}</p>
       {connection.validation_error && <p role="alert">{connection.validation_error}</p>}
       <MCPCatalogReview connection={connection} />

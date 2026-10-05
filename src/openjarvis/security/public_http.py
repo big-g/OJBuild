@@ -9,6 +9,7 @@ from __future__ import annotations
 import http.client
 import ipaddress
 import socket
+import ssl
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -219,8 +220,15 @@ def _request_source(
     cancel_event=None,
     method: str = "GET",
     body: bytes | None = None,
+    ssl_context=None,
 ) -> httpx.Response:
     """Read a bounded, uncompressed response from verified public addresses."""
+    if ssl_context is not None and (
+        target.scheme != "https"
+        or not ssl_context.check_hostname
+        or ssl_context.verify_mode != ssl.CERT_REQUIRED
+    ):
+        raise ValueError("Custom TLS contexts must verify certificates and hostnames")
     last_error = None
     for address in target.addresses[:4]:
         _check_cancel(cancel_event)
@@ -232,6 +240,11 @@ def _request_source(
             target.port,
             pinned_ip=address,
             timeout=_remaining(deadline),
+            **(
+                {"context": ssl_context}
+                if ssl_context is not None and target.scheme == "https"
+                else {}
+            ),
         )
         try:
             connection.request(

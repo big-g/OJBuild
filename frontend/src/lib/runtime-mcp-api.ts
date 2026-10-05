@@ -5,6 +5,10 @@ export interface MCPDefinition {
   url: string;
   allow_without_confirmation: boolean;
   bearer_token?: string;
+  network_access?: 'public' | 'lan';
+  lan_addresses?: string;
+  tls_trust?: 'system' | 'custom_ca';
+  ca_certificate?: string;
 }
 export interface MCPConnection extends Omit<MCPDefinition, 'bearer_token'> {
   id: string;
@@ -23,6 +27,9 @@ export interface MCPConnection extends Omit<MCPDefinition, 'bearer_token'> {
 export function connectionDefinition(connection: MCPConnection, token = '', clearToken = false): MCPDefinition {
   return { name: connection.name, url: connection.url,
     allow_without_confirmation: connection.allow_without_confirmation,
+    ...(connection.network_access === 'lan' ? { network_access: connection.network_access,
+      lan_addresses: connection.lan_addresses, tls_trust: connection.tls_trust,
+      ca_certificate: connection.ca_certificate } : {}),
     ...(token || clearToken ? { bearer_token: token } : {}) };
 }
 

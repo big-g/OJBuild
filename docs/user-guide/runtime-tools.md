@@ -108,11 +108,12 @@ without restarting Jarvis. Managed agents select the displayed Jarvis tool name;
 aliases include the connection name, a readable remote-name fragment and a digest.
 The `custom_mcp_` prefix is reserved for these tools.
 
-The first managed transport supports public HTTPS endpoints on standard ports,
-without query strings or URL credentials. Optional bearer tokens are encrypted in
+Public HTTPS is the default, using standard ports without query strings or URL
+credentials. Administrators can also explicitly authorize LAN HTTPS connections
+as described below. Optional bearer tokens are encrypted in
 the server vault and never returned through management APIs or prefilled in forms.
 Leaving the token field blank while editing keeps it; explicitly removing it clears
-it. Changing the endpoint clears a retained token. Supplying a replacement token
+it. Changing the endpoint, authorized addresses or TLS trust clears a retained token. Supplying a replacement token
 binds it to the new endpoint. Every edit disables the connection and withdraws its
 catalog approval. Missing/wrong encryption keys block unlocking and token replacement;
 restore the original key backup, or explicitly remove the connection to start over.
@@ -135,7 +136,7 @@ resolved instances, including in another server process. Already dispatched remo
 work is not undone. Remote implementation changes with identical advertised
 contracts cannot be detected by this check.
 
-Each request resolves and pins public DNS addresses with TLS verification. Redirects
+Each request resolves and pins policy-authorized DNS addresses with TLS verification. Redirects
 and ambient proxies are not used, and tool POSTs are never retried automatically.
 Responses are limited to 2 MiB; outbound JSON requests to 64 KiB. An operation shares
 a 60-second I/O deadline across initialization, catalog scan and call, with existing
@@ -155,8 +156,41 @@ essential to restore tokens. Audit records contain actor, action, revision and t
 remain after removal, and show the latest 100 events per connection.
 
 Legacy MCP configuration remains supported separately and is not automatically
-imported or approved. LAN endpoint approval, local package installation, legacy
-imports and the newer handshake-free protocol are subsequent roadmap work.
+imported or approved. The web interface supports selective legacy public HTTPS
+imports; imports remain disabled and unapproved. Configure legacy LAN entries
+manually with exact address authorization. Local package installation and the
+newer handshake-free protocol remain subsequent roadmap work.
+
+## Authorized LAN MCP endpoints
+
+In **Tools → MCP connections**, select **Authorized private LAN**, use a URL such
+as `https://mcp.internal:8443/mcp`, and list 1–32 exact private addresses such as
+`192.168.1.20, fd00::20`. Only RFC1918 and IPv6 unique-local addresses are accepted;
+subnets, loopback, link-local, metadata and public addresses are rejected. Every
+DNS answer must be listed, including all IPv4/IPv6 answers. Each request resolves
+again and connects to one verified IP while retaining the URL hostname for Host,
+TLS SNI and certificate verification. Redirects, proxies and POST retries remain
+disabled. Configuration performs no network request.
+
+LAN connections may use custom HTTPS ports. Plain HTTP is not supported. Choose
+**System trust** for normally trusted certificates, or **Private CA certificates**
+and paste only PEM CA certificates (up to eight certificates / 16 KiB). This trust
+applies only to that saved connection and replaces system roots for it. Private
+keys and leaf certificates are rejected. The server certificate must match the URL
+hostname; using a literal IP requires an IP subject alternative name. There is
+no skip-verification option.
+
+Saving this setting authorizes discovery traffic at the listed endpoint, including
+its supplied bearer token, but never tool execution. Discover and review the full
+catalog before approving. Any configuration edit disables the connection and
+withdraws approval; endpoint, address or trust changes also clear retained tokens
+unless a replacement is explicitly supplied. Re-discover and approve before use.
+
+For live acceptance, use an MCP server you control on the LAN with valid TLS.
+Check discovery without calls, administrator approval, restart persistence, DNS
+moving to an unlisted address, wrong-host/untrusted certificates, token rotation
+and disable/revocation from browser, Tauri and Android. Use the existing Ubuntu
+service. Offline tests do not establish these deployment/provider checks.
 
 ## Ubuntu and client acceptance
 
