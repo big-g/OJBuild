@@ -9,6 +9,8 @@ import re
 from copy import deepcopy
 from dataclasses import dataclass
 
+from openjarvis.tools.runtime_json import parse_path
+
 TRANSFORMS = ("upper", "lower", "reverse", "length", "identity")
 _OPS = {
     ast.Add: operator.add,
@@ -143,6 +145,8 @@ class RuntimeAdapter:
                 raise ValueError("Unsupported transformation")
         elif self.adapter_id == "numeric_formula":
             parse_formula(config)
+        elif self.adapter_id == "json_extract":
+            parse_path(config)
         else:
             raise ValueError("Unsupported runtime adapter")
         return deepcopy(config)
@@ -156,7 +160,7 @@ class RuntimeAdapter:
                 "additionalProperties": False,
             }
             action = {"type": "transform", "transform": config["transform"]}
-        else:
+        elif self.adapter_id == "numeric_formula":
             parameters = {
                 "type": "object",
                 "properties": {
@@ -167,6 +171,14 @@ class RuntimeAdapter:
                 "additionalProperties": False,
             }
             action = {"type": "bounded_formula", **deepcopy(config)}
+        else:
+            parameters = {
+                "type": "object",
+                "properties": {"input": {"type": "string", "maxLength": 32768}},
+                "required": ["input"],
+                "additionalProperties": False,
+            }
+            action = {"type": "bounded_json_extract", **deepcopy(config)}
         return {
             "name": definition["name"],
             "description": definition["description"],
@@ -229,6 +241,30 @@ _ADAPTERS = {
             },
         ),
         {"expression": "value * 1.8 + 32", "variables": ["value"]},
+    ),
+    "json_extract": RuntimeAdapter(
+        "json_extract",
+        "JSON field extraction",
+        "Select a value from supplied JSON text using a saved path; "
+        "no scripts or external access.",
+        "json-extract-v1",
+        (
+            {
+                "name": "path",
+                "label": "JSON field path",
+                "type": "text",
+                "required": True,
+                "max_length": 512,
+                "placeholder": "/forecast/temperature",
+                "description": (
+                    "Start with /. Example: /forecast/temperature selects a nested "
+                    "field; /items/0/name selects the first item's name. "
+                    "Names are case-sensitive. Escape / within a key as ~1 "
+                    "and ~ as ~0. At most 512 characters and 32 steps."
+                ),
+            },
+        ),
+        {"path": "/forecast/temperature"},
     ),
 }
 

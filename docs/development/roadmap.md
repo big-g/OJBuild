@@ -187,6 +187,15 @@ approval, clear discovery and clear retained tokens unless explicitly replaced.
 Existing public definitions and approvals retain their public/system-trust defaults.
 Offline DNS/TLS/lifecycle regressions pass; live LAN/provider acceptance remains pending.
 
+**Implemented:** a third database/web-managed runtime adapter for JSON field
+extraction from supplied text. Saved paths, visible examples and review cards
+support nested object keys and zero-based array indexes with explicit escaping.
+Strict input/byte/depth/value/output limits, duplicate-key/nonfinite-number
+rejection and failed missing-path results prevent ambiguous partial output.
+Existing approval fingerprints, restart restoration and live revocation checks
+cover path edits and loaded instances. Extracted data has no factual evidence
+authority; no network, file access or expression execution is introduced.
+
 **Pending:** further installable tool adapters and local package installation;
 live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
 and logout. Implemented adapters do not complete runtime tool addition acceptance.

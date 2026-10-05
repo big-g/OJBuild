@@ -22,6 +22,7 @@ from openjarvis.tools.runtime_adapters import (
     evaluate_formula,
     get_adapter,
 )
+from openjarvis.tools.runtime_json import extract_json
 from openjarvis.tools.runtime_store import (
     RuntimeToolStore,
     validate_definition,
@@ -89,10 +90,14 @@ class RuntimeTransformTool(ToolTemplate):
         )
         if not allowed:
             return ToolResult(tool_name=self.tool_id, content=reason, success=False)
-        if self._adapter.adapter_id == "numeric_formula":
+        if self._adapter.adapter_id in {"numeric_formula", "json_extract"}:
             try:
                 config = {k: v for k, v in self._action.items() if k != "type"}
-                result = evaluate_formula(config, params)
+                result = (
+                    evaluate_formula(config, params)
+                    if self._adapter.adapter_id == "numeric_formula"
+                    else extract_json(config, params)
+                )
             except ValueError as exc:
                 return ToolResult(
                     tool_name=self.tool_id, content=str(exc), success=False
@@ -236,7 +241,8 @@ class RuntimeToolManager:
 
         identity = current_identity()
         if (
-            self.artifact_store is not None and identity is not None
+            self.artifact_store is not None
+            and identity is not None
             and identity.user_id
         ):
             tools.append(ArtifactSaveTool(self.artifact_store))
@@ -256,8 +262,11 @@ class RuntimeToolManager:
             yield
             return
         old_tools, old_dispatch = agent._tools, executor._tools
-        replacements = {tool.spec.name for tool in runtime_tools
-                        if tool.spec.name == "artifact_save"}
+        replacements = {
+            tool.spec.name
+            for tool in runtime_tools
+            if tool.spec.name == "artifact_save"
+        }
         tools = [tool for tool in old_tools if tool.spec.name not in replacements]
         names = {tool.spec.name for tool in tools}
         tools.extend(tool for tool in runtime_tools if tool.spec.name not in names)

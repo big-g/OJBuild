@@ -32,6 +32,46 @@ def body():
     return {"name": "custom_web", "description": "Uppercase text", "transform": "upper"}
 
 
+def test_json_adapter_web_metadata_installation_and_approval(setup):
+    client, headers, manager, _ = setup
+    client.headers.update(headers["admin"])
+    adapter = next(
+        a
+        for a in client.get("/v1/runtime-tools").json()["adapters"]
+        if a["adapter_id"] == "json_extract"
+    )
+    assert "/items/0/name" in adapter["fields"][0]["description"]
+    payload = {
+        "name": "custom_forecast",
+        "description": "Extract supplied temperature",
+        "adapter_id": "json_extract",
+        "config": adapter["default_config"],
+    }
+    result = client.post("/v1/runtime-tools", json=payload)
+    assert result.status_code == 201, result.text
+    saved = result.json()
+    assert saved["config"] == {"path": "/forecast/temperature"}
+    assert not saved["approved"] and not manager.available()
+    approved = client.post(
+        f"/v1/runtime-tools/{saved['id']}/approve", json={"revision": saved["revision"]}
+    )
+    assert approved.status_code == 200 and approved.json()["approved"]
+    assert (
+        manager.available()[0].execute(input='{"forecast":{"temperature":18}}').content
+        == "18"
+    )
+    rejected = client.post(
+        "/v1/runtime-tools",
+        json={
+            **payload,
+            "name": "custom_bad_path",
+            "config": {"path": "forecast.temperature"},
+        },
+    )
+    assert rejected.status_code == 400
+    assert "example" in rejected.json()["detail"]
+
+
 def test_all_management_routes_require_current_admin(setup):
     client, headers, manager, auth = setup
     tool = client.post(

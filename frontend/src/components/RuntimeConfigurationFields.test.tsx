@@ -36,3 +36,20 @@ it('shows the exact saved expression and variables in the approval summary', () 
   expect(html).toContain('value, divisor');
   expect(html).toContain('Formula:');
 });
+
+it('renders JSON extraction paths with visible setup hints and exact approval values', () => {
+  const jsonAdapter: RuntimeAdapter = {
+    adapter_id: 'json_extract', label: 'JSON field extraction', description: 'Select supplied data', validator_version: 'json-extract-v1',
+    default_config: { path: '/forecast/temperature' },
+    fields: [{ name: 'path', label: 'JSON field path', type: 'text', required: true, max_length: 512,
+      description: 'Start with /. Example: /items/0/name selects the first item. Escape / as ~1 and ~ as ~0.' }],
+  };
+  const html = renderToStaticMarkup(<RuntimeConfigurationFields adapter={jsonAdapter} config={{}} onChange={() => {}} />);
+  expect(html).toContain('/forecast/temperature');
+  expect(html).toContain('maxLength="512"');
+  expect(html).toContain('/items/0/name');
+  expect(html).toContain('Escape / as ~1');
+  const summary = renderToStaticMarkup(<RuntimeConfigurationSummary adapter={jsonAdapter} config={{ path: '/items/0/name' }} />);
+  expect(summary).toContain('JSON field path:');
+  expect(summary).toContain('/items/0/name');
+});

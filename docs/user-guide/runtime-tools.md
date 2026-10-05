@@ -1,6 +1,7 @@
 # Runtime tools
 
-Administrators can add text transformations and numeric formulas from **Tools** in the navigation
+Administrators can add text transformations, numeric formulas and JSON field
+extraction tools from **Tools** in the navigation
 menu. Definitions, approval decisions, revisions and audit history live in the
 server's SQLite database. No template file editing or server restart is needed
 after adding a tool.
@@ -33,7 +34,30 @@ within ±10¹²; intermediate/results must stay within ±10²⁴. Division by ze
 missing/extra variables, booleans and numeric strings produce failed tool
 results. Calculations use floating-point arithmetic, so normal rounding applies.
 
-Both adapters operate only on supplied inputs. They do not access files,
+The JSON field extraction adapter selects a value from supplied JSON text. Create
+`custom_forecast_temperature`, choose **JSON field extraction**, and save the path
+`/forecast/temperature`. After approval, calling it with
+`input: '{"forecast":{"temperature":18}}'` returns `18`. The result remains supplied
+data; extraction does not establish that a forecast is current or trustworthy.
+
+Paths start with `/`; each following step names an object key or a zero-based
+array index. `/items/0/name` selects the first item's name. Object keys are
+case-sensitive; escape `/` within a key as `~1` and `~` as `~0`.
+For example, `/a~1b/~0` selects the key `~` inside the object named `a/b`.
+An array index must be `0` or a positive integer without leading zeros;
+negative indexes, wildcards and expressions are unsupported. `/` selects an
+empty object key. Paths allow up to 512 characters and 32 steps.
+
+Supply exactly one string argument named `input`. Input is limited to 32,768
+characters, 128 KiB of UTF-8, 32 nesting levels and 10,000 JSON values. Selected
+output is bounded to 128 KiB. Values retain JSON types: strings are quoted,
+objects/arrays remain JSON, and booleans/null are returned as `true`, `false`
+and `null`. Missing paths, malformed JSON, duplicate object keys and nonfinite
+numbers fail the tool call instead of returning partial or guessed data.
+Script-like strings remain inert data. Editing the saved path withdraws approval
+and blocks old loaded instances through the existing management gate.
+
+All three adapters operate only on supplied inputs. They do not access files,
 credentials, network services or external facts, and declare no factual evidence
 capability. Further installable tool types remain roadmap work.
 
