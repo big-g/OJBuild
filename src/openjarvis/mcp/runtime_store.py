@@ -178,7 +178,7 @@ class RuntimeMCPStore:
                 (identity, sealed, revision),
             )
 
-    def create(self, config, actor, token=""):
+    def create(self, config, actor, token="", *, event="created"):
         config = definition(config)
         identity = str(uuid.uuid4())
         sealed = self._seal(identity, config, token)
@@ -202,7 +202,7 @@ class RuntimeMCPStore:
             except sqlite3.IntegrityError:
                 raise RuntimeToolConflict("Connection name is already saved") from None
             self._credential(db, identity, sealed, 1)
-            self._audit(db, identity, 1, "created", actor)
+            self._audit(db, identity, 1, event, actor)
         return self.get(identity)
 
     def change(

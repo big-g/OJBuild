@@ -22,6 +22,12 @@ class Revision(BaseModel):
     revision: StrictInt = Field(ge=1)
 
 
+class LegacyImport(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    index: StrictInt = Field(ge=0, lt=128)
+    review_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class Edit(Revision):
     definition: Connection
 
@@ -44,6 +50,20 @@ class SecretSafeRoute(APIRoute):
 
 
 def create_runtime_mcp_router(manager):
+    from openjarvis.mcp.legacy_import import LegacyMCPImporter
+
+    importer = LegacyMCPImporter(manager)
+
+    def legacy_config(request):
+        config = getattr(request.app.state, "config", None)
+        if config is None:
+            from openjarvis.core.config import load_config
+
+            config = load_config()
+        return getattr(
+            getattr(getattr(config, "tools", None), "mcp", None), "servers", ""
+        )
+
     def admin(request: Request):
         authenticate_request(request)
         if not request.state.auth_user["is_admin"]:
@@ -90,6 +110,25 @@ def create_runtime_mcp_router(manager):
     def create(body: Connection, actor: str = Depends(admin)):
         return operation(
             lambda: manager.store.create(config(body), actor, token(body) or "")
+        )
+
+    @router.get("/imports/legacy")
+    def review_legacy(request: Request):
+        try:
+            return {"entries": importer.review(legacy_config(request))}
+        except ValueError:
+            raise HTTPException(
+                400, "Legacy MCP configuration is invalid or exceeds review limits"
+            ) from None
+
+    @router.post("/imports/legacy", status_code=201)
+    def import_legacy(
+        request: Request, body: LegacyImport, actor: str = Depends(admin)
+    ):
+        return operation(
+            lambda: importer.import_one(
+                legacy_config(request), body.index, body.review_digest, actor
+            )
         )
 
     @router.put("/{identity}")

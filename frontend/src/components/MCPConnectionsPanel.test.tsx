@@ -33,3 +33,24 @@ it('starts with password input and automated calls unchecked', () => {
   expect(html).toContain('never returned to this form');
   expect(html).not.toContain('checked=""');
 });
+
+it('offers review separately and explains disabled import with retained legacy config', () => {
+  const html = renderToStaticMarkup(<MCPConnectionsPanel />);
+  expect(html).toContain('Review legacy configuration');
+  expect(html).toContain('Import does not edit or disable the legacy configuration');
+  expect(html).toContain('fresh approval');
+});
+
+it('allows importing ready entries only and escapes imported metadata', async () => {
+  const { LegacyMCPReview } = await import('./MCPConnectionsPanel');
+  const rows = ['ready', 'blocked', 'already_saved'].map((status, index) => ({
+    index, status: status as 'ready' | 'blocked' | 'already_saved',
+    label: '<script>never execute</script>', reason: 'manual review required', review_digest: 'opaque',
+  }));
+  const html = renderToStaticMarkup(<LegacyMCPReview entries={rows} busy={false} onImport={() => {}} />);
+  expect((html.match(/disabled=""/g) || []).length).toBe(2);
+  expect(html).toContain('&lt;script&gt;');
+  expect(html).not.toContain('<script>');
+  const busy = renderToStaticMarkup(<LegacyMCPReview entries={rows} busy onImport={() => {}} />);
+  expect((busy.match(/disabled=""/g) || []).length).toBe(3);
+});

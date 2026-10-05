@@ -142,8 +142,18 @@ reflection and implicit POST retries. Short-lived clients terminate sessions on
 close when possible. Offline regressions cover lifecycle, races, network guards
 and administrator/secret boundaries; live acceptance remains pending.
 
-**Pending:** LAN MCP connections through explicit endpoint approval, legacy MCP
-configuration import, further installable tool adapters and local package installation;
+**Implemented:** administrator review and selective import of server-configured
+legacy MCP entries into database-backed connections. Opaque review handles bind the
+exact configuration and credentials; changed sources/restarts require fresh review.
+Imports remain disabled, undiscovered and unapproved, with confirmation required;
+bearer tokens enter the encrypted vault and audit provenance records the importer.
+Name collisions and repeated/concurrent imports never overwrite saved connections.
+Commands, unsupported settings and tool filters are blocked rather than silently
+executed or broadened. Legacy files/settings remain unchanged and must be disabled
+or removed before activating replacements. No remote connection occurs during import.
+
+**Pending:** LAN MCP connections through explicit endpoint approval,
+further installable tool adapters and local package installation;
 live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
 and logout. Implemented adapters do not complete runtime tool addition acceptance.
 

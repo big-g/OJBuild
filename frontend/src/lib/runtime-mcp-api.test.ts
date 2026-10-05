@@ -26,3 +26,15 @@ it('keeps saved tokens by omission and requires explicit replacement or clearing
   expect(connectionDefinition(saved, '', true).bearer_token).toBe('');
   expect(saved).not.toHaveProperty('bearer_token');
 });
+
+it('imports only the reviewed server entry without sending credentials or an owner', async () => {
+  const { reviewLegacyMCP, importLegacyMCP } = await import('./runtime-mcp-api');
+  const entry = { index: 2, label: 'Legacy entry 3', status: 'ready' as const, reason: '',
+    review_digest: 'a'.repeat(64), name: 'example', url: 'https://example.com/mcp', has_token: true };
+  apiFetch.mockResolvedValue({ ok: true, json: async () => ({ entries: [entry] }) });
+  expect(await reviewLegacyMCP()).toEqual([entry]);
+  expect(apiFetch).toHaveBeenLastCalledWith('/v1/runtime-mcp/imports/legacy', { method: 'GET' });
+  apiFetch.mockResolvedValue({ ok: true, json: async () => ({ enabled: false }) });
+  await importLegacyMCP(entry);
+  expect(JSON.parse(apiFetch.mock.calls[apiFetch.mock.calls.length - 1][1].body)).toEqual({ index: 2, review_digest: 'a'.repeat(64) });
+});

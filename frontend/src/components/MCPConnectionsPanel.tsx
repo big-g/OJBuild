@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { connectionDefinition, mcpRequest, type MCPConnection, type MCPDefinition } from '../lib/runtime-mcp-api';
+import { importLegacyMCP, reviewLegacyMCP, type LegacyMCPEntry } from '../lib/runtime-mcp-api';
 import type { ToolAudit } from '../lib/runtime-tools-api';
 
 const empty: MCPDefinition = { name: '', url: '', allow_without_confirmation: false };
@@ -29,8 +30,26 @@ export function MCPCatalogReview({ connection }: { connection: MCPConnection }) 
   </div>;
 }
 
+export function LegacyMCPReview({ entries, busy, onImport }: {
+  entries: LegacyMCPEntry[]; busy: boolean; onImport: (entry: LegacyMCPEntry) => void;
+}) {
+  return <div className="space-y-3">
+    {!entries.length && <p className="text-sm">No legacy MCP entries configured.</p>}
+    {entries.map(entry => <article key={entry.index} className="border rounded-lg p-3 space-y-2" style={{ borderColor: 'var(--color-border)' }}>
+      <h4 className="font-medium">{entry.name || entry.label}</h4>
+      {entry.url && <p className="text-sm break-all">{entry.url}</p>}
+      <p className="text-sm">{entry.status === 'ready'
+        ? `Ready to import · ${entry.has_token ? 'credential will be encrypted' : 'no credential'} · confirmation required`
+        : entry.reason}</p>
+      <button className={button} disabled={busy || entry.status !== 'ready'}
+        onClick={() => onImport(entry)}>Import disabled connection</button>
+    </article>)}
+  </div>;
+}
+
 export function MCPConnectionsPanel() {
   const [connections, setConnections] = useState<MCPConnection[]>([]);
+  const [legacy, setLegacy] = useState<LegacyMCPEntry[] | null>(null);
   const [definition, setDefinition] = useState<MCPDefinition>({ ...empty });
   const [editing, setEditing] = useState<MCPConnection | null>(null);
   const [token, setToken] = useState('');
@@ -86,6 +105,23 @@ export function MCPConnectionsPanel() {
       <div className="flex gap-2"><button className={button} disabled={busy} type="submit">Save connection</button>
         {editing && <button className={button} disabled={busy} type="button" onClick={reset}>Cancel edit</button>}</div>
     </form>
+    <section className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }}>
+      <h3 className="font-medium">Import legacy MCP connections</h3>
+      <p className="text-sm">Review the server's existing configuration, then select individual public HTTPS connections.
+        Credentials are never shown. Import saves a disabled connection requiring confirmation, discovery and fresh approval.
+        Local commands, private endpoints and tool filters need separate configuration.</p>
+      <p className="text-xs">Import does not edit or disable the legacy configuration. Remove or disable migrated legacy entries
+        and restart the service before approving their replacements to avoid two active paths.</p>
+      <button className={button} disabled={busy} onClick={() => void perform(async () => {
+        setLegacy(await reviewLegacyMCP());
+      }, 'Legacy configuration reviewed. Nothing was imported or connected.')}>
+        {legacy === null ? 'Review legacy configuration' : 'Refresh legacy review'}
+      </button>
+      {legacy !== null && <LegacyMCPReview entries={legacy} busy={busy} onImport={entry => void perform(async () => {
+        await importLegacyMCP(entry);
+        setLegacy(await reviewLegacyMCP());
+      }, 'Connection imported disabled. Discover and review its catalog before approval.')} />}
+    </section>
     {!connections.length && <p className="text-sm">No MCP connections saved.</p>}
     {connections.map(connection => <article key={connection.id} className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }}>
       <div className="flex flex-wrap justify-between gap-2"><h3 className="font-medium">{connection.name}</h3>

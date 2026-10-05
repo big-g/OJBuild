@@ -13,6 +13,40 @@ When OpenJarvis starts, it reads the `[tools.mcp]` section in `config.toml`. For
 
 If a server is unreachable or returns an error, OpenJarvis logs a warning and continues loading the remaining servers. One broken server does not prevent other tools from being available.
 
+## Import existing connections into web management
+
+In **Tools → MCP connections**, click **Review legacy configuration**. This reads
+`[tools.mcp].servers` from the running server configuration, including its configured
+external JSON file where applicable. The client cannot supply a path or credential
+for the import. Each entry is listed as ready, already saved or blocked. Review
+returns credential presence only; raw tokens, local commands and unsafe settings
+are never sent to the browser. No endpoint is contacted during review/import.
+
+Select **Import disabled connection** for an eligible named public HTTPS entry.
+The server rechecks the exact reviewed configuration, including the credential,
+and encrypts its bearer token using the existing vault. The new record has no
+catalog, approval or enabled status and requires per-call confirmation by default.
+Import audit history identifies the authenticated administrator. Existing saved
+connections are never overwritten. Changes to legacy settings, token rotation or
+a server restart invalidate prior review handles; refresh the review and retry.
+
+This migration supports the existing server-list format and canonical connection
+names (1–24 lowercase letters/digits/underscores, starting with a letter).
+Local commands, nonempty command arguments, include/exclude tool filters, unknown
+settings, unsafe URLs and duplicate legacy names are blocked. Configure or repair
+such entries deliberately rather than broadening their contracts through import.
+DNS/public-address validation still happens during discovery and tool calls;
+ready-to-import is not a connectivity or public-DNS certification. Review is bounded
+to 128 entries / 256 KiB of parsed configuration.
+
+Import leaves the original TOML/JSON unchanged and may copy a credential from its
+plaintext legacy source into encrypted storage. Remove or disable migrated legacy
+entries and their obsolete plaintext tokens, then restart `openjarvis-api.service`
+before discovering/reviewing/approving replacements. Disabling all legacy MCP entries
+uses `[tools.mcp] enabled = false`; saved database connections remain independent.
+An import does not disable other legacy connections and does not carry their old
+approvals, filter scopes or automatic-execution permissions into the new system.
+
 ## Configuration
 
 Administrators can now manage public HTTPS MCP connections dynamically from
@@ -20,6 +54,7 @@ Administrators can now manage public HTTPS MCP connections dynamically from
 approval. See [Runtime tools](runtime-tools.md#web-managed-mcp-connections).
 The file-based configuration below remains the legacy path, including stdio
 servers; existing entries are not automatically imported into web management.
+Use the explicit review/import workflow below for eligible connections.
 
 External MCP servers are configured in `config.toml` under `[tools.mcp]`. The
 `servers` field accepts either inline JSON or a path to a JSON file:

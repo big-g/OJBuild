@@ -38,3 +38,23 @@ export async function mcpRequest<T>(path = '', method = 'GET', body?: unknown): 
   }
   return response.json() as Promise<T>;
 }
+
+
+export interface LegacyMCPEntry {
+  index: number;
+  label: string;
+  status: 'ready' | 'blocked' | 'already_saved';
+  reason: string;
+  review_digest: string;
+  name?: string;
+  url?: string;
+  has_token?: boolean;
+}
+export async function reviewLegacyMCP(): Promise<LegacyMCPEntry[]> {
+  return (await mcpRequest<{ entries: LegacyMCPEntry[] }>('/imports/legacy')).entries;
+}
+export function importLegacyMCP(entry: LegacyMCPEntry): Promise<MCPConnection> {
+  return mcpRequest('/imports/legacy', 'POST', {
+    index: entry.index, review_digest: entry.review_digest,
+  });
+}
