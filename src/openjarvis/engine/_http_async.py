@@ -71,6 +71,10 @@ class AsyncHTTPEngineMixin:
             timeout=self._timeout,
             headers=getattr(self, "_headers", None),
             transport=self._async_transport,
+            **(
+                {"trust_env": False}
+                if getattr(self, "_trust_env", True) is False else {}
+            ),
         )
 
     def _get_async_client(self) -> httpx.AsyncClient:

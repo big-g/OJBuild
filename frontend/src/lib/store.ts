@@ -880,7 +880,7 @@ createServerConversation: async (model?: string) => {
         // same list as chat models. Auto-picking models[0] selected the
         // embedder and every chat failed with HTTP 400 "does not support
         // chat". Prefer a real chat model for selection / fallback.
-        const chatModels = models.filter((m) => !isEmbedOnlyModel(m.id));
+        const chatModels = models.filter((m) => m.owned_by === 'configured_ollama' || !isEmbedOnlyModel(m.id));
         const preferred =
           (state.settings.defaultModel &&
             chatModels.some((m) => m.id === state.settings.defaultModel) &&
@@ -890,12 +890,14 @@ createServerConversation: async (model?: string) => {
           '';
 
         const currentIsBad =
-          !!state.selectedModel && isEmbedOnlyModel(state.selectedModel);
+          !!state.selectedModel && !state.selectedModel.startsWith('oj/') && isEmbedOnlyModel(state.selectedModel);
         const currentMissing =
           !!state.selectedModel &&
           !models.some((m) => m.id === state.selectedModel);
 
-        if (!state.selectedModel || currentIsBad || currentMissing) {
+        // A configured server selection must not silently switch to another
+        // server when disabled/removed. Keep it until the user chooses again.
+        if (!state.selectedModel || currentIsBad || (currentMissing && !state.selectedModel.startsWith('oj/'))) {
           // Prefer a real chat model. If none exist, clear a bad/missing
           // selection rather than keeping an embed-only id that 400s on chat.
           return {

@@ -192,6 +192,42 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         bool(getattr(agent, "_tools", None)),
     )
     model = request_body.model
+    configured_engine = None
+    agent_engine_override = None
+    if model.startswith("oj/"):
+        from openjarvis.engine._base import EngineConnectionError
+        from openjarvis.engine.configured_models import (
+            ConfiguredModelEngine,
+            preserve_wrappers,
+        )
+
+        store = getattr(request.app.state, "model_connection_store", None)
+        if store is None:
+            raise HTTPException(503, "Configured model storage is unavailable")
+        try:
+            configured_engine = ConfiguredModelEngine(store, model)
+            has_images = any(m.images for m in request_body.messages)
+            runtime = getattr(request.app.state, "runtime_tool_manager", None)
+            agent_uses_tools = (
+                agent is not None and not has_images and not request_body.tools
+                and (bool(getattr(agent, "_tools", None))
+                     or (getattr(agent, "accepts_tools", False)
+                         and runtime is not None and bool(runtime.available())))
+            )
+            configured_engine.check(
+                tools=bool(request_body.tools) or agent_uses_tools, images=has_images,
+            )
+            engine = preserve_wrappers(engine, configured_engine)
+            if agent is not None:
+                agent_engine_override = configured_engine
+        except EngineConnectionError as exc:
+            raise HTTPException(400, str(exc)) from None
+        try:
+            await asyncio.to_thread(configured_engine.check, live=True,
+                                    tools=bool(request_body.tools) or agent_uses_tools,
+                                    images=has_images)
+        except EngineConnectionError as exc:
+            raise HTTPException(503, str(exc)) from None
 
     # Images are decoded by Ollama. Keep them out of the session database and
     # reject unsupported routes before a model or agent can silently drop them.
@@ -202,7 +238,9 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
 
         from openjarvis.server.cloud_router import get_provider
 
-        if get_provider(model) is not None or request_body.tools:
+        if (
+            configured_engine is None and get_provider(model) is not None
+        ) or request_body.tools:
             raise HTTPException(
                 status_code=400,
                 detail="Image input currently requires a local model without tools",
@@ -475,6 +513,8 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
                 session_store=session_store,
                 session_id=request_body.session_id,
                 user_id=user_id,
+                **({"engine_override": agent_engine_override}
+                   if agent_engine_override is not None else {}),
             )
 
         return await _handle_stream(
@@ -520,6 +560,8 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
             complexity_info,
             trace_store=getattr(request.app.state, "trace_store", None),
             bus=getattr(request.app.state, "bus", None),
+            **({"engine_override": agent_engine_override}
+               if agent_engine_override is not None else {}),
         )
     else:
         bus = getattr(request.app.state, "bus", None)
@@ -679,6 +721,9 @@ def _engine_key_for_model(engine: Any, model: str) -> str | None:
 def _uses_direct_cloud_router(engine: Any, model: str) -> bool:
     """Whether *model* should bypass the configured engine for direct cloud."""
     from openjarvis.server.cloud_router import is_cloud_model
+
+    if model.startswith("oj/"):
+        return False
 
     return is_cloud_model(model) and _engine_key_for_model(engine, model) != "litellm"
 
@@ -883,6 +928,7 @@ def _handle_agent(
     *,
     trace_store=None,
     bus=None,
+    engine_override=None,
 ) -> ChatCompletionResponse:
     """Run through agent.
 
@@ -934,6 +980,7 @@ def _handle_agent(
     )
     with _get_agent_model_lock(agent), runtime_context:
         original_model = agent._model
+        original_engine = getattr(agent, "_engine", None)
         missing = object()
         original_tokens = getattr(agent, "_max_tokens", missing)
         original_finish = getattr(agent, "_last_finish_reason", missing)
@@ -942,6 +989,10 @@ def _handle_agent(
         if model:
             agent._model = model
         try:
+            if engine_override is not None:
+                from openjarvis.engine.configured_models import preserve_wrappers
+
+                agent._engine = preserve_wrappers(original_engine, engine_override)
             if trace_store is not None:
                 from openjarvis.traces.collector import TraceCollector
 
@@ -964,6 +1015,8 @@ def _handle_agent(
             )
         finally:
             agent._model = original_model
+            if engine_override is not None:
+                agent._engine = original_engine
             for attribute, original in (
                 ("_max_tokens", original_tokens),
                 ("_last_finish_reason", original_finish),
@@ -1018,6 +1071,7 @@ async def _handle_agent_stream(
     session_store=None,
     session_id=None,
     user_id=None,
+    engine_override=None,
 ):
 
     """Run the configured agent and return its result as an SSE response.
@@ -1062,6 +1116,8 @@ async def _handle_agent_stream(
                 complexity_info,
                 trace_store=trace_store,
                 bus=bus,
+                **({"engine_override": engine_override}
+                   if engine_override is not None else {}),
             )
         except Exception as exc:
             logging.getLogger("openjarvis.server").error(
@@ -1607,6 +1663,7 @@ async def list_models(request: Request) -> ModelListResponse:
     configured LiteLLM engine remain here because LiteLLM owns their routing
     and may use provider-qualified IDs that resemble OpenRouter IDs.
     """
+    from openjarvis.engine.configured_models import selectable_models
     from openjarvis.server.cloud_router import is_cloud_model, list_local_models
 
     # Prefer engine.list_models() so mock engines work in tests.
@@ -1628,6 +1685,12 @@ async def list_models(request: Request) -> ModelListResponse:
     # the UI auto-select nomic-embed-text and fail every generation with 400.
     model_ids = [m for m in model_ids if not is_embed_only_model(m)]
 
+    configured_models = await asyncio.to_thread(
+        selectable_models, getattr(request.app.state, "model_connection_store", None)
+    )
+    if configured_models:
+        get_authenticated_user_id(request)
+
     return ModelListResponse(
         data=[
             ModelObject(
@@ -1639,6 +1702,8 @@ async def list_models(request: Request) -> ModelListResponse:
                 ),
             )
             for mid in model_ids
+        ] + [
+            ModelObject(**model) for model in configured_models
         ],
     )
 
@@ -1684,6 +1749,9 @@ async def pull_model(request: Request):
 @router.delete("/v1/models/{model_name:path}")
 async def delete_model(model_name: str, request: Request):
     """Delete a model from Ollama."""
+    if model_name.startswith("oj/"):
+        raise HTTPException(400, "Manage model files on their Ollama server; "
+                            "this picker does not delete configured-server models")
     engine = request.app.state.engine
     engine_name = getattr(request.app.state, "engine_name", "")
     if engine_name != "ollama" and getattr(engine, "engine_id", "") != "ollama":

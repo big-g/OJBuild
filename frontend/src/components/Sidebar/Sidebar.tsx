@@ -48,6 +48,7 @@ export function Sidebar() {
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const createServerConversation = useAppStore((s) => s.createServerConversation);
   const selectedModel = useAppStore((s) => s.selectedModel);
+  const models = useAppStore((s) => s.models);
   const serverInfo = useAppStore((s) => s.serverInfo);
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
   const modelLoading = useAppStore((s) => s.modelLoading);
@@ -173,7 +174,7 @@ export function Sidebar() {
               >
                 {deepResearch
                   ? 'Deep Research'
-                  : selectedModel || serverInfo?.model || 'Select model'}
+                  : models.find(m => m.id === selectedModel)?.display_name || selectedModel || serverInfo?.model || 'Select model'}
               </span>
               {modelLoading && (
                 <span className="text-[10px] block text-left" style={{ color: 'var(--color-accent)' }}>

@@ -6,9 +6,9 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, StrictInt
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
-from openjarvis.engine.connection_discovery import discover
+from openjarvis.engine.connection_discovery import discover, inspect_model
 from openjarvis.engine.connection_store import ConnectionConflict, adapter_definition
 from openjarvis.server.auth import authenticate_admin_request
 
@@ -26,6 +26,14 @@ class Revision(BaseModel):
 
 class Edit(Connection, Revision):
     pass
+
+
+class ModelRevision(Revision):
+    serving_id: str = Field(min_length=1, max_length=256)
+
+
+class Enabled(Revision):
+    enabled: StrictBool
 
 
 class SafeRoute(APIRoute):
@@ -99,6 +107,54 @@ def create_model_connections_router(store):
     @router.get("/{identity}/audit")
     def audit(identity: str):
         return {"events": store.audit(identity)}
+
+    @router.post("/{identity}/enabled")
+    def enabled(
+        identity: str, body: Enabled, actor: str = Depends(authenticate_admin_request)
+    ):
+        return operation(
+            lambda: store.enable(identity, body.revision, body.enabled, actor)
+        )
+
+    @router.post("/{identity}/capabilities")
+    def capabilities(
+        identity: str,
+        body: ModelRevision,
+        request: Request,
+        actor: str = Depends(authenticate_admin_request),
+    ):
+        connection = operation(lambda: store.get(identity, body.revision))
+        if connection["adapter_id"] != "ollama" or connection["config_version"] != 1:
+            raise HTTPException(400, "Unsupported model adapter/settings version")
+        if not any(m["serving_id"] == body.serving_id for m in connection["catalog"]):
+            raise HTTPException(400, "Model is not in this connection's catalog")
+        try:
+            caps = inspect_model(connection, body.serving_id)
+        except (httpx.HTTPError, OSError, ValueError, RecursionError):
+            authenticate_admin_request(request)
+            updated = operation(
+                lambda: store.model_capabilities(
+                    identity, body.revision, body.serving_id, None, actor
+                )
+            )
+            return {
+                "ok": False,
+                "connection": updated,
+                "message": "Capability read failed. Check Ollama availability/version, "
+                "then test the catalog and read capabilities again.",
+            }
+        authenticate_admin_request(request)
+        updated = operation(
+            lambda: store.model_capabilities(
+                identity, body.revision, body.serving_id, caps, actor
+            )
+        )
+        return {
+            "ok": True,
+            "connection": updated,
+            "message": "Ollama capabilities recorded. Enable this connection for chat "
+            "when ready. Provider reports are not behavioral verification.",
+        }
 
     @router.post("/{identity}/test")
     def test(

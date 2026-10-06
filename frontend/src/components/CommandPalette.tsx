@@ -115,7 +115,7 @@ export function CommandPalette() {
 
   const filtered = tab === 'installed'
     ? (query
-        ? models.filter((m) => m.id.toLowerCase().includes(query.toLowerCase()))
+        ? models.filter((m) => (m.display_name || m.id).toLowerCase().includes(query.toLowerCase()))
         : models)
     : tab === 'catalogue'
     ? CATALOGUE_MODELS.filter((m) =>
@@ -154,7 +154,7 @@ export function CommandPalette() {
       addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Switching to ${modelId}...` });
       try {
         await preloadModel(modelId, owner);
-        addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `${modelId} loaded` });
+        addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: owner === 'configured_ollama' ? `${modelId} selected; its server will load it on the first request` : `${modelId} loaded` });
       } catch (e: any) {
         addLogEntry({ timestamp: Date.now(), level: 'error', category: 'model', message: `Failed to load ${modelId}: ${e.message}` });
       } finally {
@@ -377,7 +377,7 @@ export function CommandPalette() {
                       )}
                       <div className="flex-1 min-w-0">
                         <div className="text-sm truncate" style={{ color: isActive ? 'var(--color-accent)' : 'var(--color-text)', fontWeight: isActive ? 500 : 400 }}>
-                          {model.id}
+                          {model.display_name || model.id}
                         </div>
                       </div>
                       {isActive && (
@@ -386,7 +386,7 @@ export function CommandPalette() {
                         </span>
                       )}
                     </button>
-                    {model.owned_by !== 'litellm' && (
+                    {model.owned_by !== 'litellm' && model.owned_by !== 'configured_ollama' && (
                       <button
                         onClick={() => handleDelete(model.id)}
                         disabled={isDeleting}

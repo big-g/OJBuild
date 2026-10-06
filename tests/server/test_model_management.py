@@ -306,9 +306,15 @@ class TestModelsEndpointExtended:
             "openjarvis.server.routes.asyncio.to_thread",
             new_callable=AsyncMock,
         ) as mock_to_thread:
-            mock_to_thread.return_value = ["qwen3.5:4b"]
+            mock_to_thread.side_effect = lambda function, *args: function(*args)
             resp = client.get("/v1/models")
 
         assert resp.status_code == 200
         assert [m["id"] for m in resp.json()["data"]] == ["qwen3.5:4b"]
-        mock_to_thread.assert_awaited_once_with(engine.list_models)
+        from openjarvis.engine.configured_models import selectable_models
+
+        mock_to_thread.assert_any_await(engine.list_models)
+        mock_to_thread.assert_any_await(
+            selectable_models, app.state.model_connection_store,
+        )
+        assert mock_to_thread.await_count == 2

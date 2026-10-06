@@ -7,9 +7,10 @@ export interface ModelConnection {
   adapter_id: 'ollama';
   config_version: number;
   revision: number;
+  enabled: boolean;
   discovery_state: 'untested' | 'discovered' | 'error';
   tested_at: number;
-  catalog: { serving_id: string; size_bytes: number; capability_state: 'unknown' }[];
+  catalog: { serving_id: string; size_bytes: number; capability_state: 'unknown' | 'reported'; capabilities?: string[]; capabilities_at?: number }[];
 }
 export interface ModelConnectionEvent { revision: number; event: string; actor: string; timestamp: number }
 
@@ -37,3 +38,7 @@ export const removeModelConnection = (connection: ModelConnection) =>
   request<void>(`/${encodeURIComponent(connection.id)}?revision=${connection.revision}`, 'DELETE');
 export const getModelConnectionAudit = (id: string) =>
   request<{ events: ModelConnectionEvent[] }>(`/${encodeURIComponent(id)}/audit`);
+export const readModelCapabilities = (connection: ModelConnection, serving_id: string) =>
+  request<{ ok: boolean; connection: ModelConnection; message: string }>(`/${encodeURIComponent(connection.id)}/capabilities`, 'POST', { revision: connection.revision, serving_id });
+export const enableModelConnection = (connection: ModelConnection, enabled: boolean) =>
+  request<ModelConnection>(`/${encodeURIComponent(connection.id)}/enabled`, 'POST', { revision: connection.revision, enabled });

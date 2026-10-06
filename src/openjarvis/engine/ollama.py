@@ -120,6 +120,7 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         host: str | None = None,
         *,
         timeout: float = 1800.0,
+        trust_env: bool = True,
     ) -> None:
         # Priority: explicit host (from config.toml) > OLLAMA_HOST env var > default
         if host is None:
@@ -130,11 +131,15 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         # wedged token read is bounded by ``timeout`` instead of hanging the
         # single event loop for the httpx default.
         self._timeout = timeout
+        self._trust_env = trust_env
         # Injection seam for tests: an ``httpx.MockTransport`` swapped in here drives
         # the async stream path with no real Ollama server. ``None`` in production so
         # httpx uses its default networking.
         self._async_transport: httpx.AsyncBaseTransport | None = None
-        self._client = httpx.Client(base_url=self._host, timeout=timeout)
+        self._client = httpx.Client(
+            base_url=self._host, timeout=timeout,
+            **({"trust_env": False} if not trust_env else {}),
+        )
         # Last stream usage — captured from Ollama's final chunk
         self._last_stream_usage: Dict[str, int] = {}
 

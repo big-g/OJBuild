@@ -33,6 +33,7 @@ export function resolveChatEngine({
   // The finish chunk describes the backend that handled this exact request.
   // /v1/info describes only the server's configured wrapper (often "multi").
   if (routedEngine?.trim()) return routedEngine.trim();
+  if (selectedOwner === 'configured_ollama' || selectedModel.startsWith('oj/')) return 'ollama';
   if (serverEngine?.trim()) return serverEngine.trim();
   if (selectedOwner === 'litellm') return 'litellm';
   return CLOUD_PREFIXES.some((prefix) => selectedModel.startsWith(prefix))

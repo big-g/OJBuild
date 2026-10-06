@@ -60,12 +60,27 @@ Bounded catalog tests reject redirects, proxies, oversized/malformed catalogs
 and duplicate serving IDs. Per-connection catalogs persist across restarts;
 edits/failures invalidate snapshots, and stale tests cannot overwrite new settings.
 Catalog presence is distinct from verified capability/inference availability.
-Saving/testing neither changes current inference routing nor runs/pulls models.
+Saving/testing never enables a connection or runs/pulls models.
 See [Model server connections](../user-guide/model-connections.md).
 
-**Next:** integrate explicit selection across saved servers and capability/health
-validation, then configurable task rules, benchmark-informed assignments,
-fallback and trace explanations. Live Ubuntu/browser validation remains required.
+**Implemented second batch:** administrator per-model capability discovery and
+explicit connection enable/disable. Provider manifests are labelled as reports,
+not behavioral verification. Only enabled connections with reported chat-capable
+models appear in the authenticated picker, with stable server-bound identities
+and readable server labels. Standard chat, raw-tool streaming, image input,
+server-agent execution and Deep Research use the selected endpoint; research
+configuration overrides keep priority. Live revision/manifest checks gate each
+model call; changes/failures withdraw enablement. Required tools are never stripped
+on provider rejection and selected-server failures do not fall back to cloud or
+another server. Shared-agent engine/model restoration uses the existing lock;
+known guardrail/telemetry wrappers and the evidence gate are retained. Unknown
+wrappers fail visibly. The picker preserves missing configured selections instead
+of silently changing servers; remote models are not preloaded/deleted through
+browser-local Ollama. Schema migration leaves existing connections disabled.
+
+**Next:** configurable task rules, benchmark-informed assignments, managed-agent/
+scheduled configuration, explicit fallback and trace explanations. Live Ubuntu/
+browser/desktop/Android validation and behavioral capability tests remain required.
 Authenticated/public inference endpoints and custom TLS trust are adapter
 extensions. Shared-agent isolation, resource limits and load testing precede
 parallel execution. Phase 3 extends routing to image/3D workflows and optional

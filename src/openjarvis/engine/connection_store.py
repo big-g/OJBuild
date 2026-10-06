@@ -23,7 +23,7 @@ def adapter_definition():
         "adapter_id": "ollama",
         "display_name": "Ollama",
         "config_version": 1,
-        "operations": ["catalog_discovery"],
+        "operations": ["catalog_discovery", "capability_discovery", "chat_enable"],
         "required_capabilities": [],
         "requires_administrator": True,
         "settings": [
@@ -98,7 +98,7 @@ class ModelConnectionStore:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2):
+            if version not in (0, 1, 2, 3):
                 raise ValueError("Unsupported model connection database version")
             if version == 0:
                 db.execute("""CREATE TABLE model_connections (
@@ -121,6 +121,12 @@ class ModelConnectionStore:
                     "config_version INTEGER NOT NULL DEFAULT 1"
                 )
                 db.execute("PRAGMA user_version=2")
+            if version < 3:
+                db.execute(
+                    "ALTER TABLE model_connections ADD COLUMN "
+                    "enabled INTEGER NOT NULL DEFAULT 0"
+                )
+                db.execute("PRAGMA user_version=3")
         self.path.chmod(0o600)
 
     @contextmanager
@@ -137,6 +143,7 @@ class ModelConnectionStore:
     def public(row):
         value = dict(row)
         value["catalog"] = json.loads(value["catalog"])
+        value["enabled"] = bool(value["enabled"])
         return value
 
     def list(self):
@@ -192,7 +199,8 @@ class ModelConnectionStore:
             self._row(db, identity, revision)
             db.execute(
                 "UPDATE model_connections SET name=?,url=?,revision=revision+1,"
-                "catalog='[]',discovery_state='untested',tested_at=0,updated_at=? "
+                "catalog='[]',discovery_state='untested',tested_at=0,enabled=0,"
+                "updated_at=? "
                 "WHERE id=?",
                 (settings["name"], settings["url"], time.time(), identity),
             )
@@ -205,7 +213,7 @@ class ModelConnectionStore:
             self._row(db, identity, revision)
             db.execute(
                 "UPDATE model_connections SET catalog=?,discovery_state=?,"
-                "tested_at=?,updated_at=?,revision=revision+1 WHERE id=?",
+                "tested_at=?,updated_at=?,enabled=0,revision=revision+1 WHERE id=?",
                 (
                     json.dumps(catalog if success else [], allow_nan=False),
                     "discovered" if success else "error",
@@ -220,6 +228,65 @@ class ModelConnectionStore:
                 revision + 1,
                 "discovered" if success else "test_failed",
                 actor,
+            )
+            return self.public(self._row(db, identity, None))
+
+    def model_capabilities(self, identity, revision, serving_id, capabilities, actor):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self._row(db, identity, revision)
+            catalog = json.loads(row["catalog"])
+            model = next((m for m in catalog if m["serving_id"] == serving_id), None)
+            if model is None:
+                raise ValueError(
+                    "Model is not in this connection's catalog. Test catalog again."
+                )
+            model["capabilities"] = capabilities or []
+            model["capability_state"] = (
+                "reported" if capabilities is not None else "unknown"
+            )
+            model["capabilities_at"] = time.time() if capabilities is not None else 0
+            db.execute(
+                "UPDATE model_connections SET catalog=?,revision=revision+1,"
+                "enabled=0,updated_at=? WHERE id=?",
+                (json.dumps(catalog, allow_nan=False), time.time(), identity),
+            )
+            self._audit(
+                db,
+                identity,
+                revision + 1,
+                "capabilities_read"
+                if capabilities is not None
+                else "capabilities_failed",
+                actor,
+            )
+            return self.public(self._row(db, identity, None))
+
+    def enable(self, identity, revision, enabled, actor):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = self._row(db, identity, revision)
+            if enabled and (
+                row["adapter_id"] != "ollama"
+                or row["config_version"] != 1
+                or row["discovery_state"] != "discovered"
+                or not any(
+                    m.get("capability_state") == "reported"
+                    and "completion" in m.get("capabilities", [])
+                    for m in json.loads(row["catalog"])
+                )
+            ):
+                raise ValueError(
+                    "Test catalog and read capabilities for a chat model "
+                    "before enabling."
+                )
+            db.execute(
+                "UPDATE model_connections SET enabled=?,revision=revision+1,"
+                "updated_at=? WHERE id=?",
+                (int(enabled), time.time(), identity),
+            )
+            self._audit(
+                db, identity, revision + 1, "enabled" if enabled else "disabled", actor
             )
             return self.public(self._row(db, identity, None))
 

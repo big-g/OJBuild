@@ -10,12 +10,15 @@ from openjarvis.engine.connection_store import definition
 MAX_CATALOG_BYTES = 1_048_576
 
 
-def discover(connection):
+def read_json(connection, path, method="GET", body=None):
     endpoint = definition(connection["name"], connection["url"])["url"]
     started = time.monotonic()
     with httpx.Client(timeout=10, follow_redirects=False, trust_env=False) as client:
         with client.stream(
-            "GET", endpoint + "/api/tags", headers={"Accept-Encoding": "identity"}
+            method,
+            endpoint + path,
+            headers={"Accept-Encoding": "identity"},
+            **({"json": body} if body is not None else {}),
         ) as response:
             if response.status_code != 200:
                 raise ValueError("Catalog request did not succeed")
@@ -37,7 +40,11 @@ def discover(connection):
                 ):
                     raise ValueError("Catalog exceeds discovery limits")
                 body.extend(chunk)
-    payload = json.loads(body)
+    return json.loads(body)
+
+
+def discover(connection):
+    payload = read_json(connection, "/api/tags")
     models = payload.get("models") if isinstance(payload, dict) else None
     if not isinstance(models, list) or len(models) > 500:
         raise ValueError("Invalid or oversized model catalog")
@@ -64,3 +71,21 @@ def discover(connection):
             {"serving_id": name, "size_bytes": size, "capability_state": "unknown"}
         )
     return catalog
+
+
+def inspect_model(connection, serving_id):
+    if not any(m["serving_id"] == serving_id for m in connection["catalog"]):
+        raise ValueError("Model is not in this connection's catalog")
+    payload = read_json(connection, "/api/show", "POST", {"model": serving_id})
+    caps = payload.get("capabilities") if isinstance(payload, dict) else None
+    if (
+        not isinstance(caps, list)
+        or len(caps) > 16
+        or not all(
+            isinstance(c, str) and 1 <= len(c) <= 64 and c.isascii() and c.isalpha()
+            for c in caps
+        )
+        or len(set(caps)) != len(caps)
+    ):
+        raise ValueError("Ollama did not return a valid capability manifest")
+    return sorted(caps)

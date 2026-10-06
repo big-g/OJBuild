@@ -4,10 +4,12 @@ import { ModelConnectionsPanel } from './ModelConnectionsPanel';
 const { user } = vi.hoisted(() => ({ user: { is_admin: true } }));
 vi.mock('../lib/auth', () => ({ getStoredUser: () => user }));
 vi.mock('../lib/model-connections-api', () => ({}));
+vi.mock('../lib/api', () => ({ fetchModels: vi.fn() }));
+vi.mock('../lib/store', () => ({ useAppStore: { getState: () => ({ setModels: vi.fn() }) } }));
 beforeEach(() => { user.is_admin = true; });
 it('explains the actual scope and backend-local address meaning', () => {
   const html = renderToStaticMarkup(<ModelConnectionsPanel />);
-  expect(html).toContain('do not change the current chat model');
+  expect(html).toContain('does not change the current chat model');
   expect(html).toContain('Localhost refers to the backend server');
   expect(html).toContain('does not pull, load or run models');
   expect(html).toContain('HTTP LAN traffic is unencrypted');

@@ -360,12 +360,17 @@ def test_adapter_metadata_and_migration_preserve_saved_connections(setup):
     result = client.get("/v1/model-connections/adapters", headers=headers["admin"])
     adapter = result.json()["adapters"][0]
     assert adapter["config_version"] == row["config_version"] == 1
-    assert adapter["operations"] == ["catalog_discovery"]
+    assert adapter["operations"] == [
+        "catalog_discovery",
+        "capability_discovery",
+        "chat_enable",
+    ]
     assert adapter["requires_administrator"]
     assert adapter["required_capabilities"] == []
     # Reconstruct the v1 layout, then exercise the additive migration.
     with sqlite3.connect(store.path) as db:
         db.execute("ALTER TABLE model_connections DROP COLUMN config_version")
+        db.execute("ALTER TABLE model_connections DROP COLUMN enabled")
         db.execute("PRAGMA user_version=1")
     migrated = ModelConnectionStore(store.path)
     assert migrated.get(row["id"]) == row

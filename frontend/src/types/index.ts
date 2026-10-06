@@ -165,6 +165,12 @@ export interface ModelInfo {
   object: string;
   created: number;
   owned_by: string;
+  display_name?: string | null;
+  serving_id?: string | null;
+  connection_id?: string | null;
+  connection_name?: string | null;
+  capabilities?: string[] | null;
+  capability_state?: string | null;
 }
 
 export interface ProviderSavings {

@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { engineFromCompletionChunk, resolveChatEngine } from './chat-telemetry';
 
 describe('chat engine telemetry', () => {
+  it('uses the selected Ollama server rather than the static default engine label', () => {
+    expect(resolveChatEngine({
+      selectedModel: 'oj/server/model', selectedOwner: 'configured_ollama', serverEngine: 'multi',
+    })).toBe('ollama');
+  });
   it('reads the routed engine from the completion finish chunk', () => {
     expect(
       engineFromCompletionChunk({

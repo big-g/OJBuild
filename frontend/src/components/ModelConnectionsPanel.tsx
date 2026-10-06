@@ -1,8 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { getStoredUser } from '../lib/auth';
+import { fetchModels } from '../lib/api';
+import { useAppStore } from '../lib/store';
 import {
   createModelConnection, getModelConnectionAudit, listModelConnections,
   removeModelConnection, testModelConnection, updateModelConnection,
+  readModelCapabilities, enableModelConnection,
   type ModelConnection, type ModelConnectionEvent,
 } from '../lib/model-connections-api';
 
@@ -16,7 +19,10 @@ export function ModelConnectionsPanel() {
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [events, setEvents] = useState<{ name: string; entries: ModelConnectionEvent[] } | null>(null);
-  async function refresh() { setConnections((await listModelConnections()).connections); }
+  async function refresh() {
+    setConnections((await listModelConnections()).connections);
+    useAppStore.getState().setModels(await fetchModels());
+  }
   useEffect(() => { if (isAdmin) void refresh().catch(e => setError(e instanceof Error ? e.message : 'Cannot load model connections')); }, [isAdmin]);
   async function act(action: () => Promise<void>) {
     if (busy) return;
@@ -30,11 +36,11 @@ export function ModelConnectionsPanel() {
   const input = 'block w-full rounded border px-3 py-2 bg-transparent';
   return <section className="rounded-lg border p-4 space-y-3" aria-label="Model server connections">
     <h3 className="font-semibold">Model server connections</h3>
-    <p className="text-sm">Save multiple Ollama servers for upcoming model routing. Saved connections and discovered catalogs do not change the current chat model or inference source.</p>
+    <p className="text-sm">Save multiple Ollama servers. Test the catalog, read model capabilities, then enable the connection for chat. Models appear in the installed model picker with their server names. Adding a connection does not change the current chat model.</p>
     <details className="text-sm"><summary className="cursor-pointer">Connection setup help</summary>
       <p className="mt-2">Use localhost for Ollama on the OpenJarvis server, or the private IP of another machine running Ollama. Localhost refers to the backend server, not this browser. Remote Ollama must listen on its LAN address and allow access from the OpenJarvis server through its firewall.</p>
-      <p>Test reads the installed model catalog only. It does not pull, load or run models. An empty catalog is valid. Discovery is a snapshot, not proof of current availability or tool-calling support. HTTP LAN traffic is unencrypted; use only a trusted LAN or verified HTTPS.</p>
-      <p>Each connection has its own identity, so identical model names on different servers stay separate. Task assignments, capability validation and chat routing follow in the next workstream.</p>
+      <p>Test reads the installed model catalog only. It does not pull, load or run models. Read capabilities asks Ollama for a model manifest without running it. Capability labels are provider reports, not behavioral verification. Enable for chat makes reported chat-capable models available to all authenticated users. Requests also check live availability and required tool/image capabilities. HTTP LAN traffic is unencrypted; use only a trusted LAN or verified HTTPS.</p>
+      <p>Each connection has its own identity, so identical model names on different servers stay separate. Edits and catalog/capability reads disable the connection; review and enable it again. Disabled/removed connections block later model calls in an active agent run. A generation already submitted may finish. Task assignments and automatic routing remain the next workstream.</p>
     </details>
     <form className="space-y-3" onSubmit={(e: FormEvent) => { e.preventDefault(); void act(async () => {
       if (editing) await updateModelConnection(editing, name.trim(), url.trim());
@@ -52,10 +58,11 @@ export function ModelConnectionsPanel() {
     </form>
     <ul className="space-y-3">{connections.map(connection => <li key={connection.id} className="rounded border p-3 space-y-2">
       <p><strong>{connection.name}</strong> — {connection.url}</p>
-      <p className="text-sm">Catalog: {connection.discovery_state}{connection.tested_at > 0 && ` · Last test: ${new Date(connection.tested_at * 1000).toLocaleString()}`}</p>
-      {connection.catalog.length > 0 && <ul className="text-sm">{connection.catalog.map(model => <li key={model.serving_id}>{model.serving_id} · {(model.size_bytes / 1e9).toFixed(1)} GB package · capabilities unverified</li>)}</ul>}
+      <p className="text-sm">Chat: {connection.enabled ? 'enabled' : 'disabled'} · Catalog: {connection.discovery_state}{connection.tested_at > 0 && ` · Last test: ${new Date(connection.tested_at * 1000).toLocaleString()}`}</p>
+      {connection.catalog.length > 0 && <ul className="text-sm space-y-2">{connection.catalog.map(model => <li key={model.serving_id}>{model.serving_id} · {(model.size_bytes / 1e9).toFixed(1)} GB package · {model.capability_state === 'reported' ? `Ollama reports: ${model.capabilities?.join(', ') || 'none'}` : 'capabilities unknown'} <button disabled={busy || editing !== null} className="rounded border px-2 py-1" type="button" onClick={() => void act(async () => { const result = await readModelCapabilities(connection, model.serving_id); if (result.ok) setMessage(result.message); else setError(result.message); })}>Read capabilities</button></li>)}</ul>}
       {connection.discovery_state === 'discovered' && connection.catalog.length === 0 && <p className="text-sm">No installed models found.</p>}
       <div className="flex flex-wrap gap-2">
+        <button disabled={busy || editing !== null} className="rounded border px-3 py-1" type="button" onClick={() => void act(async () => { await enableModelConnection(connection, !connection.enabled); setMessage(connection.enabled ? 'Connection disabled for chat.' : 'Connection enabled. Open the installed model picker to select a model.'); })}>{connection.enabled ? 'Disable for chat' : 'Enable for chat'}</button>
         <button disabled={busy || editing !== null} className="rounded border px-3 py-1" type="button" onClick={() => void act(async () => { const result = await testModelConnection(connection); if (result.ok) setMessage(result.message); else setError(result.message); })}>Test catalog</button>
         <button disabled={busy} className="rounded border px-3 py-1" type="button" onClick={() => { setEditing(connection); setName(connection.name); setUrl(connection.url); setError(''); setMessage(''); }}>Edit</button>
         <button disabled={busy} className="rounded border px-3 py-1" type="button" onClick={() => { if (window.confirm(`Remove ${connection.name}? This removes the saved connection, not models on its server.`)) void act(async () => { await removeModelConnection(connection); if (editing?.id === connection.id) reset(); setMessage('Connection removed.'); }); }}>Remove</button>

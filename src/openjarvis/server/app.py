@@ -477,6 +477,16 @@ def create_app(
         )
     )
     app.include_router(create_model_connections_router(app.state.model_connection_store))
+    from fastapi.responses import JSONResponse
+
+    from openjarvis.engine.configured_models import ConfiguredModelError
+
+    @app.exception_handler(ConfiguredModelError)
+    async def configured_model_error(_request, error):
+        return JSONResponse(
+            status_code=error.status_code, content={"detail": str(error)}
+        )
+
     from openjarvis.server.runtime_tools_router import create_runtime_tools_router
 
     app.include_router(create_runtime_tools_router(runtime_tools))

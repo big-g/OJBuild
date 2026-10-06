@@ -2,11 +2,22 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import {
   createModelConnection, listModelConnections, removeModelConnection,
   testModelConnection, updateModelConnection, type ModelConnection,
+  readModelCapabilities, enableModelConnection,
 } from './model-connections-api';
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
 vi.mock('./api', () => ({ apiFetch }));
 const connection = { id: 'server/one', name: 'gpu', url: 'http://127.0.0.1:11434', revision: 3 } as ModelConnection;
 beforeEach(() => { apiFetch.mockReset(); apiFetch.mockImplementation(async () => new Response('{}', { status: 200 })); });
+it('binds capability reads and chat activation to the reviewed revision', async () => {
+  await readModelCapabilities(connection, 'qwen3.5:9b');
+  expect(apiFetch).toHaveBeenLastCalledWith('/v1/model-connections/server%2Fone/capabilities', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ revision: 3, serving_id: 'qwen3.5:9b' }),
+  }));
+  await enableModelConnection(connection, true);
+  expect(apiFetch).toHaveBeenLastCalledWith('/v1/model-connections/server%2Fone/enabled', expect.objectContaining({
+    method: 'POST', body: JSON.stringify({ revision: 3, enabled: true }),
+  }));
+});
 it('uses the authenticated API wrapper and binds edits/tests to their revision', async () => {
   await updateModelConnection(connection, 'second', 'http://192.168.1.20:11434');
   expect(apiFetch).toHaveBeenLastCalledWith('/v1/model-connections/server%2Fone', expect.objectContaining({

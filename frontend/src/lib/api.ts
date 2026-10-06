@@ -413,6 +413,9 @@ export async function deleteModel(modelName: string): Promise<void> {
 const _CLOUD_PREFIXES = ['gpt-', 'o1-', 'o3-', 'o4-', 'claude-', 'gemini-', 'openrouter/'];
 
 export async function preloadModel(modelName: string, owner?: string): Promise<void> {
+  // Configured servers load on the first backend request. Never send their
+  // server-bound identities to Ollama on the browser/desktop's localhost.
+  if (owner === 'configured_ollama' || modelName.startsWith('oj/')) return;
   // Cloud models don't need Ollama preloading
   if (owner === 'litellm' || _CLOUD_PREFIXES.some(p => modelName.startsWith(p))) {
     return;

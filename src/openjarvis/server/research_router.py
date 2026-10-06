@@ -104,6 +104,7 @@ def _build_planner_engine(
     active_engine_key: str = "",
     active_model: str = "",
     request_model: str = "",
+    model_connection_store=None,
 ) -> tuple[str, InferenceEngine, str]:
     """Instantiate the exact configured planner engine.
 
@@ -118,6 +119,22 @@ def _build_planner_engine(
         active_model=active_model,
         request_model=request_model,
     )
+    if model.startswith("oj/"):
+        from openjarvis.engine.configured_models import (
+            ConfiguredModelEngine,
+            preserve_wrappers,
+        )
+
+        if model_connection_store is None:
+            raise RuntimeError("Configured model storage is unavailable")
+        explicit_engine = config.deep_research.engine.strip()
+        if explicit_engine and explicit_engine not in {"ollama", "multi"}:
+            raise RuntimeError("Configured Ollama selection conflicts with the "
+                               "explicit Deep Research engine override")
+        selected = ConfiguredModelEngine(model_connection_store, model)
+        selected.check(live=True)
+        return "ollama", (preserve_wrappers(active_engine, selected)
+                          if active_engine is not None else selected), model
     if active_engine is not None and not config.deep_research.engine.strip():
         if model and not active_engine.can_serve(model):
             raise RuntimeError(
@@ -391,6 +408,7 @@ async def _stream_research(
     active_engine_key: str = "",
     active_model: str = "",
     request_model: str = "",
+    model_connection_store=None,
     active_agent: Any = None,
     trace_store: Any = None,
 ) -> AsyncGenerator[str, None]:
@@ -419,6 +437,7 @@ async def _stream_research(
             active_engine_key=active_engine_key,
             active_model=active_model,
             request_model=request_model,
+            model_connection_store=model_connection_store,
         )
 
         # Each request gets its own thin set of connectors. Constructing them
@@ -695,6 +714,9 @@ async def research(req: ResearchRequest, request: Request) -> StreamingResponse:
         request_model=req.model or "",
         active_agent=getattr(request.app.state, "agent", None),
         trace_store=getattr(request.app.state, "trace_store", None),
+        **({"model_connection_store": request.app.state.model_connection_store}
+           if getattr(request.app.state, "model_connection_store", None) is not None
+           else {}),
     )
 
     async def stream():

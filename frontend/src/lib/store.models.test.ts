@@ -33,6 +33,21 @@ afterEach(() => {
 });
 
 describe('setModels', () => {
+  it('uses the provider manifest instead of name heuristics for configured models', async () => {
+    const { useAppStore } = await import('./store');
+    const selected = 'oj/0123456789abcdef0123456789abcdef/nomic-embed-text';
+    useAppStore.getState().setModels([{ ...model(selected), owned_by: 'configured_ollama', capabilities: ['completion'] }]);
+    expect(useAppStore.getState().selectedModel).toBe(selected);
+    useAppStore.getState().setModels([model('qwen3.5:9b')]);
+    expect(useAppStore.getState().selectedModel).toBe(selected);
+  });
+  it('keeps a configured-server selection when that server disappears', async () => {
+    const { useAppStore } = await import('./store');
+    const selected = 'oj/0123456789abcdef0123456789abcdef/qwen3.5%3A9b';
+    useAppStore.getState().setSelectedModel(selected);
+    useAppStore.getState().setModels([model('qwen3.5:9b')]);
+    expect(useAppStore.getState().selectedModel).toBe(selected);
+  });
   it('does not select an embedding-only model', async () => {
     const { useAppStore } = await import('./store');
 
