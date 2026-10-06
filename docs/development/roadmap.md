@@ -225,6 +225,16 @@ and logout. Implemented adapters do not complete runtime tool addition acceptanc
    connections; encrypted server vault and web add/rotate/remove controls; immutable
    origin/header bindings; metadata-only APIs; same-origin authenticated redirects;
    credential-use capability requirements; in-use/reference-safe lifecycle checks.
+   **Implemented:** explicit Data Sources → Add API connection entry point for
+   non-AI service data, with in-app setup/mapping/analysis guidance and metadata-
+   driven field hints/limits. Connection tests expose up to three bounded,
+   escaped mapped-data previews only after full scan validation and credential-
+   reflection checks; tests do not persist/index data and form edits clear stale
+   previews. Saved APIs reuse personal/universal ownership, encrypted credentials,
+   schedules and attributed knowledge retrieval for intelligent feedback.
+   See [Service APIs](../user-guide/service-apis.md). Live provider acceptance,
+   private LAN generic APIs, general OAuth, other response formats and write
+   operations remain follow-ups; scheduled ingestion is not automatic alerting.
    **Implemented:** bounded same-origin next-URL/cursor pagination; server-issued
    incremental sync tokens committed only after ingestion and cleanup; explicit
    deletion-ID arrays scoped to one instance; complete-snapshot reconciliation

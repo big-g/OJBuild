@@ -207,10 +207,21 @@ register_adapter(
         adapter_id="json_api",
         display_name="JSON API",
         description=(
+            "Connect a general service API for Jarvis to read and analyze. "
             "Read a JSON GET response as one document or map an array to records."
         ),
         fields=(
-            _URL_FIELD,
+            {
+                **_URL_FIELD,
+                "label": "API data endpoint",
+                "max_length": 4096,
+                "description": (
+                    "Full data URL, for example "
+                    "https://api.example.com/readings?station=home. "
+                    "Use non-secret query parameters only; credentials belong "
+                    "in the protected credential selector."
+                ),
+            },
             _CREDENTIAL_FIELD,
             {
                 "name": "mode",
@@ -235,6 +246,12 @@ register_adapter(
                 "label": "Records array pointer",
                 "type": "text",
                 "placeholder": "/data/items (empty for root array)",
+                "max_length": 512,
+                "description": (
+                    "Path to the returned array, such as /items or /data/items. "
+                    "Leave empty if the whole response is an array. "
+                    "Paths are case-sensitive; escape / in a key as ~1 and ~ as ~0."
+                ),
                 "required": False,
                 "visible_when": _RECORDS,
             },
@@ -243,6 +260,11 @@ register_adapter(
                 "label": "Record ID pointer",
                 "type": "text",
                 "default_value": "/id",
+                "max_length": 512,
+                "description": (
+                    "Stable nonempty string or integer ID within each record, "
+                    "for example /id. It must not change when the record is updated."
+                ),
                 "visible_when": _RECORDS,
             },
             {
@@ -250,6 +272,11 @@ register_adapter(
                 "label": "Title pointer",
                 "type": "text",
                 "placeholder": "/title (empty to use record ID)",
+                "max_length": 512,
+                "description": (
+                    "Path within each record to its readable title, "
+                    "for example /name. Leave empty to use the ID."
+                ),
                 "required": False,
                 "visible_when": _RECORDS,
             },
@@ -258,6 +285,12 @@ register_adapter(
                 "label": "Content pointer",
                 "type": "text",
                 "placeholder": "/body (empty to index the whole record)",
+                "max_length": 512,
+                "description": (
+                    "Path within each record to the data Jarvis should analyze. "
+                    "Leave empty to retain the whole record, including units "
+                    "and measurement timestamps."
+                ),
                 "required": False,
                 "visible_when": _RECORDS,
             },

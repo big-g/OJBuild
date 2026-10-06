@@ -18,6 +18,7 @@ export interface SourceField {
   description?: string;
   min?: number;
   max?: number;
+  max_length?: number;
   visible_when?: SourceFieldCondition | SourceFieldCondition[];
   value_updates?: Record<string, SourceConfig>;
   options?: { value: string; label: string }[];
@@ -73,8 +74,16 @@ async function request<T>(path: string, method = 'GET', body?: unknown): Promise
 
 export const listSourceAdapters = () => request<{ adapters: SourceAdapter[] }>('/adapters');
 export const listSourceInstances = () => request<{ sources: SourceInstance[]; can_approve?: boolean }>('');
+export interface SourceTestResult {
+  ok: boolean;
+  config: SourceConfig;
+  documents?: number;
+  sample_titles?: string[];
+  final_url?: string;
+  sample_documents?: { title: string; content: string; truncated: boolean; fetched_at?: string }[];
+}
 export const testSourceConfiguration = (adapter_id: string, config: SourceConfig) =>
-  request<{ ok: boolean; config: SourceConfig; documents?: number; sample_titles?: string[]; final_url?: string }>('/test', 'POST', { adapter_id, config });
+  request<SourceTestResult>('/test', 'POST', { adapter_id, config });
 export const createSourceInstance = (adapter_id: string, name: string, config: SourceConfig) =>
   request<SourceInstance>('', 'POST', { adapter_id, name, config });
 export const updateSourceInstance = (source: SourceInstance) =>

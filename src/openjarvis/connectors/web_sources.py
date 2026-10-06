@@ -654,8 +654,21 @@ class JsonAPIConnector(_PublicSource):
 
 def probe_public_source(reader) -> dict:
     documents = list(reader.sync())
-    return {
+    result = {
         "documents": len(documents),
         "sample_titles": [document.title for document in documents[:3]],
         "final_url": documents[0].url if documents else reader.config["url"],
     }
+    if isinstance(reader, JsonAPIConnector):
+        # sync() validates the complete scan and rejects credential reflections
+        # before any preview is returned. Testing never writes to the index.
+        result["sample_documents"] = [
+            {
+                "title": document.title[:500],
+                "content": document.content[:4096],
+                "truncated": len(document.content) > 4096,
+                "fetched_at": document.metadata.get("fetched_at"),
+            }
+            for document in documents[:3]
+        ]
+    return result

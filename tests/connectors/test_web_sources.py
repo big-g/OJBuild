@@ -11,6 +11,7 @@ from openjarvis.connectors.source_manager import SourceManager
 from openjarvis.connectors.source_store import SourceStore
 from openjarvis.connectors.store import KnowledgeStore
 from openjarvis.connectors.web_sources import JsonAPIConnector, WebPageConnector
+from openjarvis.core.correlation import ExecutionIdentity, execution_scope
 from openjarvis.tools.knowledge_search import KnowledgeSearchTool
 
 
@@ -37,6 +38,37 @@ def reader(config=None):
     return JsonAPIConnector(
         config={"url": "https://example.test/api", **(config or {})}
     )
+
+
+def test_json_probe_returns_bounded_mapped_samples_after_complete_validation(fetch):
+    fetch.return_value = response(
+        json.dumps({"items": [{"id": i, "body": "x" * 5000} for i in range(4)]})
+    )
+    source = reader(
+        {"mode": "records", "records_pointer": "/items", "content_pointer": "/body"}
+    )
+    result = web_sources.probe_public_source(source)
+    assert result["documents"] == 4 and len(result["sample_documents"]) == 3
+    assert all(
+        len(d["content"]) == 4096 and d["truncated"] for d in result["sample_documents"]
+    )
+    assert all(d["fetched_at"] for d in result["sample_documents"])
+    # A bad record after the sample window still invalidates the entire test.
+    fetch.return_value = response(
+        json.dumps({"items": [{"id": 1}, {"id": 2}, {"id": 3}, {"missing": "id"}]})
+    )
+    with pytest.raises(ValueError):
+        web_sources.probe_public_source(
+            reader({"mode": "records", "records_pointer": "/items"})
+        )
+
+
+def test_whole_json_probe_preserves_data_as_text_without_execution(fetch):
+    payload = {"temperature": 21, "units": "C", "html": "<script>alert(1)</script>"}
+    fetch.return_value = response(json.dumps(payload))
+    result = web_sources.probe_public_source(reader())
+    assert json.loads(result["sample_documents"][0]["content"]) == payload
+    assert result["sample_documents"][0]["truncated"] is False
 
 
 def test_web_page_extracts_text_title_and_original_final_provenance(fetch):
@@ -247,14 +279,64 @@ def test_fetched_timestamp_survives_into_search_evidence(manager, fetch, monkeyp
 
     monkeypatch.setattr(web_sources, "datetime", Clock)
     source = manager.create(
-        "web_page", "Old policy", {"url": "https://example.test/start"}
+        "web_page",
+        "Old policy",
+        {"url": "https://example.test/start"},
+        actor="user:owner",
+    )
+    monkeypatch.setattr(
+        "openjarvis.connectors.source_store.SourceStore", lambda: manager.store
     )
     fetch.return_value = response("Migration approved", "text/plain")
     manager.sync(source["id"])
-    with KnowledgeStore(manager.knowledge_path) as knowledge:
+    with (
+        execution_scope(ExecutionIdentity(user_id="owner")),
+        KnowledgeStore(manager.knowledge_path) as knowledge,
+    ):
         result = KnowledgeSearchTool(knowledge).execute(query="Migration")
     record = result.metadata["evidence"]["records"][0]
     assert record["retrieved_at"] == "2026-01-01T00:00:00+00:00"
     assert record["metadata"]["fetched_at"] == record["retrieved_at"]
     assert record["metadata"]["source_instance_id"] == source["id"]
     assert record["metadata"]["final_url"] == "https://example.test/final"
+
+
+def test_service_api_test_then_sync_supplies_owned_attributed_analysis_data(
+    manager, fetch, monkeypatch
+):
+    config = {
+        "url": "https://example.test/readings",
+        "mode": "records",
+        "records_pointer": "/items",
+    }
+    payload = {
+        "items": [
+            {
+                "id": "sensor1",
+                "temperature": 21,
+                "unit": "C",
+                "measured_at": "2026-10-06T00:00:00Z",
+            }
+        ]
+    }
+    fetch.return_value = response(json.dumps(payload))
+    preview = manager.test("json_api", config)
+    assert preview["sample_documents"] and manager.list() == []
+    with KnowledgeStore(manager.knowledge_path) as knowledge:
+        assert knowledge.count() == 0
+    source = manager.create("json_api", "Home readings", config, actor="user:owner")
+    assert manager.sync(source["id"]) == 1
+    monkeypatch.setattr(
+        "openjarvis.connectors.source_store.SourceStore", lambda: manager.store
+    )
+    with KnowledgeStore(manager.knowledge_path) as knowledge:
+        with execution_scope(ExecutionIdentity(user_id="owner")):
+            result = KnowledgeSearchTool(knowledge).execute(query="temperature")
+            assert result.success and "21" in result.content
+            evidence = result.metadata["evidence"]["records"][0]
+            assert evidence["metadata"]["source_instance_name"] == "Home readings"
+            assert evidence["metadata"]["requested_url"] == config["url"]
+            assert evidence["metadata"]["fetched_at"] == evidence["retrieved_at"]
+            assert "measured_at" in result.content and "2026-10-06" in result.content
+        with execution_scope(ExecutionIdentity(user_id="another-user")):
+            assert knowledge.retrieve("temperature") == []

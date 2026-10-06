@@ -23,6 +23,7 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
   return <div className="flex flex-col gap-3" aria-label="Protected credentials">
     <h4>Protected credentials</h4>
     <p>Reusable bearer tokens and API keys, encrypted on the server and restricted to one HTTPS origin.</p>
+    <p className="text-sm">For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider’s named header, such as X-API-Key.</p>
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {credentials.map((credential) => <div key={credential.id} className="flex flex-wrap gap-3">
@@ -44,7 +45,7 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
           <label>Credential name <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></label>
           <label>Authentication <select value={kind} onChange={(e) => { setSecret(''); setKind(e.target.value as 'bearer' | 'api_key'); }}><option value="bearer">Bearer token</option><option value="api_key">API key header</option></select></label>
           <label>HTTPS origin <input required type="url" placeholder="https://api.example.com" value={origin} onChange={(e) => setOrigin(e.target.value)} /></label>
-          {kind === 'api_key' && <label>Header name <input required value={header} onChange={(e) => setHeader(e.target.value)} /></label>}
+          {kind === 'api_key' && <label>Header name <input required maxLength={64} pattern="[A-Za-z][A-Za-z0-9-]{0,63}" placeholder="X-API-Key" value={header} onChange={(e) => setHeader(e.target.value)} /><span>Use 1–64 letters, digits or hyphens, starting with a letter. Reserved HTTP headers are not allowed.</span></label>}
         </>}
         <label>{rotation ? 'Replacement secret' : 'Secret'} <input type="password" autoComplete="new-password" required maxLength={8192} value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
         <p>Secret values cannot be displayed again. Keep the server credential database and its original encryption key together in protected backups.</p>

@@ -3,7 +3,8 @@ import {
   setSourceSharing, setSourcePreference, createSourceInstance, listSourceAdapters, listSourceInstances, listSourceCredentials,
   removeSourceInstance, syncSourceInstance, testSourceConfiguration, updateSourceInstance,
 } from '../../lib/sources-api';
-import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential } from '../../lib/sources-api';
+import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential, SourceTestResult } from '../../lib/sources-api';
+import { APIConnectionHelp, SourceTestPreview } from './APIConnectionHelp';
 import './SourceManagerPanel.css';
 import { LegacySourceImportsPanel } from './LegacySourceImportsPanel';
 import { CredentialManagerPanel } from './CredentialManagerPanel';
@@ -46,6 +47,7 @@ export function SourceConfigurationFields({
         required={field.required}
         placeholder={field.placeholder}
         rows={6}
+        maxLength={field.max_length}
         value={String(fieldValue(field.name))}
         onChange={(event) => changeField(field, event.target.value)}
       /> : <input
@@ -55,6 +57,7 @@ export function SourceConfigurationFields({
         placeholder={field.placeholder}
         min={field.min}
         max={field.max}
+        maxLength={field.max_length}
         {...(field.type === 'checkbox' ? { checked: Boolean(fieldValue(field.name)) } : { value: String(fieldValue(field.name)) })}
         onChange={(event) => changeField(field, field.type === 'checkbox' ? event.target.checked
           : field.type === 'number' ? Number(event.target.value) : event.target.value)}
@@ -77,6 +80,7 @@ export function SourceManagerPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [preview, setPreview] = useState<SourceTestResult | null>(null);
   const generation = useRef(0);
   const adapter = adapters.find((item) => item.adapter_id === adapterId);
 
@@ -116,13 +120,14 @@ export function SourceManagerPanel() {
     }
   };
 
-  const openEditor = (source: SourceInstance | null) => {
+  const openEditor = (source: SourceInstance | null, preferredAdapter?: string) => {
     setEditing(source);
-    setAdapterId(source?.adapter_id ?? adapters[0]?.adapter_id ?? '');
+    setAdapterId(source?.adapter_id ?? preferredAdapter ?? adapters[0]?.adapter_id ?? '');
     setName(source?.name ?? '');
     setConfig(source?.config ?? {});
     setError('');
     setNotice('');
+    setPreview(null);
   };
 
   const save = async () => {
@@ -131,17 +136,22 @@ export function SourceManagerPanel() {
       if (editing) await updateSourceInstance({ ...editing, name, config });
       else await createSourceInstance(adapter.adapter_id, name, config);
       setEditing(undefined);
+      setPreview(null);
     }, 'Source saved. Choose Sync to index its documents.');
   };
 
   return <section className="source-manager hud-panel p-4 flex flex-col gap-3" aria-label="Configured sources">
     <div className="flex items-center justify-between gap-3">
       <h3 className="hud-label">Configured sources</h3>
-      <button type="button" disabled={busy || !loaded || !adapters.length} onClick={() => openEditor(null)}>Add source</button>
+      <div className="flex flex-wrap gap-3">
+        <button type="button" disabled={busy || !loaded || !adapters.some(item => item.adapter_id === 'json_api')} onClick={() => openEditor(null, 'json_api')}>Add API connection</button>
+        <button type="button" disabled={busy || !loaded || !adapters.length} onClick={() => openEditor(null)}>Add source</button>
+      </div>
     </div>
     <p style={{ color: 'var(--color-text-secondary)', fontSize: 12 }}>
       Personal connections belong to your account. Approved universal sources are available to everyone; choose which connections Jarvis may use for you.
     </p>
+    <p className="text-sm">Connect general service APIs here for data and analysis, independently of AI providers and MCP tools.</p>
     {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {!loaded && <p>Loading configured sources…</p>}
@@ -178,22 +188,26 @@ export function SourceManagerPanel() {
       <fieldset disabled={busy} className="flex flex-col gap-3">
         <legend>{editing ? 'Edit source' : 'Add source'}</legend>
         <label>Source type <select value={adapterId} disabled={!!editing} onChange={(event) => {
-          setAdapterId(event.target.value); setConfig({}); setNotice('');
+          setAdapterId(event.target.value); setConfig({}); setNotice(''); setPreview(null);
         }}>{adapters.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}</select></label>
         <p>{adapter.description}</p>
+        {adapterId === 'json_api' && <APIConnectionHelp />}
         <label>Name <input aria-label="Source name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)} /></label>
-        <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); }} />
+        <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); setPreview(null); }} />
         {adapter.connection_auth && <p>Save this source, then authorize the account on its connection card.</p>}
         {editing && <p>Changing the configuration clears this connection’s indexed documents. Sync again after saving.</p>}
         <div className="flex gap-3">
           <button type="button" disabled={!!adapter.connection_auth} onClick={() => void perform(async () => {
+            setPreview(null);
             const result = await testSourceConfiguration(adapterId, config);
             setConfig(result.config);
+            setPreview(result.sample_documents ? result : null);
           }, 'Connection test passed. Configuration has not been saved.')}>Test connection</button>
           <button type="submit">Save source</button>
-          <button type="button" onClick={() => setEditing(undefined)}>Cancel</button>
+          <button type="button" onClick={() => { setEditing(undefined); setPreview(null); }}>Cancel</button>
         </div>
       </fieldset>
+      {preview && <SourceTestPreview result={preview} />}
     </form>}
   </section>;
 }

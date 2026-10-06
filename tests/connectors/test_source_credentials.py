@@ -162,7 +162,9 @@ def test_authenticated_probe_and_sync_keep_secrets_out_of_index(manager, monkeyp
         return response()
 
     monkeypatch.setattr("openjarvis.connectors.web_sources.fetch_public_source", fetch)
-    assert manager.test("json_api", connection["config"])["documents"] == 1
+    preview = manager.test("json_api", connection["config"])
+    assert preview["documents"] == 1 and preview["sample_documents"]
+    assert SECRET not in json.dumps(preview)
     assert manager.sync(connection["id"]) == 1
     assert calls == [{"Authorization": f"Bearer {SECRET}"}] * 2
     for file in manager.store.path.parent.iterdir():
