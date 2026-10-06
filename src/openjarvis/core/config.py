@@ -1437,6 +1437,9 @@ class SecurityConfig:
     runtime_tools_db_path: str = field(
         default_factory=lambda: str(get_config_dir() / "runtime_tools.db")
     )
+    model_connections_db_path: str = field(
+        default_factory=lambda: str(get_config_dir() / "model_connections.db")
+    )
     merkle_audit: bool = True
     signing_key_path: str = ""
     ssrf_protection: bool = True

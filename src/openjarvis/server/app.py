@@ -463,6 +463,20 @@ def create_app(
     app.include_router(comparison_router)
     app.include_router(create_connectors_router())
     app.include_router(create_sources_router())
+    from openjarvis.core.config import SecurityConfig
+    from openjarvis.engine.connection_store import ModelConnectionStore
+    from openjarvis.server.model_connections_router import (
+        create_model_connections_router,
+    )
+
+    app.state.model_connection_store = ModelConnectionStore(
+        getattr(
+            getattr(config, "security", None),
+            "model_connections_db_path",
+            SecurityConfig().model_connections_db_path,
+        )
+    )
+    app.include_router(create_model_connections_router(app.state.model_connection_store))
     from openjarvis.server.runtime_tools_router import create_runtime_tools_router
 
     app.include_router(create_runtime_tools_router(runtime_tools))

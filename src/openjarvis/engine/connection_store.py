@@ -1,0 +1,242 @@
+"""Versioned model-server configuration; discovery never enables inference."""
+
+from __future__ import annotations
+
+import ipaddress
+import json
+import re
+import sqlite3
+import time
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+from urllib.parse import urlsplit
+
+
+class ConnectionConflict(ValueError):
+    """The record changed since it was displayed."""
+
+
+def adapter_definition():
+    """Trusted, versioned adapter metadata; discovery grants no tool authority."""
+    return {
+        "adapter_id": "ollama",
+        "display_name": "Ollama",
+        "config_version": 1,
+        "operations": ["catalog_discovery"],
+        "required_capabilities": [],
+        "requires_administrator": True,
+        "settings": [
+            {
+                "name": "url",
+                "label": "Ollama server URL",
+                "type": "text",
+                "required": True,
+                "max_length": 2048,
+                "description": "HTTP(S) root URL with loopback or explicit "
+                "private LAN IP.",
+                "example": "http://192.168.1.20:11434",
+            }
+        ],
+    }
+
+
+def definition(name: str, url: str) -> dict:
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,23}", name):
+        raise ValueError(
+            "Name must start with a lowercase letter and contain 1–24 lowercase "
+            "letters, digits or underscores. Example: home_gpu."
+        )
+    try:
+        if not isinstance(url, str) or len(url) > 2048 or not url.isascii():
+            raise ValueError
+        if any(char.isspace() or ord(char) < 32 for char in url):
+            raise ValueError
+        parsed = urlsplit(url)
+        host = parsed.hostname
+        address = ipaddress.ip_address("127.0.0.1" if host == "localhost" else host)
+        local = address.is_loopback or any(
+            address in ipaddress.ip_network(net)
+            for net in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+            if address.version == ipaddress.ip_network(net).version
+        )
+        if (
+            not local
+            or parsed.scheme not in {"http", "https"}
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path not in {"", "/"}
+            or parsed.query
+            or parsed.fragment
+            or "?" in url
+            or "#" in url
+            or parsed.port == 0
+        ):
+            raise ValueError
+        host = f"[{address}]" if address.version == 6 else str(address)
+        port = f":{parsed.port}" if parsed.port is not None else ""
+    except (ValueError, TypeError):
+        raise ValueError(
+            "Use an HTTP(S) root URL with localhost, a loopback IP or an explicit "
+            "private LAN IP and port, such as http://192.168.1.20:11434. "
+            "Credentials, paths, queries and public addresses are unsupported."
+        ) from None
+    return {
+        "name": name,
+        "url": f"{parsed.scheme}://{host}{port}",
+        "adapter_id": "ollama",
+        "config_version": 1,
+    }
+
+
+class ModelConnectionStore:
+    def __init__(self, path):
+        self.path = Path(path).expanduser().absolute()
+        if any(part.is_symlink() for part in (self.path, *self.path.parents)):
+            raise ValueError("Model connection storage must not use symbolic links")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            version = db.execute("PRAGMA user_version").fetchone()[0]
+            if version not in (0, 1, 2):
+                raise ValueError("Unsupported model connection database version")
+            if version == 0:
+                db.execute("""CREATE TABLE model_connections (
+                    id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE,
+                    url TEXT NOT NULL, adapter_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL, catalog TEXT NOT NULL DEFAULT '[]',
+                    discovery_state TEXT NOT NULL DEFAULT 'untested',
+                    tested_at REAL NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL, updated_at REAL NOT NULL
+                )""")
+                db.execute("""CREATE TABLE model_connection_audit (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, connection_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL, event TEXT NOT NULL,
+                    actor TEXT NOT NULL, timestamp REAL NOT NULL
+                )""")
+                db.execute("PRAGMA user_version=1")
+            if version < 2:
+                db.execute(
+                    "ALTER TABLE model_connections ADD COLUMN "
+                    "config_version INTEGER NOT NULL DEFAULT 1"
+                )
+                db.execute("PRAGMA user_version=2")
+        self.path.chmod(0o600)
+
+    @contextmanager
+    def connection(self):
+        db = sqlite3.connect(self.path, timeout=10)
+        db.row_factory = sqlite3.Row
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
+    @staticmethod
+    def public(row):
+        value = dict(row)
+        value["catalog"] = json.loads(value["catalog"])
+        return value
+
+    def list(self):
+        with self.connection() as db:
+            return [
+                self.public(row)
+                for row in db.execute("SELECT * FROM model_connections ORDER BY name")
+            ]
+
+    def get(self, identity, revision=None):
+        with self.connection() as db:
+            return self.public(self._row(db, identity, revision))
+
+    @staticmethod
+    def _row(db, identity, revision):
+        row = db.execute(
+            "SELECT * FROM model_connections WHERE id=?", (identity,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(identity)
+        if revision is not None and row["revision"] != revision:
+            raise ConnectionConflict("Connection changed. Reload and try again.")
+        return row
+
+    @staticmethod
+    def _audit(db, identity, revision, event, actor):
+        db.execute(
+            "INSERT INTO model_connection_audit "
+            "(connection_id,revision,event,actor,timestamp) VALUES (?,?,?,?,?)",
+            (identity, revision, event, actor, time.time()),
+        )
+
+    def create(self, name, url, actor):
+        settings = definition(name, url)
+        identity, now = uuid.uuid4().hex, time.time()
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if db.execute("SELECT COUNT(*) FROM model_connections").fetchone()[0] >= 64:
+                raise ValueError("Maximum of 64 model connections reached")
+            db.execute(
+                "INSERT INTO model_connections "
+                "(id,name,url,adapter_id,revision,created_at,updated_at) "
+                "VALUES (?,?,?,?,1,?,?)",
+                (identity, settings["name"], settings["url"], "ollama", now, now),
+            )
+            self._audit(db, identity, 1, "created", actor)
+            return self.public(self._row(db, identity, None))
+
+    def update(self, identity, revision, name, url, actor):
+        settings = definition(name, url)
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._row(db, identity, revision)
+            db.execute(
+                "UPDATE model_connections SET name=?,url=?,revision=revision+1,"
+                "catalog='[]',discovery_state='untested',tested_at=0,updated_at=? "
+                "WHERE id=?",
+                (settings["name"], settings["url"], time.time(), identity),
+            )
+            self._audit(db, identity, revision + 1, "edited", actor)
+            return self.public(self._row(db, identity, None))
+
+    def discovered(self, identity, revision, catalog, success, actor):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._row(db, identity, revision)
+            db.execute(
+                "UPDATE model_connections SET catalog=?,discovery_state=?,"
+                "tested_at=?,updated_at=?,revision=revision+1 WHERE id=?",
+                (
+                    json.dumps(catalog if success else [], allow_nan=False),
+                    "discovered" if success else "error",
+                    time.time(),
+                    time.time(),
+                    identity,
+                ),
+            )
+            self._audit(
+                db,
+                identity,
+                revision + 1,
+                "discovered" if success else "test_failed",
+                actor,
+            )
+            return self.public(self._row(db, identity, None))
+
+    def remove(self, identity, revision, actor):
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._row(db, identity, revision)
+            db.execute("DELETE FROM model_connections WHERE id=?", (identity,))
+            self._audit(db, identity, revision, "removed", actor)
+
+    def audit(self, identity):
+        with self.connection() as db:
+            return [
+                dict(row)
+                for row in db.execute(
+                    "SELECT revision,event,actor,timestamp FROM model_connection_audit "
+                    "WHERE connection_id=? ORDER BY seq",
+                    (identity,),
+                )
+            ]

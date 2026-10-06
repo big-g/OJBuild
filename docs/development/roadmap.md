@@ -37,7 +37,39 @@ Apply this standard as other configuration forms are added or revised.
 Account-owned conversations, source access and generated files are in Phase 2.
 Operating-system isolation for privileged code tools and Apple client work remain
 outside the current Phase 2 scope.
-Automatic model routing is deferred; explicit model selection remains supported.
+Database-backed model configuration and configurable task routing are now a
+bounded closing Phase 2 objective. Existing explicit model selection remains
+supported. Multi-model collaboration and parallel execution are later extensions.
+
+## Phase 2: model configuration and task routing
+
+**Agreed scope (2026-10-05):** preserve InferenceEngine, EngineRegistry,
+MultiEngine and the model catalog. Add database-backed model-server connections
+with administrator web configuration, separate model serving identity from
+connection identity, and support multiple Ollama servers from the beginning.
+Configure explicit task assignments for coding, analysis, vision and general
+conversation using measured performance and verified capabilities. Keep manual
+selection available; record routing reasons and bounded fallback in traces.
+Routing must preserve tool governance, evidence integrity and account boundaries.
+Discovery, user-assigned labels and model registration never grant capabilities.
+
+**Implemented first batch:** administrator Settings model-server add/edit/remove,
+revision checks, retained audit history and dedicated versioned SQLite storage.
+Ollama connections support loopback and explicit private LAN IP root URLs.
+Bounded catalog tests reject redirects, proxies, oversized/malformed catalogs
+and duplicate serving IDs. Per-connection catalogs persist across restarts;
+edits/failures invalidate snapshots, and stale tests cannot overwrite new settings.
+Catalog presence is distinct from verified capability/inference availability.
+Saving/testing neither changes current inference routing nor runs/pulls models.
+See [Model server connections](../user-guide/model-connections.md).
+
+**Next:** integrate explicit selection across saved servers and capability/health
+validation, then configurable task rules, benchmark-informed assignments,
+fallback and trace explanations. Live Ubuntu/browser validation remains required.
+Authenticated/public inference endpoints and custom TLS trust are adapter
+extensions. Shared-agent isolation, resource limits and load testing precede
+parallel execution. Phase 3 extends routing to image/3D workflows and optional
+multi-model review without making collaboration a Phase 2 completion gate.
 
 ## Phase 2: complete output and generated downloads
 
