@@ -477,6 +477,9 @@ def create_app(
         )
     )
     app.include_router(create_model_connections_router(app.state.model_connection_store))
+    from openjarvis.server.model_routing_router import create_model_routing_router
+
+    app.include_router(create_model_routing_router(app.state.model_connection_store))
     from fastapi.responses import JSONResponse
 
     from openjarvis.engine.configured_models import ConfiguredModelError

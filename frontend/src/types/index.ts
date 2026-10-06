@@ -51,6 +51,8 @@ export interface TokenUsage {
 }
 
 export interface MessageTelemetry {
+  routing_task?: string;
+  routing_reason?: string;
   finish_reason?: string;
   engine?: string;
   model_id?: string;

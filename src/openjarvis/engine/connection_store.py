@@ -98,7 +98,7 @@ class ModelConnectionStore:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3):
+            if version not in (0, 1, 2, 3, 4):
                 raise ValueError("Unsupported model connection database version")
             if version == 0:
                 db.execute("""CREATE TABLE model_connections (
@@ -127,6 +127,39 @@ class ModelConnectionStore:
                     "enabled INTEGER NOT NULL DEFAULT 0"
                 )
                 db.execute("PRAGMA user_version=3")
+            if version < 4:
+                db.execute("""CREATE TABLE IF NOT EXISTS model_benchmarks (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+                    connection_id TEXT NOT NULL, connection_revision INTEGER NOT NULL,
+                    model_id TEXT NOT NULL, task TEXT NOT NULL,
+                    suite_version TEXT NOT NULL,
+                    passed INTEGER NOT NULL, details TEXT NOT NULL,
+                    elapsed_ms REAL NOT NULL, tokens INTEGER NOT NULL,
+                    actor TEXT NOT NULL, timestamp REAL NOT NULL
+                )""")
+                db.execute("""CREATE TABLE IF NOT EXISTS model_task_rules (
+                    task TEXT PRIMARY KEY, revision INTEGER NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    model_id TEXT NOT NULL DEFAULT '',
+                    benchmark_id TEXT NOT NULL DEFAULT '', actor TEXT NOT NULL,
+                    updated_at REAL NOT NULL
+                )""")
+                db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_model_benchmark_latest "
+                    "ON model_benchmarks(model_id,task,seq DESC)"
+                )
+                db.execute("""CREATE TABLE IF NOT EXISTS model_routing_audit (
+                    seq INTEGER PRIMARY KEY AUTOINCREMENT, task TEXT NOT NULL,
+                    revision INTEGER NOT NULL, event TEXT NOT NULL,
+                    actor TEXT NOT NULL, timestamp REAL NOT NULL
+                )""")
+                for task in ("general", "coding", "analysis", "vision"):
+                    db.execute(
+                        "INSERT OR IGNORE INTO model_task_rules "
+                        "(task,revision,actor,updated_at) VALUES (?,1,'migration',?)",
+                        (task, time.time()),
+                    )
+                db.execute("PRAGMA user_version=4")
         self.path.chmod(0o600)
 
     @contextmanager

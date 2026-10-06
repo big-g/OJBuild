@@ -99,6 +99,9 @@ class ConfiguredModelEngine(InferenceEngine):
         self._row()
 
     def _row(self):
+        validator = getattr(self, "validate_binding", None)
+        if validator is not None:
+            validator()
         try:
             row = self.store.get(self.connection["id"], self.connection["revision"])
         except (KeyError, ConnectionConflict):

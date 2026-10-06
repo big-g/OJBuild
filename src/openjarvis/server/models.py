@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +30,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     tools: Optional[List[Dict[str, Any]]] = None
     session_id: Optional[str] = None
+    routing_task: Optional[Literal["general", "coding", "analysis", "vision"]] = None
 
 # ---------------------------------------------------------------------------
 # Response models
@@ -73,6 +74,7 @@ class ChatCompletionResponse(BaseModel):
     choices: List[Choice] = Field(default_factory=list)
     usage: UsageInfo = Field(default_factory=UsageInfo)
     complexity: Optional[ComplexityInfo] = None
+    routing: Optional[Dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------

@@ -177,6 +177,58 @@ def _ensure_identity_prompt(messages: list[Message], app_config) -> list[Message
 
 @router.post("/v1/chat/completions")
 async def chat_completions(request_body: ChatCompletionRequest, request: Request):
+    """Apply only explicitly requested, administrator-configured task assignments."""
+    if request_body.routing_task is None:
+        return await _chat_completions(request_body, request)
+    get_authenticated_user_id(request)
+    import json
+
+    from openjarvis.engine._base import EngineConnectionError
+    from openjarvis.engine.task_routing import TaskRoutingStore
+
+    store = getattr(request.app.state, "model_connection_store", None)
+    if store is None:
+        raise HTTPException(503, "Task routing storage is unavailable")
+    agent = getattr(request.app.state, "agent", None)
+    runtime = getattr(request.app.state, "runtime_tool_manager", None)
+    images = any(message.images for message in request_body.messages)
+    tools = bool(request_body.tools) or (
+        agent is not None and not images and (
+            bool(getattr(agent, "_tools", None)) or (
+                getattr(agent, "accepts_tools", False) and runtime is not None
+                and bool(runtime.available())
+            )
+        )
+    )
+    try:
+        decision, bound = await asyncio.to_thread(
+            TaskRoutingStore(store).resolve, request_body.routing_task,
+            tools=tools, images=images,
+        )
+    except (ValueError, KeyError, EngineConnectionError):
+        raise HTTPException(
+            409, "Task assignment is unavailable, changed or lacks required diagnostic "
+            "coverage. Choose Manual model or ask an administrator to review it.",
+        ) from None
+    resolved = request_body.model_copy(update={"model": decision["model"]})
+    response = await _chat_completions(resolved, request, task_engine=bound)
+    if isinstance(response, StreamingResponse):
+        original = response.body_iterator
+
+        async def with_decision():
+            yield "event: routing_decision\ndata: " + json.dumps(decision) + "\n\n"
+            async for chunk in original:
+                yield chunk
+
+        response.body_iterator = with_decision()
+    else:
+        response.routing = decision
+    return response
+
+
+async def _chat_completions(
+    request_body: ChatCompletionRequest, request: Request, *, task_engine=None,
+):
     """Handle chat completion requests (streaming and non-streaming)."""
     user_id = get_authenticated_user_id(request)
     from openjarvis.core.correlation import bind_verified_identity
@@ -205,7 +257,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
         if store is None:
             raise HTTPException(503, "Configured model storage is unavailable")
         try:
-            configured_engine = ConfiguredModelEngine(store, model)
+            configured_engine = task_engine or ConfiguredModelEngine(store, model)
             has_images = any(m.images for m in request_body.messages)
             runtime = getattr(request.app.state, "runtime_tool_manager", None)
             agent_uses_tools = (

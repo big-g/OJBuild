@@ -77,6 +77,58 @@ silently rewritten. Up to 64 connections can be saved.
 
 Saved connections do not alter `config.toml` or the server's default inference source.
 New and migrated connections start disabled. Dedicated managed-agent/scheduled
-configuration, task assignments, behavioral benchmarks, routing explanations and
+configuration, larger behavioral benchmarks, durable routing traces and
 explicit fallback rules are the next steps. Parallel multi-model execution remains
 a separate later objective; existing shared-agent requests remain serialized.
+
+## Task assignments and diagnostic measurements
+
+An administrator can open **Settings → Model task assignments and diagnostics**.
+Choose an enabled model and one of **general**, **coding**, **analysis** or
+**vision**, then select **Run diagnostic**. Review the pass/fail result, elapsed
+time, provider-reported token count and connection revision. Select **Assign and
+enable** to persist that exact result and model as the task assignment. Assignments
+are shared server configuration; changing them requires an administrator session.
+
+In standard chat, **Model choice** defaults to **Manual model**, which uses the
+existing picker. Choose a task assignment to use the assigned model for that
+message. The task is explicit; the server does not guess from your prompt or rank
+models automatically. This applies to non-streaming chat, streaming and its
+server-agent path. Deep Research and scheduled agents retain their existing model
+configuration. The response reports the chosen model and routing reason; chat
+telemetry shows the actual serving model and the reason in the expanded footer.
+
+Diagnostics use versioned, fixed synthetic prompts. General checks alphabetical
+instruction following; coding checks three small code-tracing results; analysis
+checks short logical/arithmetic answers; vision checks a generated red PNG. If a
+model reports tool support, a separate probe checks one exact synthetic function
+call. Returned code and tool calls are never executed, and no personal messages,
+source documents, credentials or real tools enter a probe. Diagnostic reads use
+the bounded JSON transport (1 MiB, 10-second read timeout and elapsed stream
+budget); output budgets are 512 tokens for the task and 128 for the canary.
+One diagnostic runs at a time per API process. Probes may load a model and consume
+GPU resources; a cold or busy model can fail the bounded availability budget.
+
+These are **small diagnostic probes, not a broad quality ranking** or proof of
+reliable real-world coding/reasoning. Elapsed time includes live checks, loading,
+generation and transport; it is not isolated generation throughput. Compare models
+on the same hardware under similar load, and make the assignment yourself. Larger
+representative benchmark suites remain a follow-up. Discovery, passing a probe and
+enabling an assignment grant no tool permissions and do not relax evidence gates.
+Replacing model weights under an existing Ollama tag is not detected by these
+diagnostics: retest the catalog, reread capabilities and rerun diagnostics after
+updating a model on its server.
+
+Only a passing latest result for the same task, model, suite and current connection
+revision can enable an assignment. Connection edits, disable/re-enable or catalog/
+capability reads invalidate that binding. A newer diagnostic result requires review
+and re-assignment, even if it passes; a failed repeat cannot reuse an older pass.
+Later calls in an active agent run recheck the task revision and benchmark binding.
+An already submitted generation may finish. Missing/stale rules fail visibly and
+never substitute the manual selection or another server. Tool-using requests also
+require a passing tool-call canary; image requests require the Vision assignment.
+
+Assignment revisions and administrator audit events persist alongside benchmark
+history in the existing model connection database (schema version 4). Existing
+connections retain their activation state; all new task assignments start disabled.
+The screen shows the latest 100 benchmark results and assignment audit events.

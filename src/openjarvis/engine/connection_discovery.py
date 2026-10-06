@@ -33,7 +33,7 @@ def read_json(connection, path, method="GET", body=None):
             ):
                 raise ValueError("Catalog must be JSON")
             body = bytearray()
-            for chunk in response.iter_bytes(chunk_size=65_536):
+            for chunk in response.iter_bytes():
                 if (
                     len(body) + len(chunk) > MAX_CATALOG_BYTES
                     or time.monotonic() - started > 10

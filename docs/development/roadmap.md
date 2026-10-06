@@ -78,8 +78,22 @@ wrappers fail visibly. The picker preserves missing configured selections instea
 of silently changing servers; remote models are not preloaded/deleted through
 browser-local Ollama. Schema migration leaves existing connections disabled.
 
-**Next:** configurable task rules, benchmark-informed assignments, managed-agent/
-scheduled configuration, explicit fallback and trace explanations. Live Ubuntu/
+**Implemented third batch:** administrator database-backed general/coding/analysis/
+vision task assignments, with revisioned changes and audit history. Standard chat
+offers explicit task selection or the existing manual model picker; no prompt
+classification is inferred. Fixed diagnostic probes record correctness, elapsed
+time, provider token usage, suite identity and reviewed connection revision. A
+synthetic tool-call canary tests reported tool support without executing any tools;
+vision uses a fixed image and coding answers are checked without running code.
+These small probes are labelled as diagnostics, not broad quality rankings. Only
+the latest passing matching result can enable an assignment. Stale connections,
+newer results and rule changes block further calls in a bound run without fallback.
+Existing tool, evidence and account ownership gates remain in force. Responses and
+chat telemetry expose the selected model/task/reason. Schema v4 preserves existing
+connection activation and starts task rules disabled.
+
+**Next:** managed-agent/scheduled configuration, explicit fallback and durable trace
+explanations; broader representative behavioral benchmark suites. Live Ubuntu/
 browser/desktop/Android validation and behavioral capability tests remain required.
 Authenticated/public inference endpoints and custom TLS trust are adapter
 extensions. Shared-agent isolation, resource limits and load testing precede

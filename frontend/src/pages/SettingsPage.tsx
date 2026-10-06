@@ -1,5 +1,6 @@
 import { AccountManagementPanel } from '../components/AccountManagementPanel';
 import { ModelConnectionsPanel } from '../components/ModelConnectionsPanel';
+import { ModelRoutingPanel } from '../components/ModelRoutingPanel';
 import { getStoredUser } from '../lib/auth';
 import { AccountSecurityPanel } from '../components/AccountSecurityPanel';
 import { useState, useEffect, useCallback } from 'react';
@@ -543,6 +544,7 @@ export function SettingsPage() {
           {/* Models */}
           <Section title="Models">
             <ModelConnectionsPanel />
+            <ModelRoutingPanel />
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">
               <OllamaModelList />
             </SettingRow>

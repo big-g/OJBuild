@@ -39,6 +39,10 @@ export function XRayFooter({ usage, telemetry, isResearch = false }: Props) {
 
   // Build expanded rows
   const rows: Array<{ label: string; value: string; color?: string }> = [];
+  if (!isResearch && telemetry?.routing_task) {
+    rows.push({ label: 'Task assignment', value: telemetry.routing_task });
+    if (telemetry.routing_reason) rows.push({ label: 'Routing reason', value: telemetry.routing_reason });
+  }
   if (isResearch) {
     rows.push({ label: 'Mode', value: 'Deep Research' });
   } else if (telemetry?.engine) {

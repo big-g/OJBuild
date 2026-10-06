@@ -3,6 +3,7 @@ import { Send, Square, Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
+import { ROUTING_TASKS, type RoutingTask } from '../../lib/model-routing-api';
 import {
   fetchSavings,
   apiFetch,
@@ -94,6 +95,7 @@ export function InputArea() {
   const [input, setInput] = useState('');
   const [images, setImages] = useState<Array<{ name: string; type: string; encoded: string }>>([]);
   const [imageLoading, setImageLoading] = useState(false);
+  const [routingTask, setRoutingTask] = useState<RoutingTask | ''>('');
   const imageReadingRef = useRef(false);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -297,7 +299,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
   // A new query interrupts any response currently being spoken.
   stopSpeaking();
 
-  if (!selectedModel) {
+  if (!selectedModel && (!routingTask || deepResearch)) {
       toast.error('Pick a model first (⌘K)');
       return;
     }
@@ -311,7 +313,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
 
     let convId = activeId;
     if (!convId) {
-      convId = await createServerConversation(selectedModel);
+      convId = await createServerConversation(selectedModel || 'task-assignment');
     }
 
     const conversation = useAppStore
@@ -406,6 +408,8 @@ const sendMessage = useCallback(async (messageText?: string) => {
     let finishReason: string | undefined;
     let complexity: { score: number; tier: string; suggested_max_tokens: number } | undefined;
     let routedEngine: string | undefined;
+    let actualModel = selectedModel;
+    let routingDecision: { task: string; reason: string } | undefined;
     const toolCalls: ToolCallInfo[] = [];
     const researchTraces: ResearchSearchTrace[] = [];
     const researchSourcesByRef = new Map<number, ResearchSource>();
@@ -576,16 +580,27 @@ const sendMessage = useCallback(async (messageText?: string) => {
       } else {
       for await (const sseEvent of streamChat(
         { 
-          model: selectedModel, 
+          model: selectedModel || 'task-assignment',
           messages: apiMessages, 
           stream: true, 
           temperature, 
           max_tokens: maxTokens,
+          ...(routingTask ? { routing_task: routingTask } : {}),
           ...(sessionId ? { session_id: sessionId } : {}),
         },
         controller.signal,
       )) {
         const eventName = sseEvent.event;
+
+        if (eventName === 'routing_decision') {
+          const decision = JSON.parse(sseEvent.data);
+          actualModel = decision.model;
+          routingDecision = decision;
+          useAppStore.getState().addLogEntry({ timestamp: Date.now(), level: 'info', category: 'model', message: `Task ${decision.task}: ${decision.model}. ${decision.reason}` });
+          routedEngine = 'ollama';
+          setStreamState({ phase: `Generating (${decision.task} assignment)…` });
+          continue;
+        }
 
         if (eventName === 'agent_turn_start') {
           setStreamState({ phase: 'Agent thinking...' });
@@ -593,7 +608,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
           setStreamState({ phase: 'Generating...' });
           useAppStore.getState().addLogEntry({
             timestamp: Date.now(), level: 'info', category: 'chat',
-            message: `Generating with ${selectedModel}...`,
+            message: `Generating with ${actualModel}...`,
           });
         } else if (eventName === 'tool_call_start') {
           try {
@@ -688,17 +703,19 @@ const sendMessage = useCallback(async (messageText?: string) => {
       }
       const totalMs = Date.now() - startTime;
       const appState = useAppStore.getState();
-      const selectedOwner = appState.models.find((m) => m.id === selectedModel)?.owned_by;
+      const selectedOwner = appState.models.find((m) => m.id === actualModel)?.owned_by;
       const engineLabel = resolveChatEngine({
         routedEngine,
         serverEngine: appState.serverInfo?.engine,
-        selectedModel,
+        selectedModel: actualModel,
         selectedOwner,
       });
       const telemetry: MessageTelemetry = {
         finish_reason: finishReason,
         engine: engineLabel,
-        model_id: selectedModel,
+        model_id: actualModel,
+        routing_task: routingDecision?.task,
+        routing_reason: routingDecision?.reason,
         total_ms: totalMs,
         ttft_ms: ttftMs,
         tokens_per_sec: usage?.completion_tokens
@@ -802,6 +819,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
     setStreamState,
     resetStream,
     deepResearch,
+    routingTask,
     temperature,
     maxTokens,
     speakResponse,
@@ -927,6 +945,9 @@ const sendMessage = useCallback(async (messageText?: string) => {
             <Search size={12} />
             Deep Research
           </button>
+          <label className="text-xs">Model choice <select aria-label="Chat model assignment" disabled={streamState.isStreaming || deepResearch} className="rounded border px-2 py-1 bg-transparent" value={routingTask} onChange={e => setRoutingTask(e.target.value as RoutingTask | '')} title="Task assignments are configured by an administrator. Manual uses your selected model; applies to standard chat only.">
+            <option value="">Manual model</option>{ROUTING_TASKS.map(task => <option key={task} value={task}>{task} assignment</option>)}
+          </select></label>
         </div>
         {deepResearch && corpusSync.syncing && corpusSync.itemsSynced > 0 && (
           <div
@@ -968,7 +989,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
           onChange={(e) => setInput(e.target.value)}
           onPaste={handlePaste}
           onKeyDown={handleKeyDown}
-          placeholder={selectedModel ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
+          placeholder={selectedModel || (routingTask && !deepResearch) ? 'Message OpenJarvis...' : 'Pick a model first (⌘K)...'}
           rows={1}
           className="flex-1 bg-transparent outline-none resize-none text-sm leading-relaxed"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
@@ -993,8 +1014,8 @@ const sendMessage = useCallback(async (messageText?: string) => {
             />
             <button
               onClick={() => sendMessage()}
-              disabled={streamState.isStreaming || imageLoading || (!input.trim() && !images.length) || modelLoading || !selectedModel}
-              title={selectedModel ? 'Send message' : 'Pick a model first (⌘K)'}
+              disabled={streamState.isStreaming || imageLoading || (!input.trim() && !images.length) || modelLoading || (!selectedModel && (!routingTask || deepResearch))}
+              title={selectedModel || (routingTask && !deepResearch) ? 'Send message' : 'Pick a model first (⌘K)'}
               className="p-2 rounded-xl transition-colors shrink-0 cursor-pointer disabled:opacity-30 disabled:cursor-default"
               style={{
                 background: input.trim() ? 'var(--color-accent)' : 'var(--color-bg-tertiary)',
