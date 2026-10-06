@@ -659,7 +659,9 @@ def probe_public_source(reader) -> dict:
         "sample_titles": [document.title for document in documents[:3]],
         "final_url": documents[0].url if documents else reader.config["url"],
     }
-    if isinstance(reader, JsonAPIConnector):
+    # Registered readers retain stable identities across lazy registry reloads.
+    # This controls preview presentation only, never permissions or capabilities.
+    if reader.connector_id == "json_api":
         # sync() validates the complete scan and rejects credential reflections
         # before any preview is returned. Testing never writes to the index.
         result["sample_documents"] = [

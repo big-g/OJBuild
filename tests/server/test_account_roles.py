@@ -320,3 +320,12 @@ def test_concurrent_administrators_cannot_demote_each_other_to_zero(setup):
         outcomes = list(pool.map(demote, [("admin", "user"), ("user", "admin")]))
     assert sorted(outcomes) == [False, True]
     assert sum(bool(row["is_admin"]) for row in store.list_users()) == 1
+
+
+def test_only_one_use_oauth_browser_gets_bypass_admin_header_gate():
+    assert not requires_admin("/v1/connectors/gdrive/oauth/launch", "GET")
+    assert not requires_admin("/v1/connectors/gdrive/oauth/callback", "GET")
+    assert requires_admin("/v1/connectors/gdrive/oauth/start", "GET")
+    assert requires_admin("/v1/connectors/gdrive/oauth/status", "GET")
+    assert requires_admin("/v1/connectors/gdrive/oauth/callback", "POST")
+    assert requires_admin("/v1/connectors/gdrive/oauth/callback/extra", "GET")

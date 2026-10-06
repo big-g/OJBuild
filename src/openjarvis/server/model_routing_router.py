@@ -40,6 +40,8 @@ class Assignment(BaseModel):
     enabled: StrictBool
     model_id: str = Field(max_length=2048)
     benchmark_id: str = Field(max_length=32)
+    fallback_model_id: str = Field(default="", max_length=2048)
+    fallback_benchmark_id: str = Field(default="", max_length=32)
 
 
 class Diagnostic(BaseModel):
@@ -81,6 +83,8 @@ def create_model_routing_router(connections):
                 body.model_id,
                 body.benchmark_id,
                 actor,
+                body.fallback_model_id,
+                body.fallback_benchmark_id,
             )
         )
 

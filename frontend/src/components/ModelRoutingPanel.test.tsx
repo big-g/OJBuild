@@ -18,3 +18,11 @@ it('hides shared routing controls from ordinary accounts', () => {
   user.is_admin = false;
   expect(renderToStaticMarkup(<ModelRoutingPanel />)).toBe('');
 });
+
+it('explains optional preflight-only fallback and representative cases', () => {
+  const html = renderToStaticMarkup(<ModelRoutingPanel />);
+  expect(html).toContain('aria-label="Assignment fallback"');
+  expect(html).toContain('three fixed cases');
+  expect(html).toContain('generation/stream failures never switch models');
+  expect(html).toContain('defaults to off');
+});

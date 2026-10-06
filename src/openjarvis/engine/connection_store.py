@@ -98,7 +98,7 @@ class ModelConnectionStore:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4):
+            if version not in (0, 1, 2, 3, 4, 5):
                 raise ValueError("Unsupported model connection database version")
             if version == 0:
                 db.execute("""CREATE TABLE model_connections (
@@ -160,6 +160,17 @@ class ModelConnectionStore:
                         (task, time.time()),
                     )
                 db.execute("PRAGMA user_version=4")
+            if version < 5:
+                columns = {
+                    r[1] for r in db.execute("PRAGMA table_info(model_task_rules)")
+                }
+                for column in ("fallback_model_id", "fallback_benchmark_id"):
+                    if column not in columns:
+                        db.execute(
+                            f"ALTER TABLE model_task_rules ADD COLUMN {column} "
+                            "TEXT NOT NULL DEFAULT ''"
+                        )
+                db.execute("PRAGMA user_version=5")
         self.path.chmod(0o600)
 
     @contextmanager

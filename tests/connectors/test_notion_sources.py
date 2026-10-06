@@ -293,12 +293,18 @@ def test_agent_reads_require_explicit_provider_network_and_credential_capabiliti
 
 
 def test_disable_and_remove_keep_other_instance_reads_independent(manager, fetch):
-    one = manager.create("notion_pages", "One", config(manager))
+    one = manager.create("notion_pages", "One", config(manager), actor="user:owner")
     two = manager.create(
-        "notion_pages", "Two", config(manager, "second-protected-token")
+        "notion_pages",
+        "Two",
+        config(manager, "second-protected-token"),
+        actor="user:owner",
     )
     manager.update(one["id"], 1, name="One", config=one["config"], enabled=False)
-    documents = list(manager.collect("notion_pages"))
+    from openjarvis.core.correlation import ExecutionIdentity, execution_scope
+
+    with execution_scope(ExecutionIdentity(user_id="owner")):
+        documents = list(manager.collect("notion_pages"))
     assert len(documents) == 1
     assert documents[0].metadata["source_instance_id"] == two["id"]
     assert fetch.call_count == 2

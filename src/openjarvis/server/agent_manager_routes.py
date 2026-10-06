@@ -238,6 +238,7 @@ class _LightweightSystem:
         self.model = model
         self.config = config
         self._runtime = runtime
+        self.model_connection_store = getattr(runtime, "model_connection_store", None)
         # Wire the configured memory backend so an agent's memory_store /
         # memory_retrieve tools work when the tick runs through the server.
         # The executor injects system.memory_backend into those tools; this
@@ -286,6 +287,10 @@ def _make_lightweight_system(
     engine directly (no health checks or model discovery that
     could interfere with in-flight requests).
     """
+    if isinstance(model, str) and model.startswith(("oj/", "task/")):
+        # Routing replaces the serving leaf itself. Keep the original active
+        # safety chain instead of constructing an unguarded background engine.
+        return _LightweightSystem(engine, model, config, runtime)
     try:
         from openjarvis.engine._discovery import get_engine
 
@@ -881,11 +886,60 @@ async def _stream_managed_agent(
     system_prompt = config.get("system_prompt")
     temperature = config.get("temperature", 0.7)
     max_tokens = config.get("max_tokens", 1024)
+    from openjarvis.engine.runtime_selection import resolve_selection
+
+    engine, model, routing = resolve_selection(app_state, engine, model)
+
+    async def routed(iterator):
+        import time
+
+        from openjarvis.core.routing_context import routing_scope
+        from openjarvis.traces.collector import record_response_trace
+
+        collected = ""
+        started = time.time()
+        outcome = "failure"
+        failed_frame = False
+        with routing_scope(routing):
+            try:
+                if routing:
+                    yield (
+                        "event: routing_decision\ndata: " + json.dumps(routing) + "\n\n"
+                    )
+                async for frame in iterator:
+                    if frame.startswith("event: error"):
+                        failed_frame = True
+                    if frame.startswith("data: ") and frame.strip() != "data: [DONE]":
+                        try:
+                            payload = json.loads(frame[6:])
+                            if payload.get("error"):
+                                failed_frame = True
+                            for choice in payload.get("choices", []):
+                                collected += (
+                                    choice.get("delta", {}).get("content") or ""
+                                )
+                        except (ValueError, TypeError):
+                            pass
+                    yield frame
+                outcome = "failure" if failed_frame else "success"
+            finally:
+                if routing:
+                    record_response_trace(
+                        getattr(app_state, "trace_store", None),
+                        query=user_content,
+                        result=collected,
+                        model=model,
+                        engine="ollama",
+                        agent=agent_id,
+                        started_at=started,
+                        ended_at=time.time(),
+                        outcome=outcome,
+                    )
+                await iterator.aclose()
 
     app_config = getattr(app_state, "config", None)
     global_max_turns = (
-        getattr(getattr(app_config, "agent", None), "max_turns", None)
-        or 10
+        getattr(getattr(app_config, "agent", None), "max_turns", None) or 10
     )
     max_turns = config.get("max_turns", global_max_turns)
     # Build conversation messages from history + current input
@@ -937,7 +991,8 @@ async def _stream_managed_agent(
         knowledge_db_path=getattr(app_state, "knowledge_db_path", None),
         runtime_tools=(
             app_state.runtime_tool_manager.available()
-            if getattr(app_state, "runtime_tool_manager", None) else ()
+            if getattr(app_state, "runtime_tool_manager", None)
+            else ()
         ),
     )
 
@@ -1250,7 +1305,7 @@ async def _stream_managed_agent(
                         break
 
             return StreamingResponse(
-                generate_deep_research(),
+                routed(generate_deep_research()),
                 media_type="text/event-stream",
                 headers={
                     "Cache-Control": "no-cache",
@@ -1564,7 +1619,7 @@ async def _stream_managed_agent(
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(
-        generate(),
+        routed(generate()),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
         background=BackgroundTask(_finalize_stream),
@@ -1686,7 +1741,7 @@ def create_agent_manager_router(
                 )
                 system = _make_lightweight_system(
                     server_engine,
-                    server_model,
+                    agent.get("config", {}).get("model") or server_model,
                     server_config,
                     app_state,
                 )
@@ -1809,10 +1864,9 @@ def create_agent_manager_router(
 
                         engine = getattr(request.app.state, "engine", None)
                         if engine:
-                            model_name = (
-                                getattr(request.app.state, "model", "")
-                                or getattr(engine, "_model", "")
-                            )
+                            model_name = getattr(
+                                request.app.state, "model", ""
+                            ) or getattr(engine, "_model", "")
                             tools = _build_deep_research_tools(
                                 engine=engine,
                                 model=model_name,
@@ -2073,7 +2127,7 @@ def create_agent_manager_router(
                     )
                     system = _make_lightweight_system(
                         _srv_engine,
-                        _srv_model,
+                        agent_record.get("config", {}).get("model") or _srv_model,
                         _srv_config,
                         _app_state,
                     )
@@ -2126,6 +2180,11 @@ def create_agent_manager_router(
                 detail="Engine not available for streaming",
             )
 
+        authenticated_user = getattr(request.state, "auth_user_id", None)
+        if authenticated_user:
+            from openjarvis.core.correlation import bind_verified_identity
+
+            bind_verified_identity(user_id=str(authenticated_user))
         return await _stream_managed_agent(
             manager=manager,
             agent_record=agent_record,

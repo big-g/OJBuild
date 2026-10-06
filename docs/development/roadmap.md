@@ -92,10 +92,33 @@ Existing tool, evidence and account ownership gates remain in force. Responses a
 chat telemetry expose the selected model/task/reason. Schema v4 preserves existing
 connection activation and starts task rules disabled.
 
-**Next:** managed-agent/scheduled configuration, explicit fallback and durable trace
-explanations; broader representative behavioral benchmark suites. Live Ubuntu/
-browser/desktop/Android validation and behavioral capability tests remain required.
-Authenticated/public inference endpoints and custom TLS trust are adapter
+**Implemented closing batch (2026-10-06):** managed-agent Intelligence configuration
+selects saved server models or explicit task assignments for interactive streams,
+immediate runs and scheduled ticks. General scheduler metadata supports the same
+`model` selection through an isolated query system. WebSocket chat applies explicit
+task assignments while retaining authenticated conversation ownership. A tick
+retains one selection across retries; shared server state is not changed.
+Schema v5 adds an optional, separately measured fallback. It is selected once only
+when the primary transport is unavailable during preflight, before inference.
+Stale rules, missing capabilities, invalid manifests and failed generations or
+streams never switch servers. Known safety and telemetry wrappers, including the
+active chain inside MultiEngine, remain in force; unknown wrappers fail closed.
+Routing task/revision/benchmark/model/reason persist in correlated traces, including
+failed bound runs. Unrelated traces cannot inherit another execution's decision.
+
+Versioned `behavior-v2` diagnostics cover three fixed cases per task: extraction
+and constraints, coding mutation/boundaries, weighted/dependency analysis, and
+vision color/position/count. Per-case correctness and latency are retained with
+provider usage and the synthetic tool-call canary. No generated code or tools are
+executed. Earlier diagnostic results require a fresh passing run and reassignment.
+These bounded checks do not certify broad real-world model quality.
+The server acceptance workflow can verify HTTP/WebSocket task selection and
+matching durable routing reasons using `--routing-task`.
+
+**Remaining acceptance:** live Ubuntu/browser/desktop/Android validation, real
+provider diagnostic results and manual/scheduled/fallback behavior on the deployed
+models. See [Phase 2 completion checklist](phase-2-completion.md).
+Authenticated/public inference endpoints and custom TLS trust remain adapter
 extensions. Shared-agent isolation, resource limits and load testing precede
 parallel execution. Phase 3 extends routing to image/3D workflows and optional
 multi-model review without making collaboration a Phase 2 completion gate.
@@ -136,6 +159,12 @@ or self-demotion and checks actor authority again inside write transactions.
 Personal projects, chats, files and named sources retain their ownership checks.
 See [Account roles](../user-guide/account-roles.md) for administrator bootstrap and
 permissions. Live Ubuntu/browser acceptance remains required.
+
+**Closing audit (2026-10-06):** legacy OAuth launch/callback browser GETs reach
+one-use state/browser validation without an administrator header. Start/status and
+all other legacy connector endpoints remain administrator-only. Launch, callback
+and the final token save recheck the initiating account's current administrator
+role and enabled status; removal or revocation cannot finish the exchange.
 
 ## Phase 2: account recovery
 
@@ -267,9 +296,14 @@ Existing approval fingerprints, restart restoration and live revocation checks
 cover path edits and loaded instances. Extracted data has no factual evidence
 authority; no network, file access or expression execution is introduced.
 
-**Pending:** further installable tool adapters and local package installation;
-live Ubuntu/browser/Tauri/Android validation of installation, restart, revocation
-and logout. Implemented adapters do not complete runtime tool addition acceptance.
+**Agreed completion scope (2026-10-06):** Phase 2 uses the three existing approved
+runtime adapters and reviewed MCP connections. Additional adapters and arbitrary
+local package installation move to a later isolated installation workstream, as
+selected by the project owner. No package installation is required to close Phase 2.
+
+**Pending acceptance:** live Ubuntu/browser/Tauri/Android validation of definition
+creation, approval, restart restoration, revocation and logout. Implemented adapters
+do not by themselves complete runtime tool addition acceptance.
 
 ## Phase 2: dynamic source management
 

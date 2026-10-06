@@ -474,3 +474,41 @@ def test_non_chat_manifest_cannot_enable_connection(setup):
         path + "/enabled", json={"revision": row["revision"], "enabled": True}
     )
     assert result.status_code == 400
+
+
+def test_multi_engine_preserves_active_nested_security_contract(setup):
+    from openjarvis.engine.multi import MultiEngine
+    from openjarvis.security.guardrails import SecurityBlockError
+    from openjarvis.security.types import RedactionMode
+
+    app, _, _, requests, _, default, _ = setup
+    row = enabled(setup)
+    selected = model_id(row["id"], "qwen3.5:9b")
+    guard = GuardrailsEngine(default, mode=RedactionMode.BLOCK)
+    active = InstrumentedEngine(guard, EventBus())
+    original = MultiEngine([("ollama", active)])
+    bound = ConfiguredModelEngine(app.state.model_connection_store, selected)
+    wrapped = preserve_wrappers(original, bound)
+    assert wrapped._inner._engine is bound
+    assert active._inner._engine is default
+    requests.clear()
+    with pytest.raises(SecurityBlockError):
+        wrapped.generate(
+            [Message(role=Role.USER, content="My SSN is 123-45-6789")], model=selected
+        )
+    assert not requests and not default.calls
+
+
+def test_configured_background_system_retains_original_safety_chain(setup):
+    from openjarvis.server.agent_manager_routes import _make_lightweight_system
+
+    app, _, _, _, _, default, _ = setup
+    row = enabled(setup)
+    selected = model_id(row["id"], "qwen3.5:9b")
+    engine = InstrumentedEngine(GuardrailsEngine(default, scanners=[]), EventBus())
+    system = _make_lightweight_system(
+        engine, "task/coding", app.state.config, app.state
+    )
+    assert system.engine is engine
+    manual = _make_lightweight_system(engine, selected, app.state.config, app.state)
+    assert manual.engine is engine

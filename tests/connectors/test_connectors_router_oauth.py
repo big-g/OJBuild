@@ -143,12 +143,18 @@ def client(
     monkeypatch.setattr(requests.Session, "send", no_network)
 
     from openjarvis.server.auth_middleware import AuthMiddleware
+    from openjarvis.server.auth_store import AuthStore
 
     app = FastAPI()
+    app.state.auth_store = AuthStore(hermetic_connectors / "auth.db")
+    app.state.auth_store.create_user("admin", "admin", "test-password", is_admin=True)
+    session_token = app.state.auth_store.create_session("admin")
     app.add_middleware(AuthMiddleware, api_key="test-key")
     app.include_router(create_connectors_router())
     with TestClient(
-        app, base_url="https://testserver", headers={"Authorization": "Bearer test-key"}
+        app,
+        base_url="https://testserver",
+        headers={"X-OpenJarvis-Session": session_token},
     ) as c:
         yield c
 
@@ -344,7 +350,7 @@ def test_oauth_callback_exchanges_and_connects(
         resp = client.get(
             "/v1/connectors/gdrive/oauth/callback",
             params={"code": "authcode123", "state": _start_state(client)},
-            headers={"Authorization": ""},
+            headers={"X-OpenJarvis-Session": ""},
         )
 
     assert resp.status_code == 200, resp.text
@@ -435,14 +441,17 @@ def test_browser_handoff_requires_authentication_then_sets_cookie(client):
     client.post("/v1/connectors/gdrive/connect", json={"code": _CLIENT_PAIR})
     base = "/v1/connectors/gdrive/oauth"
     assert (
-        client.post(base + "/start", headers={"Authorization": ""}).status_code == 401
+        client.post(base + "/start", headers={"X-OpenJarvis-Session": ""}).status_code
+        == 401
     )
     start = client.post(base + "/start")
     assert start.status_code == 200
     attempt = start.json()
     assert _CLIENT_PAIR not in str(attempt) and "code_verifier" not in str(attempt)
     launch = client.get(
-        attempt["launch_path"], headers={"Authorization": ""}, follow_redirects=False
+        attempt["launch_path"],
+        headers={"X-OpenJarvis-Session": ""},
+        follow_redirects=False,
     )
     assert launch.status_code == 307
     query = parse_qs(urlparse(launch.headers["location"]).query)
@@ -456,7 +465,7 @@ def test_browser_handoff_requires_authentication_then_sets_cookie(client):
         client.get(
             base + "/status",
             params={"attempt_id": attempt["attempt_id"]},
-            headers={"Authorization": ""},
+            headers={"X-OpenJarvis-Session": ""},
         ).status_code
         == 401
     )
@@ -475,7 +484,7 @@ def test_callbacks_require_browser_binding_and_cannot_replay(client):
     ) as exchange:
         assert (
             client.get(
-                url, params={"code": "injected"}, headers={"Authorization": ""}
+                url, params={"code": "injected"}, headers={"X-OpenJarvis-Session": ""}
             ).status_code
             == 400
         )
@@ -492,7 +501,7 @@ def test_callbacks_require_browser_binding_and_cannot_replay(client):
             client.get(
                 url,
                 params={"code": "valid", "state": state},
-                headers={"Authorization": ""},
+                headers={"X-OpenJarvis-Session": ""},
             ).status_code
             == 200
         )
@@ -557,3 +566,47 @@ def test_disconnect_invalidates_pending_oauth_attempt(client):
         "/v1/connectors/gdrive/oauth/callback", params={"state": state, "code": "code"}
     )
     assert response.status_code == 400
+
+
+@pytest.mark.parametrize("change", ["role", "removed", "disabled"])
+def test_legacy_oauth_callback_rechecks_initiating_admin(client, change):
+    import openjarvis.connectors.oauth as oauth_mod
+
+    state = _start_state(client)
+    auth = client.app.state.auth_store
+    if change == "role":
+        auth.set_admin("admin", False)
+    elif change == "removed":
+        auth.delete_user("admin")
+    else:
+        with auth._connect() as db:
+            db.execute("UPDATE users SET disabled=1 WHERE user_id='admin'")
+    with patch.object(oauth_mod, "_exchange_token") as exchange:
+        response = client.get(
+            "/v1/connectors/gdrive/oauth/callback",
+            params={"state": state, "code": "do-not-exchange"},
+            headers={"X-OpenJarvis-Session": ""},
+        )
+    assert response.status_code == 409
+    exchange.assert_not_called()
+
+
+def test_legacy_oauth_role_revoked_during_exchange_cannot_save(
+    client, hermetic_connectors
+):
+    import openjarvis.connectors.oauth as oauth_mod
+
+    state = _start_state(client)
+
+    def exchange(*args, **kwargs):
+        client.app.state.auth_store.set_admin("admin", False)
+        return {"access_token": "synthetic-rejected-token"}
+
+    with patch.object(oauth_mod, "_exchange_token", side_effect=exchange):
+        response = client.get(
+            "/v1/connectors/gdrive/oauth/callback",
+            params={"state": state, "code": "synthetic-code"},
+            headers={"X-OpenJarvis-Session": ""},
+        )
+    assert response.status_code == 403
+    assert "access_token" not in load_tokens(str(hermetic_connectors / "gdrive.json"))

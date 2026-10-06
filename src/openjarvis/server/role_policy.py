@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 # These handlers independently verify human identity and ownership or validate
 # input-only actions. Adding a new system mutation requires administrator access.
 _PERSONAL_PREFIXES = ("/v1/sessions", "/v1/projects", "/v1/sources", "/v1/files")
@@ -44,6 +46,13 @@ def _within(path, prefix):
 
 def requires_admin(path: str, method: str) -> bool:
     path = path.rstrip("/") or "/"
+    # Provider redirects cannot carry a human session header. These handlers
+    # validate single-use state, browser binding and the initiating identity.
+    # Start/status and every other legacy connector route remain admin-only.
+    if method == "GET" and re.fullmatch(
+        r"/v1/connectors/[A-Za-z0-9_-]+/oauth/(launch|callback)", path
+    ):
+        return False
     if any(_within(path, prefix) for prefix in _PRIVATE_SYSTEM_PREFIXES):
         return True
     if method in {"GET", "HEAD", "OPTIONS"}:

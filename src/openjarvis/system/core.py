@@ -148,7 +148,48 @@ class JarvisSystem:
         system_prompt: Optional[str] = None,
         operator_id: Optional[str] = None,
         prior_messages: Optional[List[Message]] = None,
+        model: Optional[str] = None,
     ) -> Dict[str, Any]:
+        if model and (model.startswith("oj/") or model.startswith("task/")):
+            import copy
+
+            from openjarvis.core.correlation import (
+                ExecutionIdentity,
+                current_identity,
+                execution_scope,
+            )
+            from openjarvis.core.routing_context import routing_scope
+            from openjarvis.engine.runtime_selection import resolve_selection
+            from openjarvis.system.orchestrator import QueryOrchestrator
+
+            selected_engine, selected_model, decision = resolve_selection(
+                self,
+                self.engine,
+                model,
+                tools=bool(tools),
+            )
+            isolated = copy.copy(self)
+            isolated.engine, isolated.model = selected_engine, selected_model
+            isolated.engine_key = "ollama"
+            identity = current_identity() or ExecutionIdentity()
+            with execution_scope(identity), routing_scope(decision):
+                result = QueryOrchestrator(isolated).ask(
+                    query,
+                    context=context,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    agent=agent,
+                    tools=tools,
+                    system_prompt=system_prompt,
+                    operator_id=operator_id,
+                    prior_messages=prior_messages,
+                )
+                result["routing"] = decision
+                return result
+        if model:
+            raise ValueError(
+                "Scheduled overrides require a saved model or task assignment"
+            )
         return self._get_orchestrator().ask(
             query,
             context=context,

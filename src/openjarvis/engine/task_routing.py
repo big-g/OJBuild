@@ -10,7 +10,7 @@ from openjarvis.engine.configured_models import ConfiguredModelEngine, model_id
 from openjarvis.engine.connection_store import ConnectionConflict
 
 TASKS = ("general", "coding", "analysis", "vision")
-SUITE_VERSION = "diagnostic-v1"
+SUITE_VERSION = "behavior-v2"
 
 
 class TaskRoutingStore:
@@ -126,7 +126,17 @@ class TaskRoutingStore:
             raise ValueError("Assigned model no longer reports required capabilities")
         return self._public(bench), self.connections.public(row)
 
-    def update(self, task, revision, enabled, selected, benchmark_id, actor):
+    def update(
+        self,
+        task,
+        revision,
+        enabled,
+        selected,
+        benchmark_id,
+        actor,
+        fallback_model_id="",
+        fallback_benchmark_id="",
+    ):
         if task not in TASKS:
             raise ValueError("Choose general, coding, analysis or vision")
         with self.connections.connection() as db:
@@ -145,10 +155,33 @@ class TaskRoutingStore:
             }
             if enabled:
                 self._valid(db, candidate)
+                if fallback_model_id:
+                    if fallback_model_id == selected:
+                        raise ValueError("Fallback must be a different model identity")
+                    self._valid(
+                        db,
+                        {
+                            "task": task,
+                            "model_id": fallback_model_id,
+                            "benchmark_id": fallback_benchmark_id,
+                        },
+                    )
+                elif fallback_benchmark_id:
+                    raise ValueError("Choose a fallback model for its benchmark")
             db.execute(
                 "UPDATE model_task_rules SET revision=revision+1,enabled=?,"
-                "model_id=?,benchmark_id=?,actor=?,updated_at=? WHERE task=?",
-                (int(enabled), selected, benchmark_id, actor, time.time(), task),
+                "model_id=?,benchmark_id=?,actor=?,updated_at=?,"
+                "fallback_model_id=?,fallback_benchmark_id=? WHERE task=?",
+                (
+                    int(enabled),
+                    selected,
+                    benchmark_id,
+                    actor,
+                    time.time(),
+                    fallback_model_id,
+                    fallback_benchmark_id,
+                    task,
+                ),
             )
             db.execute(
                 "INSERT INTO model_routing_audit (task,revision,event,actor,timestamp) "
@@ -163,7 +196,7 @@ class TaskRoutingStore:
             )
         return next(r for r in self.rules() if r["task"] == task)
 
-    def resolve(self, task, *, tools=False, images=False):
+    def resolve(self, task, *, tools=False, images=False, live=False):
         if task not in TASKS:
             raise ValueError("Unknown routing task")
         with self.connections.connection() as db:
@@ -201,7 +234,47 @@ class TaskRoutingStore:
         if engine.connection["revision"] != row["revision"]:
             raise ConnectionConflict("Assigned model changed during routing. Try again")
         engine.validate_binding = lambda: self.validate_decision(decision)
+        engine.diagnostic_tools_passed = bool(bench["details"].get("tools_passed"))
         engine._row()
+        if live:
+            from openjarvis.engine.configured_models import ConfiguredModelUnavailable
+
+            try:
+                engine.check(tools=tools, images=images, live=True)
+            except ConfiguredModelUnavailable:
+                if not rule["fallback_model_id"]:
+                    raise
+                with self.connections.connection() as db:
+                    db.execute("BEGIN")
+                    fallback, fallback_row = self._valid(
+                        db,
+                        {
+                            "task": task,
+                            "model_id": rule["fallback_model_id"],
+                            "benchmark_id": rule["fallback_benchmark_id"],
+                        },
+                    )
+                decision.update(
+                    {
+                        "primary_model": rule["model_id"],
+                        "fallback_used": True,
+                        "model": rule["fallback_model_id"],
+                        "selected_benchmark_id": fallback["id"],
+                        "connection_revision": fallback_row["revision"],
+                        "reason": "Explicit fallback: primary transport unavailable "
+                        "before inference; one reviewed alternative selected",
+                    }
+                )
+                engine = ConfiguredModelEngine(self.connections, decision["model"])
+                if engine.connection["revision"] != fallback_row["revision"]:
+                    raise ConnectionConflict(
+                        "Fallback connection changed during routing"
+                    )
+                engine.diagnostic_tools_passed = bool(
+                    fallback["details"].get("tools_passed")
+                )
+                engine.validate_binding = lambda: self.validate_decision(decision)
+                engine.check(tools=tools, images=images, live=True)
         return decision, engine
 
     def validate_decision(self, decision):
@@ -220,6 +293,21 @@ class TaskRoutingStore:
                 ):
                     raise ValueError("Task assignment changed")
                 self._valid(db, rule)
+                if decision.get("fallback_used"):
+                    if (
+                        rule["fallback_model_id"] != decision["model"]
+                        or rule["fallback_benchmark_id"]
+                        != decision["selected_benchmark_id"]
+                    ):
+                        raise ValueError("Fallback assignment changed")
+                    self._valid(
+                        db,
+                        {
+                            "task": rule["task"],
+                            "model_id": rule["fallback_model_id"],
+                            "benchmark_id": rule["fallback_benchmark_id"],
+                        },
+                    )
         except (KeyError, ValueError):
             raise ConfiguredModelError(
                 "Task assignment or diagnostic changed. Review the task or "

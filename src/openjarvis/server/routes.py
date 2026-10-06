@@ -40,6 +40,7 @@ from openjarvis.server.models import (
 
 router = APIRouter()
 
+
 def _session_store(request: Request):
     """Return the application's persistent conversational SessionStore."""
     store = getattr(request.app.state, "session_store", None)
@@ -51,6 +52,7 @@ def _session_store(request: Request):
     store = SessionStore()
     request.app.state.session_store = store
     return store
+
 
 def _to_messages(chat_messages) -> list[Message]:
     """Convert Pydantic ChatMessage objects to core Message objects."""
@@ -179,10 +181,31 @@ def _ensure_identity_prompt(messages: list[Message], app_config) -> list[Message
 async def chat_completions(request_body: ChatCompletionRequest, request: Request):
     """Apply only explicitly requested, administrator-configured task assignments."""
     if request_body.routing_task is None:
-        return await _chat_completions(request_body, request)
-    get_authenticated_user_id(request)
+        from openjarvis.core.routing_context import routing_metadata, routing_scope
+
+        with routing_scope(None):
+            response = await _chat_completions(request_body, request)
+            decision = routing_metadata().get("routing")
+        if decision and isinstance(response, StreamingResponse):
+            original = response.body_iterator
+
+            async def manual_routed():
+                with routing_scope(decision):
+                    async for chunk in original:
+                        yield chunk
+
+            response.body_iterator = manual_routed()
+        return response
+    user_id = get_authenticated_user_id(request)
+    if request_body.session_id:
+        owned = _session_store(request).get_session(request_body.session_id)
+        if owned is None:
+            raise HTTPException(404, "Session not found")
+        if owned.identity is None or owned.identity.user_id != user_id:
+            raise HTTPException(403, "Session does not belong to authenticated user")
     import json
 
+    from openjarvis.core.routing_context import routing_scope
     from openjarvis.engine._base import EngineConnectionError
     from openjarvis.engine.task_routing import TaskRoutingStore
 
@@ -193,32 +216,42 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     runtime = getattr(request.app.state, "runtime_tool_manager", None)
     images = any(message.images for message in request_body.messages)
     tools = bool(request_body.tools) or (
-        agent is not None and not images and (
-            bool(getattr(agent, "_tools", None)) or (
-                getattr(agent, "accepts_tools", False) and runtime is not None
+        agent is not None
+        and not images
+        and (
+            bool(getattr(agent, "_tools", None))
+            or (
+                getattr(agent, "accepts_tools", False)
+                and runtime is not None
                 and bool(runtime.available())
             )
         )
     )
     try:
         decision, bound = await asyncio.to_thread(
-            TaskRoutingStore(store).resolve, request_body.routing_task,
-            tools=tools, images=images,
+            TaskRoutingStore(store).resolve,
+            request_body.routing_task,
+            tools=tools,
+            images=images,
+            live=True,
         )
     except (ValueError, KeyError, EngineConnectionError):
         raise HTTPException(
-            409, "Task assignment is unavailable, changed or lacks required diagnostic "
+            409,
+            "Task assignment is unavailable, changed or lacks required diagnostic "
             "coverage. Choose Manual model or ask an administrator to review it.",
         ) from None
     resolved = request_body.model_copy(update={"model": decision["model"]})
-    response = await _chat_completions(resolved, request, task_engine=bound)
+    with routing_scope(decision):
+        response = await _chat_completions(resolved, request, task_engine=bound)
     if isinstance(response, StreamingResponse):
         original = response.body_iterator
 
         async def with_decision():
-            yield "event: routing_decision\ndata: " + json.dumps(decision) + "\n\n"
-            async for chunk in original:
-                yield chunk
+            with routing_scope(decision):
+                yield "event: routing_decision\ndata: " + json.dumps(decision) + "\n\n"
+                async for chunk in original:
+                    yield chunk
 
         response.body_iterator = with_decision()
     else:
@@ -227,7 +260,10 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
 
 
 async def _chat_completions(
-    request_body: ChatCompletionRequest, request: Request, *, task_engine=None,
+    request_body: ChatCompletionRequest,
+    request: Request,
+    *,
+    task_engine=None,
 ):
     """Handle chat completion requests (streaming and non-streaming)."""
     user_id = get_authenticated_user_id(request)
@@ -243,6 +279,13 @@ async def _chat_completions(
         agent is not None,
         bool(getattr(agent, "_tools", None)),
     )
+    # Validate ownership before any selected-server preflight.
+    if request_body.session_id:
+        owned = _session_store(request).get_session(request_body.session_id)
+        if owned is None:
+            raise HTTPException(404, "Session not found")
+        if owned.identity is None or owned.identity.user_id != user_id:
+            raise HTTPException(403, "Session does not belong to authenticated user")
     model = request_body.model
     configured_engine = None
     agent_engine_override = None
@@ -261,23 +304,45 @@ async def _chat_completions(
             has_images = any(m.images for m in request_body.messages)
             runtime = getattr(request.app.state, "runtime_tool_manager", None)
             agent_uses_tools = (
-                agent is not None and not has_images and not request_body.tools
-                and (bool(getattr(agent, "_tools", None))
-                     or (getattr(agent, "accepts_tools", False)
-                         and runtime is not None and bool(runtime.available())))
+                agent is not None
+                and not has_images
+                and not request_body.tools
+                and (
+                    bool(getattr(agent, "_tools", None))
+                    or (
+                        getattr(agent, "accepts_tools", False)
+                        and runtime is not None
+                        and bool(runtime.available())
+                    )
+                )
             )
             configured_engine.check(
-                tools=bool(request_body.tools) or agent_uses_tools, images=has_images,
+                tools=bool(request_body.tools) or agent_uses_tools,
+                images=has_images,
             )
             engine = preserve_wrappers(engine, configured_engine)
             if agent is not None:
                 agent_engine_override = configured_engine
         except EngineConnectionError as exc:
             raise HTTPException(400, str(exc)) from None
+        from openjarvis.core.routing_context import bind_routing, routing_metadata
+
+        if not routing_metadata():
+            bind_routing(
+                {
+                    "mode": "manual",
+                    "model": model,
+                    "connection_revision": configured_engine.connection["revision"],
+                    "reason": "Explicit server-bound selection; fallback disabled",
+                }
+            )
         try:
-            await asyncio.to_thread(configured_engine.check, live=True,
-                                    tools=bool(request_body.tools) or agent_uses_tools,
-                                    images=has_images)
+            await asyncio.to_thread(
+                configured_engine.check,
+                live=True,
+                tools=bool(request_body.tools) or agent_uses_tools,
+                images=has_images,
+            )
         except EngineConnectionError as exc:
             raise HTTPException(503, str(exc)) from None
 
@@ -321,7 +386,8 @@ async def _chat_completions(
             if len(raw) > 10 * 1024 * 1024 or not (
                 raw.startswith(b"\x89PNG\r\n\x1a\n")
                 or raw.startswith(b"\xff\xd8\xff")
-                or raw.startswith(b"RIFF") and raw[8:12] == b"WEBP"
+                or raw.startswith(b"RIFF")
+                and raw[8:12] == b"WEBP"
             ):
                 raise HTTPException(
                     status_code=400,
@@ -345,8 +411,8 @@ async def _chat_completions(
 
             if session.identity.user_id != user_id:
                 raise HTTPException(
-                status_code=403,
-                detail="Session does not belong to authenticated user",
+                    status_code=403,
+                    detail="Session does not belong to authenticated user",
                 )
 
             bind_verified_identity(user_id=user_id, session_id=session.session_id)
@@ -565,8 +631,11 @@ async def _chat_completions(
                 session_store=session_store,
                 session_id=request_body.session_id,
                 user_id=user_id,
-                **({"engine_override": agent_engine_override}
-                   if agent_engine_override is not None else {}),
+                **(
+                    {"engine_override": agent_engine_override}
+                    if agent_engine_override is not None
+                    else {}
+                ),
             )
 
         return await _handle_stream(
@@ -612,8 +681,11 @@ async def _chat_completions(
             complexity_info,
             trace_store=getattr(request.app.state, "trace_store", None),
             bus=getattr(request.app.state, "bus", None),
-            **({"engine_override": agent_engine_override}
-               if agent_engine_override is not None else {}),
+            **(
+                {"engine_override": agent_engine_override}
+                if agent_engine_override is not None
+                else {}
+            ),
         )
     else:
         bus = getattr(request.app.state, "bus", None)
@@ -657,6 +729,7 @@ def _response_content(response) -> str:
         content = getattr(choices[0].message, "content", "") or ""
     return content
 
+
 def _persist_session_message(
     session_store,
     session_id: str | None,
@@ -686,6 +759,7 @@ def _persist_session_message(
             exc_info=True,
         )
 
+
 def _record_completed_exchange(
     memory_service,
     user_text: str,
@@ -695,7 +769,6 @@ def _record_completed_exchange(
     bus=None,
     source: str = "server.chat",
 ) -> None:
-
     """Publish or submit a completed exchange without blocking a reply."""
     if not user_text:
         return
@@ -743,7 +816,7 @@ def _remember_exchange(
         memory_service,
         user_text,
         _response_content(response),
-        user_id= user_id,
+        user_id=user_id,
         bus=bus,
         source=source,
     )
@@ -1053,9 +1126,7 @@ def _handle_agent(
                     store=trace_store,
                     bus=bus,
                     result_processor=(
-                        _finalize_result
-                        if requirement.required
-                        else None
+                        _finalize_result if requirement.required else None
                     ),
                 )
                 result = collector.run(input_text, context=ctx)
@@ -1111,6 +1182,7 @@ def _handle_agent(
         complexity=complexity_info,
     )
 
+
 async def _handle_agent_stream(
     agent,
     model: str,
@@ -1125,7 +1197,6 @@ async def _handle_agent_stream(
     user_id=None,
     engine_override=None,
 ):
-
     """Run the configured agent and return its result as an SSE response.
 
     Agents own the tool-execution loop, which is synchronous today.  Run that
@@ -1168,8 +1239,11 @@ async def _handle_agent_stream(
                 complexity_info,
                 trace_store=trace_store,
                 bus=bus,
-                **({"engine_override": engine_override}
-                   if engine_override is not None else {}),
+                **(
+                    {"engine_override": engine_override}
+                    if engine_override is not None
+                    else {}
+                ),
             )
         except Exception as exc:
             logging.getLogger("openjarvis.server").error(
@@ -1248,6 +1322,7 @@ async def _handle_agent_stream(
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
 
+
 async def _handle_stream_tools(
     engine,
     model: str,
@@ -1262,7 +1337,6 @@ async def _handle_stream_tools(
     session_id=None,
     user_id="",
 ):
-
     """Stream a raw OpenAI-compat function-calling response via SSE.
 
     Used when the client passes `tools` together with `stream:true`.  Sources
@@ -1328,9 +1402,7 @@ async def _handle_stream_tools(
             content_chunk = ChatCompletionChunk(
                 id=chunk_id,
                 model=model,
-                choices=[
-                    StreamChoice(delta=DeltaMessage(content=blocked))
-                ],
+                choices=[StreamChoice(delta=DeltaMessage(content=blocked))],
             )
             yield f"data: {content_chunk.model_dump_json()}\n\n"
             finish_chunk = ChatCompletionChunk(
@@ -1415,7 +1487,6 @@ async def _handle_stream_tools(
             finish_dict["complexity"] = complexity_info.model_dump()
         yield f"data: {_json.dumps(finish_dict)}\n\n"
         if full_content:
-
             _persist_session_message(
                 session_store,
                 session_id,
@@ -1528,9 +1599,7 @@ async def _handle_stream(
             content_chunk = ChatCompletionChunk(
                 id=chunk_id,
                 model=model,
-                choices=[
-                    StreamChoice(delta=DeltaMessage(content=blocked))
-                ],
+                choices=[StreamChoice(delta=DeltaMessage(content=blocked))],
             )
             yield f"data: {content_chunk.model_dump_json()}\n\n"
             finish_chunk = ChatCompletionChunk(
@@ -1578,15 +1647,20 @@ async def _handle_stream(
                 if _use_local_fallback:
                     actual_telemetry_engine = "ollama"
                     token_iter = stream_local(
-                        model, messages, req.temperature, req.max_tokens,
-                        outcome=outcome
+                        model,
+                        messages,
+                        req.temperature,
+                        req.max_tokens,
+                        outcome=outcome,
                     )
                 else:
                     from openjarvis.engine._stubs import InferenceEngine
 
                     async def full_tokens():
                         async for sc in engine.stream_full(
-                            messages, model=model, temperature=req.temperature,
+                            messages,
+                            model=model,
+                            temperature=req.temperature,
                             max_tokens=req.max_tokens,
                         ):
                             if sc.finish_reason:
@@ -1754,9 +1828,8 @@ async def list_models(request: Request) -> ModelListResponse:
                 ),
             )
             for mid in model_ids
-        ] + [
-            ModelObject(**model) for model in configured_models
-        ],
+        ]
+        + [ModelObject(**model) for model in configured_models],
     )
 
 
@@ -1802,8 +1875,11 @@ async def pull_model(request: Request):
 async def delete_model(model_name: str, request: Request):
     """Delete a model from Ollama."""
     if model_name.startswith("oj/"):
-        raise HTTPException(400, "Manage model files on their Ollama server; "
-                            "this picker does not delete configured-server models")
+        raise HTTPException(
+            400,
+            "Manage model files on their Ollama server; "
+            "this picker does not delete configured-server models",
+        )
     engine = request.app.state.engine
     engine_name = getattr(request.app.state, "engine_name", "")
     if engine_name != "ollama" and getattr(engine, "engine_id", "") != "ollama":

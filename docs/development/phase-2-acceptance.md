@@ -64,3 +64,19 @@ Record the server commit, client versions, date, automated report and each devic
 result before marking this acceptance gate complete. A server-only report cannot
 confirm microphone behavior, desktop packaging, or Android UI behavior. Delete
 the labeled conversation through the normal application controls when finished.
+
+## Include task routing in the automated check
+
+After reviewing current passing diagnostics and enabling a general/coding/analysis/
+vision assignment in Settings, run the same workflow with an explicit task:
+
+```bash
+uv run python scripts/check_session_continuity.py --routing-task coding
+```
+
+This runs the disposable conversation through the assignment for all three exchanges.
+It also requires each HTTP/WebSocket decision to match its persisted trace's actual
+model and routing metadata. It does not run diagnostics, change assignments, enable
+fallback or alter source/tool approvals. A passing automated report still leaves the
+actual client checks pending. Full workstream checks are in
+[Phase 2 completion](phase-2-completion.md).

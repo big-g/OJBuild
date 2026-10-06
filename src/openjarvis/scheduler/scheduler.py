@@ -208,7 +208,9 @@ class TaskScheduler:
 
     def _execute_task(self, task: ScheduledTask) -> None:
         """Execute a single due task and log the result."""
-        with execution_scope(ExecutionIdentity()):
+        from openjarvis.core.routing_context import routing_scope
+
+        with execution_scope(ExecutionIdentity()), routing_scope(None):
             self._execute_scoped_task(task)
 
     def _execute_scoped_task(self, task: ScheduledTask) -> None:
@@ -240,6 +242,8 @@ class TaskScheduler:
                     "tools": tools_list if tools_list else None,
                 }
                 meta = task.metadata or {}
+                if meta.get("model"):
+                    ask_kwargs["model"] = meta["model"]
                 if meta.get("operator_id"):
                     ask_kwargs["system_prompt"] = meta.get("system_prompt", "")
                     ask_kwargs["operator_id"] = meta["operator_id"]

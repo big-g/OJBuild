@@ -115,6 +115,16 @@ class TraceStore:
         single writer — see ``server/app.py`` — rather than swallowing
         collisions here.
         """
+        from openjarvis.core.correlation import current_identity
+        from openjarvis.core.routing_context import routing_metadata
+
+        identity = current_identity()
+        if identity and trace.trace_id == identity.trace_id:
+            routing = routing_metadata()
+            if routing:
+                trace.metadata.update(routing)
+                trace.model = routing["routing"]["model"]
+                trace.engine = "ollama"
         self._conn.execute(
             _INSERT_TRACE,
             (

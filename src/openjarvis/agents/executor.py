@@ -132,8 +132,16 @@ class AgentExecutor:
         ``status='running'`` forever.
         """
         # A background tick is a new execution, not the caller's HTTP turn.
-        with execution_scope(ExecutionIdentity()):
-            self._execute_scoped_tick(agent_id, lock_already_held=lock_already_held)
+        from openjarvis.core.routing_context import routing_scope
+
+        with execution_scope(ExecutionIdentity()), routing_scope(None):
+            self._toolkit_local.selection = None
+            self._toolkit_local.tick_active = True
+            try:
+                self._execute_scoped_tick(agent_id, lock_already_held=lock_already_held)
+            finally:
+                self._toolkit_local.tick_active = False
+                self._toolkit_local.selection = None
 
     def _execute_scoped_tick(
         self, agent_id: str, *, lock_already_held: bool = False
@@ -280,6 +288,15 @@ class AgentExecutor:
         raise last_error or FatalError("max retries exhausted")
 
     def _invoke_agent(self, agent: dict) -> AgentResult:
+        if getattr(self._toolkit_local, "tick_active", False):
+            return self._invoke_owned_agent(agent)
+        from openjarvis.core.routing_context import routing_scope
+
+        self._toolkit_local.selection = None
+        with routing_scope(None):
+            return self._invoke_owned_agent(agent)
+
+    def _invoke_owned_agent(self, agent: dict) -> AgentResult:
         """Invoke one agent while owning every resource its resolver opens."""
 
         previous = getattr(self._toolkit_local, "current", None)
@@ -330,7 +347,11 @@ class AgentExecutor:
 
         # Optionally override model via router policy
         router_policy_key = config.get("router_policy")
-        if router_policy_key and self._system:
+        if (
+            router_policy_key
+            and self._system
+            and not model.startswith(("oj/", "task/"))
+        ):
             try:
                 from openjarvis.core.registry import RouterPolicyRegistry
                 from openjarvis.learning.routing.router import (
@@ -350,6 +371,16 @@ class AgentExecutor:
                 pass  # Fall back to configured model
 
         mcp_tools: list[Any] = []
+        if model.startswith(("oj/", "task/")):
+            from openjarvis.core.routing_context import bind_routing
+            from openjarvis.engine.runtime_selection import resolve_selection
+
+            selected = getattr(self._toolkit_local, "selection", None)
+            if selected is None:
+                selected = resolve_selection(self._system, engine, model)
+                self._toolkit_local.selection = selected
+            engine, model, decision = selected
+            bind_routing(decision)
         mcp_clients: list[Any] = []
         if (
             config.get("mcp_tools", True) is not False
@@ -402,12 +433,11 @@ class AgentExecutor:
             tool_management_registry=getattr(
                 self._system, "tool_management_registry", None
             ),
-            capability_registry=getattr(
-                self._system, "capability_registry", None
-            ),
+            capability_registry=getattr(self._system, "capability_registry", None),
             runtime_tools=(
                 self._system.runtime_tool_manager.available()
-                if getattr(self._system, "runtime_tool_manager", None) else ()
+                if getattr(self._system, "runtime_tool_manager", None)
+                else ()
             ),
         )
         self._toolkit_local.current = resolved_toolkit

@@ -762,6 +762,16 @@ def create_connectors_router():
 
             return _CONNECTORS_DIR / connector_credential_file(provider, identity)
 
+        def authorize_actor(self, identity, actor, request):
+            from openjarvis.server.auth import get_auth_store
+
+            user = get_auth_store(request).get_user(actor) if actor else None
+            if user is None or user["disabled"] or not user["is_admin"]:
+                raise HTTPException(
+                    403,
+                    "Legacy connector authorization requires a current administrator",
+                )
+
         def before_save(self, identity):
             pass
 

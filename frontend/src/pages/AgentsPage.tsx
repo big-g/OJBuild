@@ -906,10 +906,12 @@ function LaunchWizard({
               >
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>
-                    {m.id}{m.id === recommendedModel ? ' (recommended)' : ''}
+                    {m.display_name || m.id}{m.id === recommendedModel ? ' (recommended)' : ''}
                   </option>
                 ))}
+                {['general', 'coding', 'analysis', 'vision'].map(task => <option key={task} value={`task/${task}`}>{task} task assignment</option>)}
               </select>
+              <p className="text-xs mt-1">Saved models and task assignments also apply to scheduled ticks. An administrator enables assignments in Settings; unavailable assignments fail visibly.</p>
             </div>
             <div>
               <label className="block text-sm font-medium mb-1" style={{ color: 'var(--color-text-secondary)' }}>Schedule</label>
@@ -1418,11 +1420,13 @@ function AgentConfigGrid({ agent, onAgentUpdated }: { agent: ManagedAgent; onAge
         const installed = (await fetchModels()).map((m) => m.id);
         if (cancelled) return;
         setOllamaModels(installed);
-        if (currentModel === '(default)') {
+        if (currentModel.startsWith('task/')) {
+          setModelAvailable('unknown');
+        } else if (currentModel === '(default)') {
           setModelAvailable(installed.length > 0 ? 'available' : 'unknown');
         } else {
           const isInstalled = installed.some(
-            (n) => n === currentModel || n.startsWith(currentModel + ':') || currentModel.startsWith(n.split(':')[0])
+            (n) => n === currentModel || (!currentModel.startsWith('oj/') && n.startsWith(currentModel + ':'))
           );
           setModelAvailable(isInstalled ? 'available' : 'unavailable');
         }
@@ -1446,7 +1450,7 @@ function AgentConfigGrid({ agent, onAgentUpdated }: { agent: ManagedAgent; onAge
 
   function isModelInstalled(modelId: string): boolean {
     return ollamaModels.some(
-      (n) => n === modelId || n.startsWith(modelId + ':') || modelId.startsWith(n.split(':')[0])
+      (n) => n === modelId || (!modelId.startsWith('oj/') && n.startsWith(modelId + ':'))
     );
   }
 
@@ -1489,6 +1493,7 @@ function AgentConfigGrid({ agent, onAgentUpdated }: { agent: ManagedAgent; onAge
               </option>
             );
           })}
+          {['general', 'coding', 'analysis', 'vision'].map(task => <option key={task} value={`task/${task}`}>{task} task assignment</option>)}
         </select>
       )
     ) : (

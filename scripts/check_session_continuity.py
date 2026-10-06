@@ -44,8 +44,17 @@ def check_identity(identity, user_id, session_id):
         require(bool(identity.get(key)), f"Missing {key}")
 
 
-def ws_turn(ws, session_id, message, timeout, model):
-    ws.send(json.dumps({"message": message, "session_id": session_id, "model": model}))
+def ws_turn(ws, session_id, message, timeout, model, routing_task=None, decisions=None):
+    ws.send(
+        json.dumps(
+            {
+                "message": message,
+                "session_id": session_id,
+                "model": model,
+                **({"routing_task": routing_task} if routing_task else {}),
+            }
+        )
+    )
     deadline = time.monotonic() + timeout
     chunks, identity = [], None
     for _ in range(10000):
@@ -55,6 +64,10 @@ def ws_turn(ws, session_id, message, timeout, model):
         require(frame.get("type") != "error", "WebSocket returned an error")
         identity = identity or frame.get("correlation")
         require(frame.get("correlation") == identity, "Frame identities differ")
+        if frame.get("type") == "routing_decision" and decisions is not None:
+            decisions.append(
+                {k: v for k, v in frame.items() if k not in {"type", "correlation"}}
+            )
         if frame.get("type") == "chunk":
             chunks.append(frame.get("content", ""))
         elif frame.get("type") == "done":
@@ -63,7 +76,9 @@ def ws_turn(ws, session_id, message, timeout, model):
     raise CheckFailed("WebSocket frame limit exceeded")
 
 
-def run_checks(client, connect_ws, *, project_id, model, timeout, report):
+def run_checks(
+    client, connect_ws, *, project_id, model, timeout, report, routing_task=None
+):
     """Use an authenticated disposable login; retain only the new test conversation."""
     user_id = request(client, "GET", "/v1/auth/me").json()["user_id"]
     session = request(
@@ -78,7 +93,7 @@ def run_checks(client, connect_ws, *, project_id, model, timeout, report):
     ).json()
     session_id = session["session_id"]
     report["session_id"] = session_id
-    expected, identities = [], []
+    expected, identities, decisions = [], [], []
     prompts = [
         "Reply briefly: HTTP acceptance check.",
         "Reply briefly: WebSocket acceptance check.",
@@ -90,11 +105,14 @@ def run_checks(client, connect_ws, *, project_id, model, timeout, report):
         "/v1/chat/completions",
         json={
             "model": model,
+            **({"routing_task": routing_task} if routing_task else {}),
             "session_id": session_id,
             "messages": [{"role": "user", "content": prompts[0]}],
         },
     )
     answer = response.json()["choices"][0]["message"]["content"]
+    if routing_task:
+        decisions.append(response.json().get("routing"))
     history = request(client, "GET", f"/v1/sessions/{session_id}").json()["messages"]
     require(len(history) == 2, "HTTP exchange was not persisted")
     identity = history[0].get("metadata", {}).get("correlation")
@@ -110,7 +128,9 @@ def run_checks(client, connect_ws, *, project_id, model, timeout, report):
 
     for prompt in prompts[1:]:
         with connect_ws() as ws:
-            answer, identity = ws_turn(ws, session_id, prompt, timeout, model)
+            answer, identity = ws_turn(
+                ws, session_id, prompt, timeout, model, routing_task, decisions
+            )
             check_identity(identity, user_id, session_id)
             expected.extend([("user", prompt), ("assistant", answer)])
             identities.append(identity)
@@ -126,6 +146,8 @@ def run_checks(client, connect_ws, *, project_id, model, timeout, report):
         [(m["role"], m["content"]) for m in history] == expected,
         "Cross-client stored history mismatch",
     )
+    if routing_task:
+        require(len(decisions) == 3, "Missing routing decisions")
     for index, identity in enumerate(identities):
         for message in history[index * 2 : index * 2 + 2]:
             require(
@@ -137,6 +159,21 @@ def run_checks(client, connect_ws, *, project_id, model, timeout, report):
             trace.get("metadata", {}).get("correlation") == identity,
             "Stored trace correlation mismatch",
         )
+        if routing_task:
+            decision = decisions[index]
+            require(isinstance(decision, dict), "Invalid routing decision")
+            require(decision.get("task") == routing_task, "Routing task mismatch")
+            require(
+                trace.get("model") == decision.get("model"), "Actual model mismatch"
+            )
+            require(
+                trace.get("metadata", {}).get("routing") == decision,
+                "Durable routing decision mismatch",
+            )
+    if routing_task:
+        report["routing_task"] = routing_task
+        report["routing_models"] = [d["model"] for d in decisions]
+        report["checks"].append("HTTP/WS task selections and durable routing reasons")
     for key in ("request_id", "turn_id", "trace_id"):
         require(len({i[key] for i in identities}) == 3, f"Reused {key}")
     report["trace_ids"] = [i["trace_id"] for i in identities]
@@ -180,6 +217,9 @@ def main():
         "--project-id", help="Existing project (prompt to select when omitted)"
     )
     parser.add_argument("--model", default="qwen3.5:9b")
+    parser.add_argument(
+        "--routing-task", choices=["general", "coding", "analysis", "vision"]
+    )
     parser.add_argument("--timeout", type=float, default=180)
     args = parser.parse_args()
     url = urlsplit(args.url)
@@ -250,6 +290,7 @@ def main():
                 model=args.model,
                 timeout=args.timeout,
                 report=report,
+                routing_task=args.routing_task,
             )
             report["status"] = "passed"
         except CheckFailed as exc:

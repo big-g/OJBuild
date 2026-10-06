@@ -108,3 +108,22 @@ def test_failed_agent_trace_retains_identity_and_steps_without_exception_secrets
     assert len(trace.steps) == 1
     assert "protected-secret" not in str(trace)
     assert all(not callbacks for callbacks in bus._subscribers.values())
+
+
+def test_durable_routing_metadata_is_scoped_and_cannot_contaminate_old_trace(tmp_path):
+    from openjarvis.core.routing_context import routing_scope
+    from openjarvis.core.types import Trace
+
+    store = TraceStore(str(tmp_path / "routing.db"))
+    identity = ExecutionIdentity(user_id="verified")
+    decision = {"model": "oj/server/model", "reason": "explicit", "fallback_used": True}
+    with execution_scope(identity), routing_scope(decision):
+        trace = Trace(trace_id=identity.trace_id, query="q", model="task/coding")
+        store.save(trace)
+        unrelated = Trace(query="old", model="legacy")
+        store.save(unrelated)
+    saved = store.get(identity.trace_id)
+    assert saved.metadata["routing"] == decision
+    assert saved.model == decision["model"]
+    assert "routing" not in store.get(unrelated.trace_id).metadata
+    store.close()

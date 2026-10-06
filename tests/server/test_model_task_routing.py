@@ -10,7 +10,7 @@ from openjarvis.core.types import Message, Role
 from openjarvis.engine._base import EngineConnectionError
 from openjarvis.engine.configured_models import model_id
 from openjarvis.engine.connection_store import ModelConnectionStore
-from openjarvis.engine.model_benchmarks import PROBES, _answer_ok, _tool_ok
+from openjarvis.engine.model_benchmarks import CASES, _answer_ok, _tool_ok
 from openjarvis.engine.task_routing import TaskRoutingStore
 from tests.server.test_configured_model_selection import (  # noqa: F401
     chat,
@@ -49,7 +49,16 @@ def probes(setup, monkeypatch):  # noqa: F811
             message = {"content": "", "tool_calls": calls}
         else:
             content = body["messages"][0]["content"]
-            task = next((t for t, (p, _) in PROBES.items() if p == content), None)
+            matched = next(
+                (
+                    (task, expected)
+                    for task, cases in CASES.items()
+                    for _, prompt, expected in cases
+                    if prompt == content
+                ),
+                None,
+            )
+            task = matched[0] if matched else None
             if task is None:
                 return httpx.Response(
                     200,
@@ -58,7 +67,7 @@ def probes(setup, monkeypatch):  # noqa: F811
                         "done_reason": "stop",
                     },
                 )
-            answer = "wrong" if settings["wrong"] else PROBES[task][1]
+            answer = "wrong" if settings["wrong"] else matched[1]
             if task == "vision":
                 assert body["messages"][0]["images"][0].startswith("iVBOR")
             message = {"content": json.dumps({"answer": answer})}
@@ -125,7 +134,7 @@ def test_fixed_probes_measure_and_assignment_persists(probes, task):
     assert result.status_code == 200, result.text
     bench = result.json()
     assert bench["passed"] and bench["details"]["tools_passed"]
-    assert bench["tokens"] == 30 and bench["elapsed_ms"] >= 0
+    assert bench["tokens"] == 60 and bench["elapsed_ms"] >= 0
     assert len(bench["details"]["prompt_sha256"]) == 64
     assert "content" not in result.text and not default.calls
     assert assign(client, bench).status_code == 200
@@ -423,3 +432,238 @@ def test_task_assignment_does_not_bypass_evidence_gate(probes):
     assert result.status_code == 200
     assert not any(r.url.path == "/api/chat" for r in requests)
     assert not default.calls
+
+
+def test_explicit_fallback_only_for_transport_preflight_and_remains_bound(
+    probes, monkeypatch
+):
+    fixture, _, activate = probes
+    app, client, _, requests, _, default, _ = fixture
+    primary = enabled(fixture)
+    secondary = enabled(fixture, "second", "192.168.1.20")
+    activate()
+    primary_bench = diagnostic(client, primary).json()
+    secondary_bench = diagnostic(client, secondary).json()
+    assert (
+        assign(
+            client,
+            primary_bench,
+            fallback_model_id=secondary_bench["model_id"],
+            fallback_benchmark_id=secondary_bench["id"],
+        ).status_code
+        == 200
+    )
+    from openjarvis.engine.configured_models import (
+        ConfiguredModelEngine,
+        ConfiguredModelError,
+        ConfiguredModelUnavailable,
+    )
+
+    original = ConfiguredModelEngine.check
+    mode = {"failure": "transport"}
+
+    def check(engine, **kwargs):
+        if engine.connection["id"] == primary["id"] and kwargs.get("live"):
+            if mode["failure"] == "transport":
+                raise ConfiguredModelUnavailable("unavailable")
+            raise ConfiguredModelError("Missing required capability")
+        return original(engine, **kwargs)
+
+    monkeypatch.setattr(ConfiguredModelEngine, "check", check)
+    store = TaskRoutingStore(app.state.model_connection_store)
+    decision, bound = store.resolve("coding", tools=True, live=True)
+    assert (
+        decision["fallback_used"]
+        and decision["primary_model"] == primary_bench["model_id"]
+    )
+    requests.clear()
+    bound.generate([Message(role=Role.USER, content="hello")], model=decision["model"])
+    assert all(r.url.host == "192.168.1.20" for r in requests)
+    assert not default.calls
+    mode["failure"] = "capability"
+    with pytest.raises(ConfiguredModelError, match="capability"):
+        store.resolve("coding", live=True)
+    # Revoking either rule/benchmark invalidates an already bound fallback.
+    rule = next(r for r in store.rules() if r["task"] == "coding")
+    store.update("coding", rule["revision"], False, "", "", "admin")
+    requests.clear()
+    with pytest.raises(EngineConnectionError, match="changed"):
+        bound.generate(
+            [Message(role=Role.USER, content="hello")], model=decision["model"]
+        )
+    assert not requests
+
+
+def test_runtime_selection_and_scheduled_query_keep_system_isolated(probes):
+    fixture, _, activate = probes
+    app, client, _, _, _, default, _ = fixture
+    row = enabled(fixture)
+    activate()
+    bench = diagnostic(client, row).json()
+    assert assign(client, bench).status_code == 200
+    from openjarvis.core.config import JarvisConfig
+    from openjarvis.core.events import EventBus
+    from openjarvis.core.routing_context import routing_metadata
+    from openjarvis.system.core import JarvisSystem
+    from openjarvis.traces.store import TraceStore
+
+    config = JarvisConfig()
+    config.security.model_connections_db_path = str(
+        app.state.model_connection_store.path
+    )
+    traces = TraceStore(str(app.state.model_connection_store.path) + ".traces")
+    system = JarvisSystem(
+        config, EventBus(), default, "test", "default:latest", trace_store=traces
+    )
+    result = system.ask("say hello", model="task/coding", context=False)
+    assert result["routing"]["model"] == bench["model_id"]
+    assert system.engine is default and system.model == "default:latest"
+    assert not default.calls and routing_metadata() == {}
+    traces.close()
+
+
+def test_expanded_suite_records_each_case_and_rejects_old_suite(probes):
+    fixture, _, activate = probes
+    app, client, _, _, _, _, _ = fixture
+    row = enabled(fixture)
+    activate()
+    bench = diagnostic(client, row).json()
+    assert len(bench["details"]["cases"]) == 3
+    assert bench["details"]["score"] == 1.0
+    assert all(c["passed"] and c["elapsed_ms"] >= 0 for c in bench["details"]["cases"])
+    assert assign(client, bench).status_code == 200
+    with app.state.model_connection_store.connection() as db:
+        db.execute("UPDATE model_benchmarks SET suite_version='diagnostic-v1'")
+    with pytest.raises(ValueError, match="passing"):
+        TaskRoutingStore(app.state.model_connection_store).resolve("coding")
+
+
+def test_task_acceptance_verifies_http_ws_and_durable_routing(probes, tmp_path):
+    from contextlib import contextmanager
+
+    from scripts.check_session_continuity import run_checks
+    from starlette.websockets import WebSocketDisconnect
+    from websockets.exceptions import ConnectionClosedError
+    from websockets.frames import Close
+
+    from openjarvis.sessions.session import SessionStore
+    from openjarvis.traces.store import TraceStore
+
+    fixture, _, activate = probes
+    app, client, _, _, _, _, _ = fixture
+    app.state.session_store = SessionStore(str(tmp_path / "sessions.db"))
+    app.state.trace_store = TraceStore(str(tmp_path / "trace.db"))
+    project = app.state.session_store.create_project("admin", "acceptance")
+    row = enabled(fixture)
+    activate()
+    bench = diagnostic(client, row).json()
+    assert assign(client, bench).status_code == 200
+    # Use the nonstreaming provider path: the synthetic transport returns JSON.
+    from openjarvis.engine.configured_models import ConfiguredModelEngine
+
+    original = ConfiguredModelEngine.stream
+    ConfiguredModelEngine.stream = None
+
+    @contextmanager
+    def connect_ws():
+        with client.websocket_connect("/v1/chat/stream") as ws:
+
+            class Adapter:
+                def send(self, value):
+                    ws.send_text(value)
+
+                def recv(self, timeout=None):
+                    try:
+                        return ws.receive_text()
+                    except WebSocketDisconnect as exc:
+                        raise ConnectionClosedError(
+                            Close(exc.code, ""), None, None
+                        ) from exc
+
+            yield Adapter()
+
+    report = {"checks": []}
+    try:
+        run_checks(
+            client,
+            connect_ws,
+            project_id=project.project_id,
+            model="default:latest",
+            timeout=5,
+            report=report,
+            routing_task="coding",
+        )
+        assert report["routing_models"] == [bench["model_id"]] * 3
+        assert report["login_revoked"]
+    finally:
+        ConfiguredModelEngine.stream = original
+        app.state.trace_store.close()
+        app.state.session_store.close()
+
+
+def test_managed_tick_retries_keep_one_selection_and_persist_reason(probes, tmp_path):
+    from unittest.mock import patch
+
+    from openjarvis.agents._stubs import AgentResult
+    from openjarvis.agents.errors import RetryableError
+    from openjarvis.agents.executor import AgentExecutor
+    from openjarvis.agents.manager import AgentManager
+    from openjarvis.core.config import JarvisConfig
+    from openjarvis.core.events import EventBus
+    from openjarvis.engine.runtime_selection import resolve_selection
+    from openjarvis.system.core import JarvisSystem
+    from openjarvis.traces.store import TraceStore
+
+    fixture, _, activate = probes
+    app, client, _, _, _, default, _ = fixture
+    row = enabled(fixture)
+    activate()
+    bench = diagnostic(client, row).json()
+    assert assign(client, bench).status_code == 200
+    config = JarvisConfig()
+    config.security.model_connections_db_path = str(
+        app.state.model_connection_store.path
+    )
+    system = JarvisSystem(config, EventBus(), default, "test", "default:latest")
+    manager = AgentManager(str(tmp_path / "agents.db"))
+    traces = TraceStore(str(tmp_path / "tick-traces.db"))
+    executor = AgentExecutor(manager, system.bus, trace_store=traces)
+    executor.set_system(system)
+    agent = manager.create_agent(
+        "routed", config={"model": "task/coding", "mcp_tools": False}
+    )
+    calls = []
+
+    class TaskAgent:
+        accepts_tools = False
+
+        def __init__(self, engine, model, **kwargs):
+            self.engine, self.model = engine, model
+
+        def run(self, text, **kwargs):
+            calls.append(self.model)
+            result = self.engine.generate(
+                [Message(role=Role.USER, content="hello")], model=self.model
+            )
+            if len(calls) == 1:
+                raise RetryableError("retry")
+            return AgentResult(content=result["content"])
+
+    with (
+        patch("openjarvis.agents.AgentRegistry.get", return_value=TaskAgent),
+        patch(
+            "openjarvis.engine.runtime_selection.resolve_selection",
+            wraps=resolve_selection,
+        ) as resolve,
+        patch("openjarvis.agents.executor.time.sleep"),
+    ):
+        executor.execute_tick(agent["id"])
+    assert resolve.call_count == 1
+    assert calls == [bench["model_id"]] * 2 and not default.calls
+    message = manager.list_messages(agent["id"])[0]
+    trace = traces.get(message["correlation"]["trace_id"])
+    assert trace.metadata["routing"]["task"] == "coding"
+    assert trace.model == bench["model_id"]
+    assert executor._toolkit_local.selection is None
+    traces.close()
+    manager.close()

@@ -25,6 +25,10 @@ class ConfiguredModelError(EngineConnectionError):
         self.status_code = status_code
 
 
+class ConfiguredModelUnavailable(ConfiguredModelError):
+    """Transport failure before inference; eligible for explicit fallback."""
+
+
 def model_id(connection_id, serving_id):
     return f"{PREFIX}{connection_id}/{quote(serving_id, safe='')}"
 
@@ -135,10 +139,15 @@ class ConfiguredModelEngine(InferenceEngine):
         if live:
             try:
                 caps = inspect_model(row, self.serving_id)
-            except (httpx.HTTPError, OSError, ValueError, RecursionError):
-                raise ConfiguredModelError(
+            except (httpx.HTTPError, OSError):
+                raise ConfiguredModelUnavailable(
                     "Selected Ollama server/model is unavailable. Check the "
                     "connection and read capabilities again."
+                ) from None
+            except (ValueError, RecursionError):
+                raise ConfiguredModelError(
+                    "Selected model returned an invalid capability manifest. "
+                    "Review its capabilities before using it."
                 ) from None
             self._row()
         if "completion" not in caps:
@@ -150,6 +159,8 @@ class ConfiguredModelEngine(InferenceEngine):
                 "Selected model does not report tool-calling support. "
                 "Choose a tool-capable model."
             )
+        if tools and getattr(self, "diagnostic_tools_passed", True) is False:
+            raise ConfiguredModelError("Assigned model lacks a passing tool-call probe")
         if images and "vision" not in caps:
             raise ConfiguredModelError(
                 "Selected model does not report image support. Choose a vision model."
@@ -251,7 +262,15 @@ def preserve_wrappers(original, replacement):
         result = copy.copy(original)
         result._engine = preserve_wrappers(original._engine, replacement)
         return result
-    # Ordinary registered engines and MultiEngine are the serving leaf.
+    from openjarvis.engine.multi import MultiEngine
+
+    if isinstance(original, MultiEngine):
+        # serve() registers the active, security-wrapped engine first. Preserve
+        # that contract instead of treating the container as an unwrapped leaf.
+        if not original._engines:
+            raise ConfiguredModelError("No active inference safety chain available.")
+        return preserve_wrappers(original._engines[0][1], replacement)
+    # Ordinary registered engines are the serving leaf.
     # Unknown wrappers cannot silently lose their safety contract.
     if any(name in vars(original) for name in ("_inner", "_engine")):
         raise ConfiguredModelError(

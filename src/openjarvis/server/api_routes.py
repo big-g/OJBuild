@@ -20,6 +20,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from starlette.datastructures import UploadFile
 
+from openjarvis.engine._base import EngineConnectionError
 from openjarvis.server.auth import get_authenticated_user_id
 
 logger = logging.getLogger(__name__)
@@ -1064,7 +1065,9 @@ async def websocket_chat_stream(websocket: WebSocket):
             )
 
             identity = ExecutionIdentity(user_id=user_id or "")
-            with execution_scope(identity):
+            from openjarvis.core.routing_context import bind_routing, routing_scope
+
+            with execution_scope(identity), routing_scope(None):
                 session_store = None
                 session_id = None
 
@@ -1187,6 +1190,46 @@ async def websocket_chat_stream(websocket: WebSocket):
                 # This WS path streams straight from the engine (no agent /
                 # TraceCollector), so record the interaction directly once it
                 # finishes — otherwise WebSocket chats never reach traces.db.
+                from openjarvis.engine.runtime_selection import resolve_selection
+
+                selected = data.get("routing_task")
+                if selected is not None:
+                    model = (
+                        "task/" + selected
+                        if isinstance(selected, str)
+                        else "task/invalid"
+                    )
+                if not isinstance(model, str):
+                    await send_frame(
+                        {"type": "error", "detail": "Invalid model selection"}
+                    )
+                    continue
+                try:
+                    engine, model, decision = await asyncio.to_thread(
+                        resolve_selection,
+                        websocket.app.state,
+                        engine,
+                        model,
+                    )
+                    bind_routing(decision)
+                    if decision:
+                        from openjarvis.core.types import Message, Role
+
+                        messages = [
+                            Message(role=Role(m["role"]), content=m["content"])
+                            for m in messages
+                        ]
+                        await send_frame({"type": "routing_decision", **decision})
+                except (ValueError, EngineConnectionError):
+                    await send_frame(
+                        {
+                            "type": "error",
+                            "detail": "Selected model/task is unavailable. Review the "
+                            "assignment or choose another model.",
+                        }
+                    )
+                    continue
+
                 import time as _time
 
                 trace_store = getattr(websocket.app.state, "trace_store", None)
