@@ -43,10 +43,11 @@ def remote(monkeypatch):
     state = {"changed": False, "calls": 0, "clients": [], "fail": False}
 
     class Transport(InProcessTransport):
-        def __init__(self, url, token):
+        def __init__(self, url, token, **kwargs):
             super().__init__(server)
             self.closed = False
             self.token = token
+            self.auth = kwargs.get("auth", {})
             state["clients"].append(self)
 
         def send(self, request):

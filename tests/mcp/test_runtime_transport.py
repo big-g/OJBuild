@@ -48,6 +48,7 @@ def test_each_post_is_pinned_and_headers_follow_negotiation(wire):
     transport.protocol_version = "2025-11-25"
     transport.send(MCPRequest(method="tools/list", id=1))
     assert validate.call_count == 2
+
     kwargs = post.call_args.kwargs
     assert post.call_args.args[1].addresses == ("8.8.8.8",)
     assert kwargs["method"] == "POST" and kwargs["max_bytes"] == 2 * 1024 * 1024
@@ -68,6 +69,56 @@ def test_each_post_is_pinned_and_headers_follow_negotiation(wire):
     with pytest.raises(ValueError, match="closed"):
         transport.send(MCPRequest(method="tools/list", id=1))
     assert validate.call_count == 2
+
+
+def test_api_key_header_on_requests_notifications_and_cleanup(wire):
+    validate, post = wire
+    transport = RuntimeHTTPTransport(
+        "https://example.com/mcp",
+        "TEST-SECRET",
+        auth={"auth_type": "api_key", "api_key_header": "X-API-Key"},
+    )
+    transport.send(MCPRequest(method="tools/list", id=1))
+    headers = post.call_args.kwargs["credential_headers"]
+    assert headers["x-api-key"] == "TEST-SECRET" and "Authorization" not in headers
+    transport.send_notification(MCPRequest(method="notifications/initialized", id=None))
+    assert post.call_args.kwargs["credential_headers"]["x-api-key"] == "TEST-SECRET"
+    assert validate.call_count == 2
+    transport.close()
+    assert post.call_args.kwargs["method"] == "DELETE"
+    assert post.call_args.kwargs["credential_headers"]["x-api-key"] == "TEST-SECRET"
+    assert transport._token == ""
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "Authorization",
+        "HOST",
+        "Cookie",
+        "Content-Type",
+        "Mcp-Session-Id",
+        "mcp-protocol-version",
+        "Proxy-Authorization",
+        "X-Forwarded-Host",
+        "Sec-Fetch-Site",
+        "X-HTTP-Method-Override",
+        "",
+        "bad header",
+        "X-Key\r\nHost",
+        "1key",
+        "x" * 65,
+    ],
+)
+def test_api_key_header_cannot_override_protocol_or_inject(wire, header):
+    _, post = wire
+    with pytest.raises(ValueError):
+        RuntimeHTTPTransport(
+            "https://example.com/mcp",
+            "TEST-SECRET",
+            auth={"auth_type": "api_key", "api_key_header": header},
+        )
+    post.assert_not_called()
 
 
 @pytest.mark.parametrize(

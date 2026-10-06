@@ -187,6 +187,16 @@ approval, clear discovery and clear retained tokens unless explicitly replaced.
 Existing public definitions and approvals retain their public/system-trust defaults.
 Offline DNS/TLS/lifecycle regressions pass; live LAN/provider acceptance remains pending.
 
+**Implemented:** per-connection MCP authentication choices in the administrator
+web interface: Bearer tokens or a provider-specific API key header. The existing
+encrypted vault binds secrets to endpoint and authentication settings; method/
+header edits clear retained credentials and withdraw catalog approval. Header
+validation blocks routing/transport/protocol overrides and injection. Static
+credentials are applied consistently to discovery, calls and session termination;
+metadata-only management/review and secret-safe failures remain intact. Default
+Bearer definitions, legacy ciphertext and approvals remain compatible. MCP OAuth
+consent, token exchange and automatic refresh remain separate future integrations.
+
 **Implemented:** a third database/web-managed runtime adapter for JSON field
 extraction from supplied text. Saved paths, visible examples and review cards
 support nested object keys and zero-based array indexes with explicit escaping.

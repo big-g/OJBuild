@@ -38,6 +38,62 @@ def body(**extra):
     } | extra
 
 
+def test_api_key_web_save_review_and_blank_edit_retention(setup):
+    client, manager, headers, _, remote = setup
+    client.headers.update(headers["admin"])
+    payload = body(
+        auth_type="api_key", api_key_header="X-API-Key", credential_secret="TEST-SECRET"
+    )
+    del payload["bearer_token"]
+    result = client.post("/v1/runtime-mcp", json=payload)
+    assert result.status_code == 201, result.text
+    saved = result.json()
+    assert saved["auth_type"] == "api_key" and saved["api_key_header"] == "x-api-key"
+    assert saved["has_token"] and "TEST-SECRET" not in result.text
+    assert "credential_secret" not in saved and not remote["clients"]
+    path = f"/v1/runtime-mcp/{saved['id']}"
+    saved = client.post(path + "/discover", json={"revision": saved["revision"]}).json()
+    saved = client.post(path + "/approve", json={"revision": saved["revision"]}).json()
+    assert saved["approved"]
+    del payload["credential_secret"]
+    saved = client.put(
+        path, json={"revision": saved["revision"], "definition": payload}
+    ).json()
+    assert saved["has_token"] and not saved["approved"]
+    assert manager.store.token(manager.store.get(saved["id"])) == "TEST-SECRET"
+    payload["credential_secret"] = ""
+    saved = client.put(
+        path, json={"revision": saved["revision"], "definition": payload}
+    ).json()
+    assert not saved["has_token"]
+
+
+@pytest.mark.parametrize(
+    "patch,status",
+    [
+        ({"api_key_header": "Host"}, 400),
+        ({"api_key_header": "bad header"}, 400),
+        ({"api_key_header": ""}, 400),
+        ({"credential_secret": "bad secret"}, 400),
+        ({"auth_type": "oauth"}, 422),
+        ({"bearer_token": "ANOTHER-SECRET"}, 400),
+    ],
+)
+def test_invalid_api_key_requests_never_echo_secrets(setup, patch, status):
+    client, manager, headers, _, remote = setup
+    payload = {
+        "name": "example",
+        "url": "https://example.com/mcp",
+        "auth_type": "api_key",
+        "api_key_header": "X-API-Key",
+        "credential_secret": "TEST-SECRET",
+    } | patch
+    result = client.post("/v1/runtime-mcp", headers=headers["admin"], json=payload)
+    assert result.status_code == status
+    assert "TEST-SECRET" not in result.text and "ANOTHER-SECRET" not in result.text
+    assert not manager.store.list() and not remote["clients"]
+
+
 def test_all_management_routes_require_current_admin(setup):
     client, manager, headers, auth, remote = setup
     row = client.post("/v1/runtime-mcp", headers=headers["admin"], json=body()).json()

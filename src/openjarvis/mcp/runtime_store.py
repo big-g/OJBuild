@@ -12,6 +12,7 @@ from pathlib import Path
 
 from openjarvis.connectors.source_credentials import CredentialStore, _secret
 from openjarvis.mcp.network import NETWORK_FIELDS, endpoint, policy
+from openjarvis.mcp.runtime_auth import AUTH_FIELDS, authentication
 from openjarvis.tools.runtime_store import RuntimeToolConflict
 
 VERSION = "runtime-mcp-v1"
@@ -25,7 +26,10 @@ def definition(value):
     if (
         not isinstance(value, dict)
         or not {"name", "url"} <= set(value)
-        or set(value) - {"name", "url", "allow_without_confirmation"} - NETWORK_FIELDS
+        or set(value)
+        - {"name", "url", "allow_without_confirmation"}
+        - NETWORK_FIELDS
+        - AUTH_FIELDS
     ):
         raise ValueError("Expected connection name and HTTPS URL")
     if not isinstance(value["name"], str) or not re.fullmatch(
@@ -41,10 +45,12 @@ def definition(value):
     if not isinstance(automatic, bool):
         raise ValueError("Execution confirmation setting must be boolean")
     settings = policy(value)
+    auth = authentication(value)
     return {
         "name": value["name"],
         "url": endpoint(value["url"], settings),
         **(settings if settings["network_access"] == "lan" else {}),
+        **(auth if auth["auth_type"] == "api_key" else {}),
         "allow_without_confirmation": automatic,
     }
 
@@ -133,18 +139,19 @@ class RuntimeMCPStore:
         if token is None:
             return None
         if not isinstance(token, str):
-            raise ValueError("Invalid bearer token")
+            raise ValueError("Invalid MCP credential")
         if not token:
             return b""
         _secret(token)
         if token in config["url"]:
-            raise ValueError("Endpoint URL must not contain the bearer token")
+            raise ValueError("Endpoint URL must not contain the credential")
         return self.vault._cipher().encrypt(
             canonical(
                 {
                     "id": identity,
                     "url": config["url"],
                     "token": token,
+                    "authentication": authentication(config),
                 }
             ).encode()
         )
@@ -166,6 +173,8 @@ class RuntimeMCPStore:
             if (
                 value["id"] != row["id"]
                 or value["url"] != json.loads(row["definition"])["url"]
+                or value.get("authentication", authentication({}))
+                != authentication(json.loads(row["definition"]))
             ):
                 raise ValueError("Invalid binding")
             return _secret(value["token"])
@@ -234,11 +243,15 @@ class RuntimeMCPStore:
                 previous_config = json.loads(old["definition"])
                 previous_url = previous_config["url"]
                 previous_policy = policy(previous_config)
+                previous_auth = authentication(previous_config)
             except (ValueError, KeyError, TypeError):
                 previous_url = None
                 previous_policy = None
+                previous_auth = None
             if token is None and (
-                config["url"] != previous_url or policy(config) != previous_policy
+                config["url"] != previous_url
+                or policy(config) != previous_policy
+                or authentication(config) != previous_auth
             ):
                 token = ""
         sealed = (

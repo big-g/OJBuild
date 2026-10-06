@@ -85,3 +85,20 @@ it('provides setup help in the app for users unfamiliar with MCP and its approva
   expect(html).toContain('never paste a private key');
   expect(html).toContain('Browser chat and scheduled tasks need this option');
 });
+
+it('explains provider-selected Bearer or API key authentication and credential replacement', () => {
+  const html = renderToStaticMarkup(<MCPConnectionsPanel />);
+  expect(html).toContain('Authentication method');
+  expect(html).toContain('API key header');
+  expect(html).toContain('X-API-Key');
+  expect(html).toContain('No conversion is needed');
+  expect(html).toContain('without the Bearer prefix');
+  expect(html).toContain('authentication method, API key header');
+  expect(html).toContain('requires a saved key before discovery');
+});
+
+it('displays the API key header in catalog approval without showing the key', () => {
+  const html = renderToStaticMarkup(<MCPCatalogReview connection={{ ...connection, auth_type: 'api_key', api_key_header: 'x-api-key', has_token: true }} />);
+  expect(html).toContain('API key header (x-api-key)');
+  expect(html).toContain('credential saved');
+});

@@ -7,9 +7,11 @@ import threading
 import time
 from dataclasses import replace
 
+from openjarvis.connectors.source_credentials import _secret
 from openjarvis.mcp.network import context, endpoint, policy
 from openjarvis.mcp.network import target as network_target
 from openjarvis.mcp.protocol import MCPResponse
+from openjarvis.mcp.runtime_auth import authentication
 from openjarvis.mcp.transport import MCPTransport, StreamableHTTPTransport
 from openjarvis.security.public_http import _request_source, validate_public_url
 
@@ -17,18 +19,26 @@ from openjarvis.security.public_http import _request_source, validate_public_url
 class RuntimeHTTPTransport(MCPTransport):
     """Reuse pinned source connections; never execute a configured subprocess."""
 
-    def __init__(self, url, token="", *, network=None):
+    def __init__(self, url, token="", *, network=None, auth=None):
         self.network = policy(network or {})
         self.url = endpoint(url, self.network)
         self._ssl_context = (
             context(self.network) if self.network["network_access"] == "lan" else None
         )
-        self._token = token
+        self.auth = authentication(auth or {})
+        self._token = _secret(token) if token else ""
         self._session = None
         self._target = None
         self.protocol_version = None
         self._closed = threading.Event()
         self.deadline = time.monotonic() + 60
+
+    def _credential_headers(self):
+        if not self._token:
+            return {}
+        if self.auth["auth_type"] == "api_key":
+            return {self.auth["api_key_header"]: self._token}
+        return {"Authorization": f"Bearer {self._token}"}
 
     def _post(self, request):
         if self._closed.is_set():
@@ -39,8 +49,7 @@ class RuntimeHTTPTransport(MCPTransport):
         headers = {"Content-Type": "application/json"}
         if self.protocol_version:
             headers["MCP-Protocol-Version"] = self.protocol_version
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
+        headers.update(self._credential_headers())
         if self._session:
             headers["Mcp-Session-Id"] = self._session
         # Revalidate DNS and pin every request; no ambient proxy or redirect.
@@ -110,8 +119,7 @@ class RuntimeHTTPTransport(MCPTransport):
                 headers = {"Mcp-Session-Id": self._session}
                 if self.protocol_version:
                     headers["MCP-Protocol-Version"] = self.protocol_version
-                if self._token:
-                    headers["Authorization"] = f"Bearer {self._token}"
+                headers.update(self._credential_headers())
                 # Best-effort session termination on the last verified target.
                 # No redirect or retry; cleanup cannot extend the run budget.
                 _request_source(

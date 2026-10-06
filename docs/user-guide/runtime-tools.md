@@ -132,12 +132,44 @@ without restarting Jarvis. Managed agents select the displayed Jarvis tool name;
 aliases include the connection name, a readable remote-name fragment and a digest.
 The `custom_mcp_` prefix is reserved for these tools.
 
+### MCP authentication
+
+Choose **Authentication method** according to the MCP provider's instructions:
+
+- **Bearer token:** paste the raw token or API key, without the `Bearer ` prefix.
+  Jarvis sends `Authorization: Bearer YOUR_CREDENTIAL`. Leaving it empty with no
+  saved credential allows an unauthenticated connection.
+- **API key header:** enter the provider's header name, such as `X-API-Key`, and
+  paste the raw key. Jarvis sends `X-API-Key: YOUR_CREDENTIAL`, without a Bearer
+  prefix. A saved key is required before discovery or approval.
+
+An API key cannot be converted into an OAuth access token merely by adding a
+prefix. This form supports supplied static credentials, not OAuth sign-in, token
+exchange or automatic refresh. Ask the provider which method its MCP endpoint
+accepts. A key intended for another API may not authorize the MCP endpoint.
+
+Header names contain 1–64 ASCII letters, digits or hyphens, beginning with a
+letter, and are case-insensitive. Authentication, HTTP routing/transport and MCP
+protocol headers are reserved; `Authorization` must use the Bearer option.
+Credentials contain 1–8192 printable ASCII characters without whitespace.
+They are encrypted, bound to the connection identity, exact endpoint and
+authentication setting, and never returned to the form or audit history.
+The selected method/header appears in the catalog approval review.
+
+While editing, a blank credential field keeps the saved value only when the
+endpoint, authentication method/header and network/TLS settings are unchanged.
+Changing those settings clears it unless you explicitly supply a replacement.
+Changing only header capitalization keeps it. Use **Remove saved token** to
+remove either type of credential. Every edit disables the connection and withdraws
+catalog approval; discover, review and approve again. Existing Bearer connections
+and their approvals remain compatible without a database migration.
+
 Public HTTPS is the default, using standard ports without query strings or URL
 credentials. Administrators can also explicitly authorize LAN HTTPS connections
-as described below. Optional bearer tokens are encrypted in
+as described below. Bearer tokens and API keys are encrypted in
 the server vault and never returned through management APIs or prefilled in forms.
 Leaving the token field blank while editing keeps it; explicitly removing it clears
-it. Changing the endpoint, authorized addresses or TLS trust clears a retained token. Supplying a replacement token
+it. Changing the endpoint, authentication method/header, authorized addresses or TLS trust clears a retained token. Supplying a replacement token
 binds it to the new endpoint. Every edit disables the connection and withdraws its
 catalog approval. Missing/wrong encryption keys block unlocking and token replacement;
 restore the original key backup, or explicitly remove the connection to start over.

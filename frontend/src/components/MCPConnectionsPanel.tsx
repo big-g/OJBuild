@@ -10,6 +10,7 @@ const style = { background: 'var(--color-bg-secondary)', color: 'var(--color-tex
 
 export function MCPCatalogReview({ connection }: { connection: MCPConnection }) {
   return <div className="space-y-3 text-sm">
+    <p>Authentication: {connection.auth_type === 'api_key' ? `API key header (${connection.api_key_header})` : 'Bearer token (Authorization: Bearer)'} · {connection.has_token ? 'credential saved' : 'no credential saved'}</p>
     <p>{connection.allow_without_confirmation
       ? 'Approval allows calls without per-call confirmation, including chat and scheduled agents.'
       : 'Each call requires interactive confirmation. Clients and schedules without a confirmation callback will block calls.'}</p>
@@ -49,6 +50,9 @@ export function LegacyMCPReview({ entries, busy, onImport }: {
 
 export function MCPConnectionsPanel() {
   const nameHelpId = useId();
+  const authHelpId = useId();
+  const headerHelpId = useId();
+  const credentialHelpId = useId();
   const [connections, setConnections] = useState<MCPConnection[]>([]);
   const [legacy, setLegacy] = useState<LegacyMCPEntry[] | null>(null);
   const [definition, setDefinition] = useState<MCPDefinition>({ ...empty });
@@ -78,13 +82,14 @@ export function MCPConnectionsPanel() {
         <p>MCP (Model Context Protocol) lets Jarvis use tools provided by another service. Ask the service provider for its MCP HTTPS endpoint and, if required, an access token.</p>
         <ol className="list-decimal pl-5 space-y-1"><li>Choose a short connection name, such as <code>home_tools</code>. This is your label for the connection, not the provider’s display name.</li><li>Paste the provider’s full HTTPS endpoint, such as <code>https://example.com/mcp</code>. A website homepage may not be an MCP endpoint.</li><li>Use Public HTTPS for an internet service. For a service on your home or office network, select Authorized private LAN and list its exact IP addresses.</li><li>Save, then select Discover / refresh to fetch the list of tools. Review what each tool can do and what information it accepts.</li><li>Select Approve catalog &amp; enable only when you trust the tools. Saving or discovering alone does not let Jarvis call them.</li></ol>
         <p>A bearer token is a secret access key supplied by the provider. Paste it into the token field, not the URL. Leave it blank when the provider does not require one.</p>
+        <p>An API key may be accepted as a Bearer token or in a separate header. Follow the provider’s instructions: choose Bearer token for Authorization: Bearer, or API key header for a header such as X-API-Key. No conversion is needed; paste the raw credential. OAuth sign-in or token exchange is not performed by this form.</p>
         <p>Certificate trust checks the service’s identity and encrypted connection. Start with System trust. Choose Private CA certificates only when your LAN service administrator supplies a PEM CA certificate; never paste a private key.</p>
       </details></header>
     {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
     <form className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }} onSubmit={e => {
       e.preventDefault();
-      const saved = { ...definition, ...(token || clearToken ? { bearer_token: token } : {}) };
+      const saved = { ...definition, ...(token || clearToken ? { credential_secret: token } : {}) };
       void perform(async () => {
         if (editing) await mcpRequest(`/${editing.id}`, 'PUT', { revision: editing.revision, definition: saved });
         else await mcpRequest('', 'POST', saved);
@@ -110,12 +115,26 @@ export function MCPConnectionsPanel() {
         {definition.tls_trust === 'custom_ca' && <label className="block text-sm">PEM CA certificates<textarea className={field} style={style} required maxLength={16384} value={definition.ca_certificate || ''} onChange={e => setDefinition({ ...definition, ca_certificate: e.target.value })} /></label>}
         <p className="text-xs">Certificate and hostname verification stay enabled. Private CA trust applies only to this connection. LAN HTTPS may use a custom port.</p>
       </>}
-      <label className="block text-sm">{editing ? 'Replace bearer token (blank keeps the current token)' : 'Bearer token (optional)'}
+      <label className="block text-sm">Authentication method
+        <select className={field} style={style} aria-describedby={authHelpId} value={definition.auth_type || 'bearer'} onChange={e => {
+          setDefinition({ ...definition, auth_type: e.target.value as 'bearer' | 'api_key', api_key_header: e.target.value === 'api_key' ? 'X-API-Key' : '' });
+          setToken(''); setClearToken(false);
+        }}><option value="bearer">Bearer token (Authorization: Bearer)</option><option value="api_key">API key header</option></select>
+      </label>
+      <p id={authHelpId} className="text-xs">Use the method specified by your MCP provider. Bearer with no saved token allows an unauthenticated connection. An API key header requires a saved key before discovery.</p>
+      {definition.auth_type === 'api_key' && <>
+        <label className="block text-sm">API key header name
+          <input className={field} style={style} required maxLength={64} pattern="[A-Za-z][A-Za-z0-9-]{0,63}" aria-describedby={headerHelpId} placeholder="X-API-Key" value={definition.api_key_header || ''} onChange={e => setDefinition({ ...definition, api_key_header: e.target.value })} />
+        </label>
+        <p id={headerHelpId} className="text-xs">Enter the provider’s header name, for example X-API-Key. Use 1–64 ASCII letters, digits or hyphens, starting with a letter. Header names are case-insensitive. Authorization, HTTP routing/transport and MCP protocol headers are reserved.</p>
+      </>}
+      <label className="block text-sm">{editing ? 'Replace saved credential (blank keeps it if settings are unchanged)' : definition.auth_type === 'api_key' ? 'API key' : 'Bearer token (optional)'}
         <input className={field} style={style} type="password" autoComplete="off" maxLength={8192}
+          aria-describedby={credentialHelpId}
           value={token} onChange={e => { setToken(e.target.value); setClearToken(false); }} /></label>
       {editing?.has_token && <label className="flex gap-2 text-sm"><input type="checkbox" checked={clearToken}
         onChange={e => { setClearToken(e.target.checked); setToken(''); }} />Remove saved token</label>}
-      <p className="text-xs">Tokens are encrypted on the server and never returned to this form. Changing the endpoint, authorized addresses or certificate trust clears a retained token unless you explicitly replace it.</p>
+      <p id={credentialHelpId} className="text-xs">Paste only the raw token or key, without the Bearer prefix or header name. Use 1–8192 printable ASCII characters without spaces. Credentials are encrypted on the server and never returned to this form. Changing the endpoint, authentication method, API key header, authorized addresses or certificate trust clears a retained token unless you explicitly replace it.</p>
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={definition.allow_without_confirmation}
         onChange={e => setDefinition({ ...definition, allow_without_confirmation: e.target.checked })} />
         Allow approved tool calls without per-call confirmation</label>

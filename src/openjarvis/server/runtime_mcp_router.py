@@ -16,6 +16,9 @@ class Connection(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]{0,23}$")
     url: str = Field(min_length=1, max_length=4096)
     bearer_token: SecretStr | None = None
+    credential_secret: SecretStr | None = None
+    auth_type: Literal["bearer", "api_key"] = "bearer"
+    api_key_header: str = Field(default="", max_length=64)
     allow_without_confirmation: StrictBool = False
     network_access: Literal["public", "lan"] = "public"
     lan_addresses: str = Field(default="", max_length=2048)
@@ -100,6 +103,8 @@ def create_runtime_mcp_router(manager):
         return {
             "name": body.name,
             "url": body.url,
+            "auth_type": body.auth_type,
+            "api_key_header": body.api_key_header,
             "network_access": body.network_access,
             "lan_addresses": body.lan_addresses,
             "tls_trust": body.tls_trust,
@@ -108,6 +113,12 @@ def create_runtime_mcp_router(manager):
         }
 
     def token(body):
+        if body.credential_secret is not None:
+            if body.bearer_token is not None:
+                raise ValueError("Supply only one MCP credential field")
+            return body.credential_secret.get_secret_value()
+        if body.auth_type == "api_key" and body.bearer_token is not None:
+            raise ValueError("Use credential_secret for API key authentication")
         return (
             body.bearer_token.get_secret_value()
             if body.bearer_token is not None

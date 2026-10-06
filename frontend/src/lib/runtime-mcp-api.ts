@@ -5,12 +5,15 @@ export interface MCPDefinition {
   url: string;
   allow_without_confirmation: boolean;
   bearer_token?: string;
+  credential_secret?: string;
+  auth_type?: 'bearer' | 'api_key';
+  api_key_header?: string;
   network_access?: 'public' | 'lan';
   lan_addresses?: string;
   tls_trust?: 'system' | 'custom_ca';
   ca_certificate?: string;
 }
-export interface MCPConnection extends Omit<MCPDefinition, 'bearer_token'> {
+export interface MCPConnection extends Omit<MCPDefinition, 'bearer_token' | 'credential_secret'> {
   id: string;
   revision: number;
   has_token: boolean;
@@ -27,10 +30,11 @@ export interface MCPConnection extends Omit<MCPDefinition, 'bearer_token'> {
 export function connectionDefinition(connection: MCPConnection, token = '', clearToken = false): MCPDefinition {
   return { name: connection.name, url: connection.url,
     allow_without_confirmation: connection.allow_without_confirmation,
+    ...(connection.auth_type === 'api_key' ? { auth_type: 'api_key' as const, api_key_header: connection.api_key_header } : {}),
     ...(connection.network_access === 'lan' ? { network_access: connection.network_access,
       lan_addresses: connection.lan_addresses, tls_trust: connection.tls_trust,
       ca_certificate: connection.ca_certificate } : {}),
-    ...(token || clearToken ? { bearer_token: token } : {}) };
+    ...(token || clearToken ? (connection.auth_type === 'api_key' ? { credential_secret: token } : { bearer_token: token }) : {}) };
 }
 
 export async function mcpRequest<T>(path = '', method = 'GET', body?: unknown): Promise<T> {

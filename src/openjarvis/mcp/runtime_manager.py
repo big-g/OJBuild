@@ -254,10 +254,15 @@ class RuntimeMCPManager:
         try:
             token = self.store.token(row)
             config = definition(json.loads(row["definition"]))
+            if config.get("auth_type") == "api_key" and not token:
+                raise ValueError("API key authentication requires a saved credential")
             client = RuntimeMCPClient(
                 RuntimeHTTPTransport(
                     config["url"],
                     token,
+                    **(
+                        {"auth": config} if config.get("auth_type") == "api_key" else {}
+                    ),
                     **(
                         {"network": config}
                         if config.get("network_access") == "lan"
@@ -306,7 +311,12 @@ class RuntimeMCPManager:
         if event in {"approved", "enabled"}:
             row = self.store.get(identity)
             saved_specs(row)
-            self.store.token(row)  # Missing keys/credentials cannot be approved.
+            token = self.store.token(row)  # Missing keys cannot be approved.
+            if (
+                json.loads(row["definition"]).get("auth_type") == "api_key"
+                and not token
+            ):
+                raise ValueError("API key authentication requires a saved credential")
         return self.store.change(identity, revision, event, actor, **kwargs)
 
     def available(self):
