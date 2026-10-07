@@ -10,6 +10,8 @@ beforeEach(() => { user.is_admin = true; });
 it('explains the actual scope and backend-local address meaning', () => {
   const html = renderToStaticMarkup(<ModelConnectionsPanel />);
   expect(html).toContain('does not change the current chat model');
+  expect(html).toContain('id="model-server-connections"');
+  expect(html).toContain('Model task assignments and diagnostics below');
   expect(html).toContain('Localhost refers to the backend server');
   expect(html).toContain('does not pull, load or run models');
   expect(html).toContain('HTTP LAN traffic is unencrypted');

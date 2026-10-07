@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getStoredUser } from '../lib/auth';
 import { fetchModels } from '../lib/api';
 import { listModelConnections, type ModelConnection } from '../lib/model-connections-api';
@@ -7,8 +7,9 @@ import {
   type RoutingConfiguration, type RoutingTask, type TaskRule,
 } from '../lib/model-routing-api';
 import type { ModelInfo } from '../types';
+import { routingModelOptions } from '../lib/model-routing-options';
 
-export function ModelRoutingPanel() {
+export function ModelRoutingPanel({ connectionsRevision = 0 }: { connectionsRevision?: number }) {
   const admin = !!getStoredUser()?.is_admin;
   const [config, setConfig] = useState<RoutingConfiguration | null>(null);
   const [connections, setConnections] = useState<ModelConnection[]>([]);
@@ -19,12 +20,21 @@ export function ModelRoutingPanel() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [inventoryWarning, setInventoryWarning] = useState('');
+  const refreshSequence = useRef(0);
   async function refresh() {
-    const [next, servers, installed] = await Promise.all([getModelRouting(), listModelConnections(), fetchModels()]);
-    setConfig(next); setConnections(servers.connections);
-    setModels(installed.filter(m => m.owned_by === 'configured_ollama'));
+    const sequence = ++refreshSequence.current;
+    const [next, servers, installed] = await Promise.all([
+      getModelRouting(), listModelConnections(), fetchModels().then(models => ({ models, failed: false })).catch(() => ({ models: [] as ModelInfo[], failed: true })),
+    ]);
+    if (sequence !== refreshSequence.current) return;
+    setInventoryWarning(installed.failed ? 'Cannot load the existing engine inventory. Saved server catalogs are still shown; refresh to retry.' : '');
+    setConfig(next); setConnections(servers.connections); setModels(installed.models);
   }
-  useEffect(() => { if (admin) void refresh().catch(e => setError(String(e.message || e))); }, [admin]);
+  useEffect(() => {
+    if (admin) void refresh().catch(e => setError(String(e.message || e)));
+    return () => { ++refreshSequence.current; };
+  }, [admin, connectionsRevision]);
   if (!admin) return null;
   async function act(action: () => Promise<void>) {
     if (busy) return;
@@ -33,18 +43,24 @@ export function ModelRoutingPanel() {
     catch (e) { setError(e instanceof Error ? e.message : 'Operation failed'); await refresh().catch(() => {}); }
     finally { setBusy(false); }
   }
-  const model = models.find(m => m.id === selected);
+  const options = routingModelOptions(models, connections);
+  const eligibleModels = options.filter(m => m.eligible);
+  const model = eligibleModels.find(m => m.id === selected);
   const connection = connections.find(c => c.id === model?.connection_id);
   const rule = config?.rules.find(r => r.task === task);
   const latest = config?.benchmarks.find(b => b.model_id === selected && b.task === task);
   const ready = !!latest?.passed && latest.connection_revision === connection?.revision && latest.suite_version === config?.suite_version;
-  const fallbackModel = models.find(m => m.id === fallback);
+  const fallbackModel = eligibleModels.find(m => m.id === fallback);
   const fallbackConnection = connections.find(c => c.id === fallbackModel?.connection_id);
   const fallbackResult = config?.benchmarks.find(b => b.model_id === fallback && b.task === task);
   const fallbackReady = !fallback || (fallback !== selected && !!fallbackResult?.passed && fallbackResult.connection_revision === fallbackConnection?.revision && fallbackResult.suite_version === config?.suite_version);
-  const label = (id: string) => models.find(m => m.id === id)?.display_name || id || 'unassigned';
+  const label = (id: string) => options.find(m => m.id === id)?.display_name || id || 'unassigned';
   return <section className="rounded-lg border p-4 space-y-3" aria-label="Model task assignments">
     <h3 className="font-semibold">Model task assignments and diagnostics</h3>
+    <p className="text-sm">{eligibleModels.length} ready for task assignments · {options.filter(m => !m.eligible).length} awaiting setup or unsupported.</p>
+    {!eligibleModels.length && <p role="status" className="text-sm">Installed models need a saved server connection before diagnostics. In <a href="#model-server-connections" className="underline">Model server connections</a> above, add your Ollama URL, Test catalog, Read capabilities for your chat models, then Enable for chat. This list refreshes automatically after connection changes.</p>}
+    <button type="button" disabled={busy} className="rounded border px-3 py-1" onClick={() => void act(async () => {})}>Refresh models</button>
+    {inventoryWarning && <p role="status" className="text-sm">{inventoryWarning}</p>}
     <p className="text-sm">Assign shared models to general conversation, coding, analysis or vision. In chat, choose a task to use its assignment or Manual model to use the picker. Nothing is classified or switched automatically.</p>
     <details className="text-sm"><summary className="cursor-pointer">How diagnostics and assignments work</summary>
       <p>Diagnostics submit fixed synthetic prompts to the selected server. They use GPU time and may load a model. Each task has three fixed cases: coding checks mutation and boundaries; analysis checks weighted calculations and dependencies; general checks extraction and constraints; vision checks colors, position and region count. A tool-call canary also runs if Ollama reports tools. No generated code or tool call is executed, and no personal chat/source data is sent.</p>
@@ -53,8 +69,8 @@ export function ModelRoutingPanel() {
     </details>
     <div className="flex flex-wrap gap-3">
       <label>Task <select aria-label="Assignment task" disabled={busy} className="rounded border p-2 bg-transparent" value={task} onChange={e => setTask(e.target.value as RoutingTask)}>{ROUTING_TASKS.map(t => <option key={t} value={t}>{t}</option>)}</select></label>
-      <label>Model <select aria-label="Assignment model" disabled={busy} className="rounded border p-2 bg-transparent" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Choose an enabled model</option>{models.map(m => <option key={m.id} value={m.id}>{m.display_name || m.id}</option>)}</select></label>
-      <label>Optional fallback <select aria-label="Assignment fallback" aria-describedby="fallback-hint" disabled={busy} className="rounded border p-2 bg-transparent" value={fallback} onChange={e => setFallback(e.target.value)}><option value="">No fallback</option>{models.filter(m => m.id !== selected).map(m => <option key={m.id} value={m.id}>{m.display_name || m.id}</option>)}</select></label>
+      <label>Model <select aria-label="Assignment model" disabled={busy} className="rounded border p-2 bg-transparent" value={selected} onChange={e => setSelected(e.target.value)}><option value="">Choose an enabled model</option>{options.map(m => <option key={m.id} value={m.id} disabled={!m.eligible}>{m.display_name || m.id}{m.setup_hint ? ` — ${m.setup_hint}` : ''}</option>)}</select></label>
+      <label>Optional fallback <select aria-label="Assignment fallback" aria-describedby="fallback-hint" disabled={busy} className="rounded border p-2 bg-transparent" value={fallback} onChange={e => setFallback(e.target.value)}><option value="">No fallback</option>{eligibleModels.filter(m => m.id !== selected).map(m => <option key={m.id} value={m.id}>{m.display_name || m.id}</option>)}</select></label>
     </div>
     <p id="fallback-hint" className="text-sm">Run and review this task's diagnostic for each model first. Fallback is optional and defaults to off. A started run stays on its selected model.</p>
     <div className="flex flex-wrap gap-2">

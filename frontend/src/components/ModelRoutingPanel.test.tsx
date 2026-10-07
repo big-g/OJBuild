@@ -26,3 +26,12 @@ it('explains optional preflight-only fallback and representative cases', () => {
   expect(html).toContain('generation/stream failures never switch models');
   expect(html).toContain('defaults to off');
 });
+
+it('explains missing model setup and exposes a refresh control', () => {
+  const html = renderToStaticMarkup(<ModelRoutingPanel />);
+  expect(html).toContain('Installed models need a saved server connection');
+  expect(html).toContain('href="#model-server-connections"');
+  expect(html).toContain('Read capabilities');
+  expect(html).toContain('Enable for chat');
+  expect(html).toContain('Refresh models');
+});

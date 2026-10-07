@@ -162,3 +162,18 @@ The active safety/telemetry chain is preserved even when nested in MultiEngine.
 The `behavior-v2` suite replaces the earlier single-question diagnostics. Existing
 server activation is retained, but task assignments with old-suite results cannot run
 until an administrator reruns diagnostics and saves the current passing result.
+
+## Installed models missing from task assignments
+
+Installing models on the original server does not automatically register that
+server for database-backed task routing. The assignment screen shows these models
+with a setup hint instead of silently hiding them. They remain unavailable for
+diagnostics until a saved Ollama connection identifies the serving endpoint.
+
+In **Model server connections**, add the server URL (localhost means the backend
+server), **Test catalog**, **Read capabilities** for each chat model, then
+**Enable for chat**. The assignment list refreshes after these operations. Models
+with unknown capabilities or without chat completion support show their reason
+and cannot be assigned. **Refresh models** retries inventory loading manually.
+Saved server catalogs remain visible even when the original engine inventory is
+unavailable. Registration never pulls models or automatically enables inference.

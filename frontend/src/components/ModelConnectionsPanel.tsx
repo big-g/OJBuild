@@ -9,7 +9,7 @@ import {
   type ModelConnection, type ModelConnectionEvent,
 } from '../lib/model-connections-api';
 
-export function ModelConnectionsPanel() {
+export function ModelConnectionsPanel({ onConnectionsChanged }: { onConnectionsChanged?: () => void }) {
   const isAdmin = getStoredUser()?.is_admin === true;
   const [connections, setConnections] = useState<ModelConnection[]>([]);
   const [editing, setEditing] = useState<ModelConnection | null>(null);
@@ -29,18 +29,18 @@ export function ModelConnectionsPanel() {
     setBusy(true); setError(''); setMessage(''); setEvents(null);
     try { await action(); await refresh(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Model connection operation failed'); await refresh().catch(() => {}); }
-    finally { setBusy(false); }
+    finally { setBusy(false); onConnectionsChanged?.(); }
   }
   function reset() { setEditing(null); setName(''); setUrl('http://localhost:11434'); }
   if (!isAdmin) return null;
   const input = 'block w-full rounded border px-3 py-2 bg-transparent';
-  return <section className="rounded-lg border p-4 space-y-3" aria-label="Model server connections">
+  return <section id="model-server-connections" className="rounded-lg border p-4 space-y-3" aria-label="Model server connections">
     <h3 className="font-semibold">Model server connections</h3>
     <p className="text-sm">Save multiple Ollama servers. Test the catalog, read model capabilities, then enable the connection for chat. Models appear in the installed model picker with their server names. Adding a connection does not change the current chat model.</p>
     <details className="text-sm"><summary className="cursor-pointer">Connection setup help</summary>
       <p className="mt-2">Use localhost for Ollama on the OpenJarvis server, or the private IP of another machine running Ollama. Localhost refers to the backend server, not this browser. Remote Ollama must listen on its LAN address and allow access from the OpenJarvis server through its firewall.</p>
       <p>Test reads the installed model catalog only. It does not pull, load or run models. Read capabilities asks Ollama for a model manifest without running it. Capability labels are provider reports, not behavioral verification. Enable for chat makes reported chat-capable models available to all authenticated users. Requests also check live availability and required tool/image capabilities. HTTP LAN traffic is unencrypted; use only a trusted LAN or verified HTTPS.</p>
-      <p>Each connection has its own identity, so identical model names on different servers stay separate. Edits and catalog/capability reads disable the connection; review and enable it again. Disabled/removed connections block later model calls in an active agent run. A generation already submitted may finish. Task assignments and automatic routing remain the next workstream.</p>
+      <p>Each connection has its own identity, so identical model names on different servers stay separate. Edits and catalog/capability reads disable the connection; review and enable it again. Disabled/removed connections block later model calls in an active agent run. A generation already submitted may finish. After enabling, these chat models become available in Model task assignments and diagnostics below.</p>
     </details>
     <form className="space-y-3" onSubmit={(e: FormEvent) => { e.preventDefault(); void act(async () => {
       if (editing) await updateModelConnection(editing, name.trim(), url.trim());
