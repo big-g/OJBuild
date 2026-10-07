@@ -106,6 +106,16 @@ active chain inside MultiEngine, remain in force; unknown wrappers fail closed.
 Routing task/revision/benchmark/model/reason persist in correlated traces, including
 failed bound runs. Unrelated traces cannot inherit another execution's decision.
 
+Backend model continuity: opening or refreshing task configuration inherits the
+running backend's Ollama endpoints and installed model capability manifests into
+versioned database records. No duplicate URL setup, model pull or generation is
+required. Diagnostics use the same server-bound identities as the configured chat
+picker. Unchanged refreshes preserve revisions and diagnostic approvals; catalog
+or capability changes invalidate old approvals. Administrator edits, disables
+and removals override inheritance. Task activation still requires a reviewed,
+passing diagnostic. Unsupported endpoint formats and unreadable manifests remain
+visible with recovery guidance.
+
 Versioned `behavior-v2` diagnostics cover three fixed cases per task: extraction
 and constraints, coding mutation/boundaries, weighted/dependency analysis, and
 vision color/position/count. Per-case correctness and latency are retained with

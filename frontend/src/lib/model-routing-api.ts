@@ -32,3 +32,5 @@ export const saveTaskRule = (rule: TaskRule) => request<TaskRule>(`/tasks/${rule
   revision: rule.revision, enabled: rule.enabled, model_id: rule.model_id, benchmark_id: rule.benchmark_id,
   ...(rule.fallback_model_id !== undefined ? { fallback_model_id: rule.fallback_model_id, fallback_benchmark_id: rule.fallback_benchmark_id || '' } : {}),
 });
+
+export const inheritBackendModels = () => request<{ changed: number; notices: string[] }>('/backend-models', 'POST');

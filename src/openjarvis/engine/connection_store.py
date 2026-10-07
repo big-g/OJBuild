@@ -98,7 +98,7 @@ class ModelConnectionStore:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, 2, 3, 4, 5):
+            if version not in (0, 1, 2, 3, 4, 5, 6):
                 raise ValueError("Unsupported model connection database version")
             if version == 0:
                 db.execute("""CREATE TABLE model_connections (
@@ -171,6 +171,13 @@ class ModelConnectionStore:
                             "TEXT NOT NULL DEFAULT ''"
                         )
                 db.execute("PRAGMA user_version=5")
+            if version < 6:
+                # Keep bindings after removal so refresh cannot undo an admin choice.
+                db.execute("""CREATE TABLE IF NOT EXISTS backend_model_imports (
+                    endpoint TEXT PRIMARY KEY, connection_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL
+                )""")
+                db.execute("PRAGMA user_version=6")
         self.path.chmod(0o600)
 
     @contextmanager
@@ -351,3 +358,123 @@ class ModelConnectionStore:
                     (identity,),
                 )
             ]
+
+    def backend_target(self, endpoint, db=None):
+        """Snapshot the import binding and any explicit administrator override."""
+        if db is None:
+            with self.connection() as db:
+                return self.backend_target(endpoint, db)
+        binding = db.execute(
+            "SELECT * FROM backend_model_imports WHERE endpoint=?", (endpoint,)
+        ).fetchone()
+        if binding:
+            row = db.execute(
+                "SELECT * FROM model_connections WHERE id=?",
+                (binding["connection_id"],),
+            ).fetchone()
+        else:
+            row = db.execute(
+                "SELECT * FROM model_connections WHERE url=? "
+                "ORDER BY EXISTS(SELECT 1 FROM model_connection_audit "
+                "WHERE connection_id=model_connections.id AND "
+                "event IN ('enabled','disabled','edited')) DESC,created_at LIMIT 1",
+                (endpoint,),
+            ).fetchone()
+        managed = bool(binding and (not row or row["revision"] != binding["revision"]))
+        if row and (row["adapter_id"] != "ollama" or row["config_version"] != 1):
+            managed = True
+        if row and not binding:
+            managed = managed or bool(
+                db.execute(
+                    "SELECT 1 FROM model_connection_audit WHERE connection_id=? "
+                    "AND event IN ('enabled','disabled','edited') LIMIT 1",
+                    (row["id"],),
+                ).fetchone()
+            )
+        return {
+            "binding": dict(binding) if binding else None,
+            "connection": self.public(row) if row else None,
+            "managed": managed,
+        }
+
+    def inherit_backend(self, endpoint, catalog, expected, actor):
+        """Atomically inherit an active backend without overwriting admin changes."""
+        endpoint = definition("backend_ollama", endpoint)["url"]
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            current = self.backend_target(endpoint, db)
+            if current != expected:
+                raise ConnectionConflict("Connection changed. Refresh and try again.")
+            if current["managed"]:
+                return False
+            row = current["connection"]
+            now = time.time()
+            enabled = any(
+                m.get("capability_state") == "reported"
+                and "completion" in m.get("capabilities", [])
+                for m in catalog
+            )
+
+            def stable(items):
+                return sorted(
+                    [
+                        {k: v for k, v in m.items() if k != "capabilities_at"}
+                        for m in items
+                    ],
+                    key=lambda m: m["serving_id"],
+                )
+
+            if row and row["adapter_id"] != "ollama":
+                return False
+            if (
+                row
+                and stable(row["catalog"]) == stable(catalog)
+                and row["discovery_state"] == "discovered"
+                and row["enabled"] == enabled
+                and row["config_version"] == 1
+            ):
+                db.execute(
+                    "INSERT OR IGNORE INTO backend_model_imports VALUES (?,?,?)",
+                    (endpoint, row["id"], row["revision"]),
+                )
+                return False
+            if not row:
+                if (
+                    db.execute("SELECT COUNT(*) FROM model_connections").fetchone()[0]
+                    >= 64
+                ):
+                    raise ValueError("Maximum of 64 model connections reached")
+                names = {r[0] for r in db.execute("SELECT name FROM model_connections")}
+                name = next(
+                    n
+                    for n in ["backend_ollama"]
+                    + [f"backend_ollama_{i}" for i in range(1, 65)]
+                    if n not in names
+                )
+                identity, revision = uuid.uuid4().hex, 1
+                db.execute(
+                    "INSERT INTO model_connections "
+                    "(id,name,url,adapter_id,revision,created_at,updated_at) "
+                    "VALUES (?,?,?,'ollama',?,?,?)",
+                    (identity, name, endpoint, revision, now, now),
+                )
+            else:
+                identity, revision = row["id"], row["revision"] + 1
+            db.execute(
+                "UPDATE model_connections SET catalog=?,discovery_state='discovered',"
+                "enabled=?,revision=?,tested_at=?,updated_at=? WHERE id=?",
+                (
+                    json.dumps(catalog, allow_nan=False),
+                    int(enabled),
+                    revision,
+                    now,
+                    now,
+                    identity,
+                ),
+            )
+            db.execute(
+                "INSERT OR REPLACE INTO backend_model_imports VALUES (?,?,?)",
+                (endpoint, identity, revision),
+            )
+            self._audit(db, identity, revision, "backend_inherited", actor)
+            return True

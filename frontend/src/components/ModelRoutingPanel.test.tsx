@@ -27,11 +27,11 @@ it('explains optional preflight-only fallback and representative cases', () => {
   expect(html).toContain('defaults to off');
 });
 
-it('explains missing model setup and exposes a refresh control', () => {
+it('explains backend inheritance and exposes a refresh control', () => {
   const html = renderToStaticMarkup(<ModelRoutingPanel />);
-  expect(html).toContain('Installed models need a saved server connection');
+  expect(html).toContain('configured Ollama servers are inherited automatically');
   expect(html).toContain('href="#model-server-connections"');
-  expect(html).toContain('Read capabilities');
-  expect(html).toContain('Enable for chat');
+  expect(html).toContain('no duplicate server setup is needed');
+  expect(html).toContain('administrator overrides');
   expect(html).toContain('Refresh models');
 });

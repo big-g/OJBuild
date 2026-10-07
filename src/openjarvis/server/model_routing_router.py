@@ -8,6 +8,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
 
+from openjarvis.engine.backend_models import inherit_backend_models
 from openjarvis.engine.model_benchmarks import run_diagnostic
 from openjarvis.engine.task_routing import SUITE_VERSION, TaskRoutingStore
 from openjarvis.server.auth import authenticate_admin_request
@@ -54,6 +55,7 @@ class Diagnostic(BaseModel):
 def create_model_routing_router(connections):
     store = TaskRoutingStore(connections)
     busy = threading.Lock()
+    importing = threading.Lock()
     router = APIRouter(
         prefix="/v1/model-routing",
         tags=["model routing"],
@@ -70,6 +72,26 @@ def create_model_routing_router(connections):
             "audit": store.audit(),
             "suite_version": SUITE_VERSION,
         }
+
+    @router.post("/backend-models")
+    def backend_models(
+        request: Request, actor: str = Depends(authenticate_admin_request)
+    ):
+        if not importing.acquire(blocking=False):
+            raise HTTPException(
+                409, "Backend model refresh is already running. Retry shortly."
+            )
+        try:
+            return operation(
+                lambda: inherit_backend_models(
+                    connections,
+                    request.app.state.engine,
+                    actor,
+                    lambda: authenticate_admin_request(request),
+                )
+            )
+        finally:
+            importing.release()
 
     @router.put("/tasks/{task}")
     def assign(

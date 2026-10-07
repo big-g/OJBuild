@@ -3,13 +3,13 @@ import { getStoredUser } from '../lib/auth';
 import { fetchModels } from '../lib/api';
 import { listModelConnections, type ModelConnection } from '../lib/model-connections-api';
 import {
-  getModelRouting, runModelDiagnostic, saveTaskRule, ROUTING_TASKS,
+  inheritBackendModels, getModelRouting, runModelDiagnostic, saveTaskRule, ROUTING_TASKS,
   type RoutingConfiguration, type RoutingTask, type TaskRule,
 } from '../lib/model-routing-api';
 import type { ModelInfo } from '../types';
 import { routingModelOptions } from '../lib/model-routing-options';
 
-export function ModelRoutingPanel({ connectionsRevision = 0 }: { connectionsRevision?: number }) {
+export function ModelRoutingPanel({ connectionsRevision = 0, onBackendModelsChanged }: { connectionsRevision?: number; onBackendModelsChanged?: () => void }) {
   const admin = !!getStoredUser()?.is_admin;
   const [config, setConfig] = useState<RoutingConfiguration | null>(null);
   const [connections, setConnections] = useState<ModelConnection[]>([]);
@@ -22,13 +22,18 @@ export function ModelRoutingPanel({ connectionsRevision = 0 }: { connectionsRevi
   const [notice, setNotice] = useState('');
   const [inventoryWarning, setInventoryWarning] = useState('');
   const refreshSequence = useRef(0);
+  const inheritance = useRef<ReturnType<typeof inheritBackendModels> | null>(null);
   async function refresh() {
     const sequence = ++refreshSequence.current;
+    if (!inheritance.current) inheritance.current = inheritBackendModels().finally(() => { inheritance.current = null; });
+    const inherited = await inheritance.current.catch(e => ({ changed: 0, notices: [String(e.message || e)] }));
+    if (sequence !== refreshSequence.current) return;
+    if (inherited.changed) onBackendModelsChanged?.();
     const [next, servers, installed] = await Promise.all([
       getModelRouting(), listModelConnections(), fetchModels().then(models => ({ models, failed: false })).catch(() => ({ models: [] as ModelInfo[], failed: true })),
     ]);
     if (sequence !== refreshSequence.current) return;
-    setInventoryWarning(installed.failed ? 'Cannot load the existing engine inventory. Saved server catalogs are still shown; refresh to retry.' : '');
+    setInventoryWarning([...inherited.notices, ...(installed.failed ? ['Cannot load the existing engine inventory. Saved server catalogs are still shown; refresh to retry.'] : [])].join(' '));
     setConfig(next); setConnections(servers.connections); setModels(installed.models);
   }
   useEffect(() => {
@@ -57,11 +62,11 @@ export function ModelRoutingPanel({ connectionsRevision = 0 }: { connectionsRevi
   const label = (id: string) => options.find(m => m.id === id)?.display_name || id || 'unassigned';
   return <section className="rounded-lg border p-4 space-y-3" aria-label="Model task assignments">
     <h3 className="font-semibold">Model task assignments and diagnostics</h3>
-    <p className="text-sm">{eligibleModels.length} ready for task assignments · {options.filter(m => !m.eligible).length} awaiting setup or unsupported.</p>
-    {!eligibleModels.length && <p role="status" className="text-sm">Installed models need a saved server connection before diagnostics. In <a href="#model-server-connections" className="underline">Model server connections</a> above, add your Ollama URL, Test catalog, Read capabilities for your chat models, then Enable for chat. This list refreshes automatically after connection changes.</p>}
+    <p className="text-sm">{eligibleModels.length} available for diagnostics · {options.filter(m => !m.eligible).length} awaiting setup or unsupported.</p>
+    {!eligibleModels.length && <p role="status" className="text-sm">The backend’s configured Ollama servers are inherited automatically. If no models are available, check the refresh message and <a href="#model-server-connections" className="underline">Model server connections</a> above for unavailable servers, unverified capabilities or administrator overrides.</p>}
     <button type="button" disabled={busy} className="rounded border px-3 py-1" onClick={() => void act(async () => {})}>Refresh models</button>
     {inventoryWarning && <p role="status" className="text-sm">{inventoryWarning}</p>}
-    <p className="text-sm">Assign shared models to general conversation, coding, analysis or vision. In chat, choose a task to use its assignment or Manual model to use the picker. Nothing is classified or switched automatically.</p>
+    <p className="text-sm">The backend’s Ollama configuration carries forward automatically; no duplicate server setup is needed. Assign shared models to general conversation, coding, analysis or vision. In chat, choose a task to use its assignment or Manual model to use the picker. Nothing is classified or switched automatically.</p>
     <details className="text-sm"><summary className="cursor-pointer">How diagnostics and assignments work</summary>
       <p>Diagnostics submit fixed synthetic prompts to the selected server. They use GPU time and may load a model. Each task has three fixed cases: coding checks mutation and boundaries; analysis checks weighted calculations and dependencies; general checks extraction and constraints; vision checks colors, position and region count. A tool-call canary also runs if Ollama reports tools. No generated code or tool call is executed, and no personal chat/source data is sent.</p>
       <p>These bounded behavioral checks are not a broad quality ranking. Elapsed time includes availability and generation overhead, not pure tokens per second. Compare results on the same hardware under similar load. A passing current result is required to enable an assignment. Connection changes or a newer result invalidate the previous assignment; review and save it again. Live tool/image capability checks and existing safety controls still apply.</p>

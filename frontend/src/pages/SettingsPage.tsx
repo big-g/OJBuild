@@ -239,6 +239,7 @@ const themeOptions: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
 ];
 
 export function SettingsPage() {
+  const [backendModelsRevision, setBackendModelsRevision] = useState(0);
   const [modelConnectionsRevision, setModelConnectionsRevision] = useState(0);
   const isAdmin = getStoredUser()?.is_admin === true;
   const settings = useAppStore((s) => s.settings);
@@ -544,8 +545,8 @@ export function SettingsPage() {
 
           {/* Models */}
           <Section title="Models">
-            <ModelConnectionsPanel onConnectionsChanged={() => setModelConnectionsRevision(n => n + 1)} />
-            <ModelRoutingPanel connectionsRevision={modelConnectionsRevision} />
+            <ModelConnectionsPanel backendRevision={backendModelsRevision} onConnectionsChanged={() => setModelConnectionsRevision(n => n + 1)} />
+            <ModelRoutingPanel connectionsRevision={modelConnectionsRevision} onBackendModelsChanged={() => setBackendModelsRevision(n => n + 1)} />
             <SettingRow label="Local models (Ollama)" description="Models available for local inference">
               <OllamaModelList />
             </SettingRow>
