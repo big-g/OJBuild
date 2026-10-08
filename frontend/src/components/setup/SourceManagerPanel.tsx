@@ -6,6 +6,8 @@ import {
 import type { SourceAdapter, SourceConfig, SourceInstance, SourceCredential, SourceTestResult } from '../../lib/sources-api';
 import { APIConnectionHelp, SourceTestPreview } from './APIConnectionHelp';
 import './SourceManagerPanel.css';
+import { APIServiceEditor } from './APIServiceEditor';
+import { API_SERVICE_EXAMPLES } from '../../lib/api-service';
 import { LegacySourceImportsPanel } from './LegacySourceImportsPanel';
 import { CredentialManagerPanel } from './CredentialManagerPanel';
 import { SourceAccountConnection } from './SourceAccountConnection';
@@ -144,7 +146,7 @@ export function SourceManagerPanel() {
     <div className="flex items-center justify-between gap-3">
       <h3 className="hud-label">Configured sources</h3>
       <div className="flex flex-wrap gap-3">
-        <button type="button" disabled={busy || !loaded || !adapters.some(item => item.adapter_id === 'json_api')} onClick={() => openEditor(null, 'json_api')}>Add API connection</button>
+        <button type="button" disabled={busy || !loaded || !adapters.some(item => item.adapter_id === 'api_service' || item.adapter_id === 'json_api')} onClick={() => { openEditor(null, adapters.some(a => a.adapter_id === 'api_service') ? 'api_service' : 'json_api'); if (adapters.some(a => a.adapter_id === 'api_service')) setConfig({ definition: JSON.stringify(API_SERVICE_EXAMPLES.generic), operation: 'readings', inputs: '{}' }); }}>Add API connection</button>
         <button type="button" disabled={busy || !loaded || !adapters.length} onClick={() => openEditor(null)}>Add source</button>
       </div>
     </div>
@@ -188,21 +190,21 @@ export function SourceManagerPanel() {
       <fieldset disabled={busy} className="flex flex-col gap-3">
         <legend>{editing ? 'Edit source' : 'Add source'}</legend>
         <label>Source type <select value={adapterId} disabled={!!editing} onChange={(event) => {
-          setAdapterId(event.target.value); setConfig({}); setNotice(''); setPreview(null);
+          setAdapterId(event.target.value); setConfig(event.target.value === 'api_service' ? { definition: JSON.stringify(API_SERVICE_EXAMPLES.generic), operation: 'readings', inputs: '{}' } : {}); setNotice(''); setPreview(null);
         }}>{adapters.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}</select></label>
         <p>{adapter.description}</p>
         {adapterId === 'json_api' && <APIConnectionHelp />}
         <label>Name <input aria-label="Source name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)} /></label>
-        <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); setPreview(null); }} />
+        {adapterId === 'api_service' ? <APIServiceEditor credentials={credentials} config={config} onChange={value => { setConfig(value); setNotice(''); setPreview(null); }} /> : <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); setPreview(null); }} />}
         {adapter.connection_auth && <p>Save this source, then authorize the account on its connection card.</p>}
         {editing && <p>Changing the configuration clears this connection’s indexed documents. Sync again after saving.</p>}
         <div className="flex gap-3">
-          <button type="button" disabled={!!adapter.connection_auth} onClick={() => void perform(async () => {
+          <button type="button" disabled={!!adapter.connection_auth} onClick={event => { if (!event.currentTarget.form?.reportValidity()) return; void perform(async () => {
             setPreview(null);
             const result = await testSourceConfiguration(adapterId, config);
             setConfig(result.config);
             setPreview(result.sample_documents ? result : null);
-          }, 'Connection test passed. Configuration has not been saved.')}>Test connection</button>
+          }, 'Connection test passed. Configuration has not been saved.'); }}>Test connection</button>
           <button type="submit">Save source</button>
           <button type="button" onClick={() => { setEditing(undefined); setPreview(null); }}>Cancel</button>
         </div>

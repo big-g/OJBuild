@@ -20,6 +20,18 @@ class SourceInput(BaseModel):
     config: dict
 
 
+class APITemplateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=120)
+    definition: dict
+    revision: StrictInt = Field(default=0, ge=0)
+
+
+class APIImportInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    text: str = Field(max_length=65536)
+
+
 class SharingInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     revision: int = Field(ge=1)
@@ -263,6 +275,44 @@ def create_sources_router(manager: SourceManager | None = None) -> APIRouter:
     from openjarvis.connectors.source_imports import SourceImports
 
     imports = SourceImports(manager)
+
+    from openjarvis.connectors.api_templates import APITemplates, import_definition
+
+    templates = APITemplates(manager.store)
+
+    @router.get("/api-templates")
+    def api_templates(request: Request):
+        return {"templates": templates.list(request.state.source_access.user_id)}
+
+    @router.post("/api-templates", status_code=201)
+    def create_api_template(req: APITemplateInput, request: Request):
+        return templates.save(
+            request.state.source_access.user_id, req.name, req.definition
+        )
+
+    @router.put("/api-templates/{template_id}")
+    def update_api_template(template_id: str, req: APITemplateInput, request: Request):
+        return templates.save(
+            request.state.source_access.user_id,
+            req.name,
+            req.definition,
+            template_id,
+            req.revision,
+        )
+
+    @router.delete("/api-templates/{template_id}", status_code=204)
+    def delete_api_template(template_id: str, revision: int, request: Request):
+        templates.remove(request.state.source_access.user_id, template_id, revision)
+
+    @router.post("/api-import")
+    def import_api(req: APIImportInput):
+        return {
+            "definition": import_definition(req.text),
+            "notice": (
+                "Draft only. Review authentication, bodies, response "
+                "mapping and operation kind before saving."
+            ),
+        }
 
     @router.get("/imports")
     def legacy_imports():

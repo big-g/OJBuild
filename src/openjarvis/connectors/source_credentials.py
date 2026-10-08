@@ -56,6 +56,20 @@ def _secret(value: str) -> str:
     return value
 
 
+def _credential_secret(kind, value):
+    if kind != "basic":
+        return _secret(value)
+    if (
+        not isinstance(value, str)
+        or not 1 <= len(value.encode()) <= 8192
+        or any(ord(c) < 32 or ord(c) == 127 for c in value)
+        or ":" not in value
+        or not all(value.split(":", 1))
+    ):
+        raise ValueError("Basic credentials require username:password without controls")
+    return value
+
+
 class CredentialStore:
     def __init__(self, path: Path):
         self.path = path
@@ -207,10 +221,10 @@ class CredentialStore:
     def _create(
         self, name, kind, origin, secret, header_name, identity, *, owner_id=""
     ):
-        secret = _secret(secret)
+        secret = _credential_secret(kind, secret)
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 120:
             raise ValueError("Credential name must contain 1–120 characters")
-        if kind not in {"bearer", "api_key"}:
+        if kind not in {"bearer", "api_key", "query_api_key", "basic"}:
             raise ValueError("Unsupported credential kind")
         normalized = credential_origin(origin)
         parsed = urlparse(origin)
@@ -218,6 +232,13 @@ class CredentialStore:
             raise ValueError("Credential origin must contain only the HTTPS host")
         if kind == "bearer":
             header_name = "Authorization"
+        elif kind == "basic":
+            header_name = "Authorization"
+            if ":" not in secret:
+                raise ValueError("Basic credentials use username:password")
+        elif kind == "query_api_key":
+            if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", header_name):
+                raise ValueError("Query credential needs a valid parameter name")
         elif (
             not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,63}", header_name)
             or header_name.lower() in _RESERVED
@@ -308,12 +329,25 @@ class CredentialStore:
                 for key in ("id", "kind", "origin", "header_name")
             ):
                 raise ValueError("Invalid binding")
-            secret = _secret(payload["secret"])
+            secret = _credential_secret(row["kind"], payload["secret"])
         except (InvalidToken, ValueError, KeyError, TypeError):
             raise ValueError(
                 "Credential could not be unlocked; check the original key backup"
             ) from None
-        value = f"Bearer {secret}" if row["kind"] == "bearer" else secret
+        if row["kind"] == "query_api_key":
+            return {
+                "kind": "query_api_key",
+                "headers": {},
+                "query": {row["header_name"]: secret},
+                "origin": row["origin"],
+                "secret": secret,
+            }
+        if row["kind"] == "basic":
+            import base64
+
+            value = "Basic " + base64.b64encode(secret.encode()).decode()
+        else:
+            value = f"Bearer {secret}" if row["kind"] == "bearer" else secret
         return {
             "headers": {row["header_name"]: value},
             "origin": row["origin"],
@@ -321,9 +355,9 @@ class CredentialStore:
         }
 
     def rotate(self, identity: str, revision: int, secret: str):
-        secret = _secret(secret)
         with self._lock(identity, exclusive=True):
             row = self._row(identity)
+            secret = _credential_secret(row["kind"], secret)
             if row["revision"] != revision:
                 raise SourceConflict("Credential changed; refresh before rotating")
             # Check the original key/binding before replacing a value.

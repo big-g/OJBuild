@@ -6,7 +6,7 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
   const [open, setOpen] = useState(false);
   const [rotation, setRotation] = useState<SourceCredential | null>(null);
   const [name, setName] = useState('');
-  const [kind, setKind] = useState<'bearer' | 'api_key'>('bearer');
+  const [kind, setKind] = useState<SourceCredential['kind']>('bearer');
   const [origin, setOrigin] = useState('');
   const [header, setHeader] = useState('X-API-Key');
   const [secret, setSecret] = useState('');
@@ -37,18 +37,18 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
     {open && <form onSubmit={(event) => {
       event.preventDefault();
       void perform(() => rotation ? rotateSourceCredential(rotation, secret)
-        : createSourceCredential({ name, kind, origin, header_name: kind === 'api_key' ? header : '', secret }));
+        : createSourceCredential({ name, kind, origin, header_name: ['api_key', 'query_api_key'].includes(kind) ? header : '', secret }));
     }}>
       <fieldset disabled={busy} className="flex flex-col gap-3">
         <legend>{rotation ? `Rotate ${rotation.name}` : 'Add protected credential'}</legend>
         {!rotation && <>
           <label>Credential name <input required maxLength={120} value={name} onChange={(e) => setName(e.target.value)} /></label>
-          <label>Authentication <select value={kind} onChange={(e) => { setSecret(''); setKind(e.target.value as 'bearer' | 'api_key'); }}><option value="bearer">Bearer token</option><option value="api_key">API key header</option></select></label>
+          <label>Authentication <select value={kind} onChange={(e) => { setSecret(''); setHeader(e.target.value === 'query_api_key' ? 'apikey' : 'X-API-Key'); setKind(e.target.value as SourceCredential['kind']); }}><option value="bearer">Bearer token</option><option value="api_key">API key header</option><option value="query_api_key">API key query parameter</option><option value="basic">HTTP Basic (username:password)</option></select></label>
           <label>HTTPS origin <input required type="url" placeholder="https://api.example.com" value={origin} onChange={(e) => setOrigin(e.target.value)} /></label>
-          {kind === 'api_key' && <label>Header name <input required maxLength={64} pattern="[A-Za-z][A-Za-z0-9-]{0,63}" placeholder="X-API-Key" value={header} onChange={(e) => setHeader(e.target.value)} /><span>Use 1–64 letters, digits or hyphens, starting with a letter. Reserved HTTP headers are not allowed.</span></label>}
+          {['api_key', 'query_api_key'].includes(kind) && <label>{kind === 'query_api_key' ? 'Query parameter name' : 'Header name'} <input required maxLength={64} pattern={kind === 'query_api_key' ? "[A-Za-z][A-Za-z0-9_.-]{0,63}" : "[A-Za-z][A-Za-z0-9-]{0,63}"} placeholder="X-API-Key" value={header} onChange={(e) => setHeader(e.target.value)} /><span>{kind === 'query_api_key' ? 'Use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter.' : 'Use 1–64 letters, digits or hyphens, starting with a letter. Reserved HTTP headers are not allowed.'}</span></label>}
         </>}
         <label>{rotation ? 'Replacement secret' : 'Secret'} <input type="password" autoComplete="new-password" required maxLength={8192} value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
-        <p>Secret values cannot be displayed again. Keep the server credential database and its original encryption key together in protected backups.</p>
+        <p>For Basic authentication, enter username:password. Query keys are injected into HTTPS requests on the server; do not put them in service URLs. Secret values cannot be displayed again. Keep the server credential database and its original encryption key together in protected backups.</p>
         <div className="flex gap-3"><button type="submit">{rotation ? 'Rotate credential' : 'Save credential'}</button><button type="button" onClick={close}>Cancel</button></div>
       </fieldset>
     </form>}

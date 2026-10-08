@@ -337,9 +337,18 @@ do not by themselves complete runtime tool addition acceptance.
    reflection checks; tests do not persist/index data and form edits clear stale
    previews. Saved APIs reuse personal/universal ownership, encrypted credentials,
    schedules and attributed knowledge retrieval for intelligent feedback.
+   **Implemented:** versioned database-backed API service definitions and named
+   operations; typed path/query/body inputs; non-secret application headers;
+   declared read-only POST with JSON/form/GraphQL/text/XML bodies; JSON/CSV/XML/
+   text and aligned time-series mappings preserving units/timezone; linked
+   same-origin reads, Link/cursor/page/offset pagination, bounded request traces,
+   protected query-key/Basic credentials, owner-scoped reusable templates and
+   local-only service JSON/OpenAPI JSON/cURL draft import/export. Existing JSON
+   sources remain compatible. Action definitions cannot execute as sources.
    See [Service APIs](../user-guide/service-apis.md). Live provider acceptance,
-   private LAN generic APIs, general OAuth, other response formats and write
-   operations remain follow-ups; scheduled ingestion is not automatic alerting.
+   private LAN generic APIs, general OAuth/signing, writes, multipart/streams,
+   retries/cache validation and generic incremental/deletion contracts remain
+   follow-ups; scheduled ingestion is not automatic alerting.
    **Implemented:** bounded same-origin next-URL/cursor pagination; server-issued
    incremental sync tokens committed only after ingestion and cleanup; explicit
    deletion-ID arrays scoped to one instance; complete-snapshot reconciliation

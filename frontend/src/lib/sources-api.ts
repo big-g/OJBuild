@@ -1,3 +1,4 @@
+import type { APIServiceDefinition } from './api-service';
 import { apiFetch } from './api';
 
 export interface SourceFieldCondition {
@@ -80,6 +81,7 @@ export interface SourceTestResult {
   documents?: number;
   sample_titles?: string[];
   final_url?: string;
+  request_trace?: { method: string; url: string; status: number; content_type: string; bytes: number }[];
   sample_documents?: { title: string; content: string; truncated: boolean; fetched_at?: string }[];
 }
 export const testSourceConfiguration = (adapter_id: string, config: SourceConfig) =>
@@ -96,7 +98,7 @@ export const syncSourceInstance = (id: string) =>
   request<{ status: string }>(`/${encodeURIComponent(id)}/sync`, 'POST');
 
 export interface SourceCredential {
-  id: string; name: string; kind: 'bearer' | 'api_key'; origin: string;
+  id: string; name: string; kind: 'bearer' | 'api_key' | 'query_api_key' | 'basic'; origin: string;
   header_name: string; revision: number; created_at: string; updated_at: string;
 }
 export const listSourceCredentials = () => request<{ credentials: SourceCredential[] }>('/credentials');
@@ -177,3 +179,9 @@ export const setSourceSharing = (source: SourceInstance, sharing: 'personal' | '
   request<SourceInstance>(`/${encodeURIComponent(source.id)}/sharing`, 'PUT', { revision: source.revision, sharing });
 export const setSourcePreference = (id: string, enabled: boolean) =>
   request<{ enabled: boolean }>(`/${encodeURIComponent(id)}/preference`, 'PUT', { enabled });
+
+export interface APITemplate { id: string; name: string; revision: number; definition: APIServiceDefinition; }
+export const listAPITemplates = () => request<{ templates: APITemplate[] }>('/api-templates');
+export const createAPITemplate = (name: string, definition: APIServiceDefinition) => request<APITemplate>('/api-templates', 'POST', { name, definition });
+export const removeAPITemplate = (template: APITemplate) => request<void>(`/api-templates/${template.id}?revision=${template.revision}`, 'DELETE');
+export const importAPIService = (text: string) => request<{ definition: APIServiceDefinition; notice: string }>('/api-import', 'POST', { text });

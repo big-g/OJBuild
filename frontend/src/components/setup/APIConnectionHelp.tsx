@@ -20,6 +20,7 @@ export function APIConnectionHelp() {
 export function SourceTestPreview({ result }: { result: SourceTestResult }) {
   return <section className="hud-panel p-3 space-y-2" aria-label="Connection test preview">
     <h4>Mapped API data preview</h4>
+    {result.request_trace && <ol aria-label="API request steps">{result.request_trace.map((step, i) => <li key={i}>{step.method} {step.url} · HTTP {step.status} · {step.content_type} · {step.bytes} bytes</li>)}</ol>}
     <p>{result.documents ?? 0} documents validated. Showing up to 3 samples and 4,096 characters per sample. This test has not saved or indexed data.</p>
     {result.sample_documents?.map((sample, index) => <article key={index} className="space-y-1">
       <h5 className="break-all">{sample.title}</h5>

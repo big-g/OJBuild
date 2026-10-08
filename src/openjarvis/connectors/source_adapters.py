@@ -437,6 +437,46 @@ register_adapter(
 )
 
 
+from openjarvis.connectors.api_service import (  # noqa: E402
+    APIServiceConnector,
+    probe_service,
+    validate_service_config,
+)
+
+register_adapter(
+    SourceAdapter(
+        adapter_id="api_service",
+        display_name="API service",
+        description=(
+            "Database-backed service definitions with named read "
+            "operations and typed inputs."
+        ),
+        fields=(
+            {
+                "name": "definition",
+                "label": "Service definition",
+                "type": "textarea",
+                "required": True,
+                "max_length": 65536,
+            },
+            {"name": "operation", "label": "Operation", "type": "text"},
+            {"name": "inputs", "label": "Operation inputs", "type": "textarea"},
+            {"name": "url", "label": "Compiled endpoint", "type": "text"},
+            {
+                **_CREDENTIAL_FIELD,
+                "credential_kinds": ["bearer", "api_key", "query_api_key", "basic"],
+            },
+        ),
+        validate=validate_service_config,
+        factory=lambda config: APIServiceConnector(config=config),
+        required_capabilities=APIServiceConnector.capability_requirements(),
+        probe=probe_service,
+        credential_kinds=("bearer", "api_key", "query_api_key", "basic"),
+        bind_credential=lambda reader, material: reader.bind_credential(material),
+    )
+)
+
+
 # Provider adapters keep their trusted endpoints outside saved configuration.
 from openjarvis.connectors.notion_sources import (  # noqa: E402
     NOTION_ORIGIN,

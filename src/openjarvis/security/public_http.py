@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import http.client
 import ipaddress
+import re
 import socket
 import ssl
 import time
@@ -208,6 +209,55 @@ def _remaining(deadline: float) -> float:
     return min(20.0, remaining)
 
 
+def validate_request_headers(headers):
+    """Only non-secret application headers; transport and auth remain server-owned."""
+    if not isinstance(headers, dict) or len(headers) > 24:
+        raise ValueError("Use at most 24 request headers")
+    result, seen = {}, set()
+    reserved = {
+        "host",
+        "authorization",
+        "cookie",
+        "set-cookie",
+        "connection",
+        "content-length",
+        "transfer-encoding",
+        "accept-encoding",
+        "te",
+        "trailer",
+        "upgrade",
+        "proxy-authorization",
+        "proxy-connection",
+    }
+    for name, value in headers.items():
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,63}", name)
+            or name.lower() in reserved
+            or name.lower() in seen
+            or any(
+                word in name.lower()
+                for word in ("secret", "token", "api-key", "apikey", "password")
+            )
+            or not isinstance(value, str)
+            or len(value) > 2048
+            or any(ord(c) < 32 or ord(c) > 126 for c in value)
+        ):
+            raise ValueError(
+                "Use non-secret printable request headers; put credentials in the vault"
+            )
+        seen.add(name.lower())
+        result[name] = value
+    return result
+
+
+def _merge_request_headers(headers):
+    # Preserve the last configured spelling and value for each HTTP header.
+    return dict(
+        {name.lower(): (name, value) for name, value in headers.items()}.values()
+    )
+
+
 def _request_source(
     url: str,
     target: PublicTarget,
@@ -221,6 +271,8 @@ def _request_source(
     method: str = "GET",
     body: bytes | None = None,
     ssl_context=None,
+    request_headers=None,
+    read_errors=False,
 ) -> httpx.Response:
     """Read a bounded, uncompressed response from verified public addresses."""
     if ssl_context is not None and (
@@ -257,19 +309,24 @@ def _request_source(
                     else ""
                 ),
                 **({"body": body} if body is not None else {}),
-                headers={
-                    "Host": target.host_header,
-                    "Accept": accept,
-                    "Accept-Encoding": "identity",
-                    "Connection": "close",
-                    "User-Agent": "OpenJarvis-Sources/1.0",
-                    **(credential_headers or {}),
-                },
+                headers=_merge_request_headers(
+                    {
+                        "Host": target.host_header,
+                        "Accept": accept,
+                        "Accept-Encoding": "identity",
+                        "Connection": "close",
+                        "User-Agent": "OpenJarvis-Sources/1.0",
+                        **(request_headers or {}),
+                        **(credential_headers or {}),
+                    }
+                ),
             )
             response = connection.getresponse()
             # Redirects have no ingestion body. Do not download arbitrary large
             # error pages when a status code is already sufficient to fail.
-            if response.status != 200:
+            if not 200 <= response.status < 300 and (
+                not read_errors or response.status in {301, 302, 303, 307, 308}
+            ):
                 return httpx.Response(
                     response.status,
                     headers=response.getheaders(),
@@ -282,7 +339,10 @@ def _request_source(
                 _check_cancel(cancel_event)
                 if connection.sock is not None:
                     connection.sock.settimeout(_remaining(deadline))
-                chunk = response.read1(min(65536, max_bytes + 1 - len(data)))
+                limit = max_bytes if 200 <= response.status < 300 else 4096
+                if len(data) >= limit and not 200 <= response.status < 300:
+                    break
+                chunk = response.read1(min(65536, limit + 1 - len(data)))
                 if not chunk:
                     if response.length not in (None, 0):
                         raise ValueError(
@@ -334,11 +394,15 @@ def fetch_public_source(
     method: str = "GET",
     body: bytes | None = None,
     follow_redirects: bool = True,
+    request_headers: dict | None = None,
+    success_statuses: tuple = (200,),
+    read_errors: bool = False,
 ) -> httpx.Response:
     """Bounded, pinned reads. Trusted adapters may use a nonredirecting POST.
 
     Method/body are server-code arguments, never user-configured source fields.
     """
+    headers = validate_request_headers(request_headers or {})
     if method not in {"GET", "POST"} or (
         body is not None
         and (method != "POST" or not isinstance(body, bytes) or len(body) > 65536)
@@ -367,17 +431,36 @@ def fetch_public_source(
                     "Authenticated redirects must stay on the credential HTTPS origin"
                 )
             query = authentication.get("query")
-            # Only this trusted provider requires query authentication. Inject
-            # after validation, retaining a secret-free response/request URL.
+            # Inject trusted provider or protected generic query credentials only
+            # on the wire, retaining a secret-free response/request URL.
+            generic_query = authentication.get("kind") == "query_api_key"
             if query is not None and (
-                authentication["origin"] != "https://api.openweathermap.org"
-                or not isinstance(query, dict)
-                or set(query) != {"appid"}
+                not isinstance(query, dict)
+                or len(query) != 1
                 or not isinstance(secret, str)
                 or not secret
-                or query["appid"] != secret
+                or not all(
+                    isinstance(k, str)
+                    and re.fullmatch(r"[A-Za-z][A-Za-z0-9_.-]{0,63}", k)
+                    and v == secret
+                    for k, v in query.items()
+                )
+                or (
+                    not generic_query
+                    and (
+                        authentication["origin"] != "https://api.openweathermap.org"
+                        or set(query) != {"appid"}
+                    )
+                )
             ):
                 raise ValueError("Unsupported provider query authentication")
+            if query and any(
+                key.lower() in {name.lower() for name in query}
+                for key, _ in parse_qsl(urlparse(current).query)
+            ):
+                raise ValueError(
+                    "Credential query parameter conflicts with operation inputs"
+                )
         if allowed_origin is not None and source_origin(current) != allowed_origin:
             raise ValueError("Paginated redirects must stay on the configured origin")
         target = validate_public_url(current)
@@ -387,6 +470,8 @@ def fetch_public_source(
             max_bytes=max_bytes,
             deadline=deadline,
             accept=accept,
+            **({"request_headers": headers} if headers else {}),
+            **({"read_errors": True} if read_errors else {}),
             **({"method": method, "body": body} if method != "GET" else {}),
             **({"cancel_event": cancel_event} if cancel_event is not None else {}),
             **(
@@ -418,7 +503,16 @@ def fetch_public_source(
                 raise ValueError("Source redirects must not downgrade HTTPS")
             current = redirected
             continue
-        if response.status_code != 200:
-            raise ValueError(f"Source returned HTTP {response.status_code}")
+        if response.status_code not in success_statuses:
+            message = f"Source returned HTTP {response.status_code}"
+            if read_errors and not authentication:
+                try:
+                    payload = response.json()
+                    reason = payload.get("reason", payload.get("message", ""))
+                    if isinstance(reason, str):
+                        message += ": " + reason[:500]
+                except (ValueError, AttributeError):
+                    pass
+            raise ValueError(message)
         return response
     raise ValueError("Source exceeded the five-redirect limit")
