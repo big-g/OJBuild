@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
+from openjarvis.engine._base import messages_to_dicts
 from openjarvis.server.app import create_app
 from openjarvis.server.auth_store import AuthStore
 from openjarvis.sessions.session import SessionStore
@@ -51,11 +52,13 @@ def test_history_and_identity_survive_ws_reconnect_and_http_clients(setup, strea
     seen = []
 
     def generate(messages, **kwargs):
-        seen.append(messages)
+        # Exercise the real Ollama/OpenAI serializer: dictionaries must fail.
+        seen.append(messages_to_dicts(messages))
         return {"content": "Answer"}
 
     async def streaming(messages, **kwargs):
-        seen.append(messages)
+        # Exercise the real Ollama/OpenAI serializer: dictionaries must fail.
+        seen.append(messages_to_dicts(messages))
         yield "Answer"
 
     engine.generate.side_effect = generate
@@ -146,7 +149,7 @@ def test_session_choice_is_per_message_and_stateless_turn_does_not_leak_history(
         assert exchange(ws, session_id)[-1]["type"] == "done"
         stateless = exchange(ws, message="Stateless")
         assert stateless[-1]["correlation"]["session_id"] == ""
-    assert engine.generate.call_args.args[0] == [
+    assert messages_to_dicts(engine.generate.call_args.args[0]) == [
         {"role": "user", "content": "Stateless"}
     ]
     assert len(app.state.session_store.get_session(session_id).messages) == 2

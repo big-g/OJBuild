@@ -411,7 +411,7 @@ def test_parallel_connections_do_not_share_identity():
         import asyncio
 
         identity = current_identity().metadata()
-        observed[messages[0]["content"]] = identity
+        observed[messages[0].content] = identity
         yield "first"
         await asyncio.sleep(0)
         assert current_identity().metadata() == identity

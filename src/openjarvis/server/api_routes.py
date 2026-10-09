@@ -1212,13 +1212,15 @@ async def websocket_chat_stream(websocket: WebSocket):
                         model,
                     )
                     bind_routing(decision)
-                    if decision:
-                        from openjarvis.core.types import Message, Role
+                    from openjarvis.core.types import Message, Role
 
-                        messages = [
-                            Message(role=Role(m["role"]), content=m["content"])
-                            for m in messages
-                        ]
+                    # Every engine selection uses the same typed message contract,
+                    # including direct models without a routing decision.
+                    messages = [
+                        Message(role=Role(m["role"]), content=m["content"])
+                        for m in messages
+                    ]
+                    if decision:
                         await send_frame({"type": "routing_decision", **decision})
                 except (ValueError, EngineConnectionError):
                     await send_frame(
