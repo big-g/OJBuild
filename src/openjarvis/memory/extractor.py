@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from typing import Any, List, Optional
 
 from openjarvis.core.types import Message, Role
@@ -46,11 +47,17 @@ class FactExtractor:
     ) -> None:
         self._engine = engine
         self._model = model
+        self._model_lock = threading.Lock()
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._max_facts_per_turn = max_facts_per_turn
         self._max_fact_chars = max_fact_chars
         self._system_prompt = system_prompt or _DEFAULT_SYSTEM_PROMPT
+
+    def configure_model(self, engine: Any, model: str) -> None:
+        """Apply model changes to future jobs; an in-flight job keeps its binding."""
+        with self._model_lock:
+            self._engine, self._model = engine, model
 
     def extract(self, user_text: str, assistant_text: str = "") -> List[str]:
         """Return durable facts from the exchange. Never raises."""
@@ -68,9 +75,11 @@ class FactExtractor:
         ]
 
         try:
-            result = self._engine.generate(
+            with self._model_lock:
+                engine, model = self._engine, self._model
+            result = engine.generate(
                 messages,
-                model=self._model,
+                model=model,
                 temperature=self._temperature,
                 max_tokens=self._max_tokens,
             )

@@ -2096,6 +2096,13 @@ def load_config(path: Optional[Path] = None) -> JarvisConfig:
     if not config_path.exists() and cfg.security.profile:
         apply_security_profile(cfg.security, cfg.server)
 
+    # Administrator UI overrides take precedence over bootstrap TOML.
+    import copy
+
+    from openjarvis.core.admin_settings import apply_saved_settings
+
+    cfg._settings_bootstrap = copy.deepcopy(cfg)
+    apply_saved_settings(cfg)
     return cfg
 
 

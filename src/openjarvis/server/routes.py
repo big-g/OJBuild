@@ -287,6 +287,8 @@ async def _chat_completions(
         if owned.identity is None or owned.identity.user_id != user_id:
             raise HTTPException(403, "Session does not belong to authenticated user")
     model = request_body.model
+    if not model or model == "default":
+        model = request.app.state.model
     configured_engine = None
     agent_engine_override = None
     if model.startswith("oj/"):
@@ -1821,6 +1823,7 @@ async def list_models(request: Request) -> ModelListResponse:
         data=[
             ModelObject(
                 id=mid,
+                is_default=mid == request.app.state.model,
                 owned_by=(
                     "litellm"
                     if _engine_key_for_model(engine, mid) == "litellm"

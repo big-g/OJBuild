@@ -677,3 +677,22 @@ Adding a new hardware target involves up to four components: hardware detection 
 | Intel Lunar Lake NPU via OpenVINO | **Design Needed** | 48 TOPS — most mature NPU software stack for x86 laptops. New engine wrapping OpenVINO GenAI. |
 | Raspberry Pi 5 | **Design Needed** | CPU-only via llama.cpp ARM NEON for 1-3B models. $100 entry point for hobbyists. |
 | Unified hardware benchmark suite | **Design Needed** | Standardized benchmark that runs the same workloads across all supported hardware, producing comparable energy/latency/throughput/cost numbers. |
+
+## Administrator configuration coverage (2026-10-09)
+
+Administrator-owned database overrides and a searchable web parameter editor now
+cover scalar OpenJarvis configuration and scalar lists. Default chat/server and
+memory-extraction models apply live; other settings expose pending restart state.
+Explicit user chat selections and task assignments remain authoritative. TOML is
+bootstrap-only where a database override exists. Changes require current revisions
+and are audited by actor/time/field names; credentials are not returned or admitted
+by this editor. New configuration work must extend schema-driven controls with
+field-specific validation, hints and an explicit live/restart application policy.
+
+The goal is complete administrator UI configuration without terminal edits.
+Remaining coverage: structured legacy values and optional mining configuration,
+legacy credentials migrated into protected screens, environment-only inference
+options and Ollama/OS settings, configured-server model defaults, additional
+semantic validators and live apply adapters, and a bounded deployment-aware restart
+control. This batch does not claim every operational setting is now UI editable.
+See [administrator settings](../user-guide/administrator-settings.md).

@@ -885,6 +885,7 @@ createServerConversation: async (model?: string) => {
           (state.settings.defaultModel &&
             chatModels.some((m) => m.id === state.settings.defaultModel) &&
             state.settings.defaultModel) ||
+          chatModels.find((m) => m.is_default)?.id ||
           chatModels[0]?.id ||
           models.find((m) => !isEmbedOnlyModel(m.id))?.id ||
           '';

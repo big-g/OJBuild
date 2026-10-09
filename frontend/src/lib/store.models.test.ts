@@ -77,3 +77,13 @@ describe('setModels', () => {
     expect(useAppStore.getState().selectedModel).toBe('qwen3.5:4b');
   });
 });
+
+it('uses the administrator default for an unset selection and preserves an explicit choice', async () => {
+  const { useAppStore } = await import('./store');
+  const models = [model('qwen3.5:9b'), { ...model('ornith-1.5:35b'), is_default: true }];
+  useAppStore.getState().setModels(models);
+  expect(useAppStore.getState().selectedModel).toBe('ornith-1.5:35b');
+  useAppStore.getState().setSelectedModel('qwen3.5:9b');
+  useAppStore.getState().setModels(models);
+  expect(useAppStore.getState().selectedModel).toBe('qwen3.5:9b');
+});

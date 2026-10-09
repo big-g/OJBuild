@@ -163,6 +163,7 @@ export interface StreamState {
 // --- API Types ---
 
 export interface ModelInfo {
+  is_default?: boolean;
   id: string;
   object: string;
   created: number;

@@ -110,6 +110,7 @@ class ChatCompletionChunk(BaseModel):
 
 
 class ModelObject(BaseModel):
+    is_default: bool = False
     id: str
     object: str = "model"
     created: int = Field(default_factory=lambda: int(time.time()))
