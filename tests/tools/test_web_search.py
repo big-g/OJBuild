@@ -5,8 +5,34 @@ from __future__ import annotations
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+import openjarvis.tools.web_search as web_search
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.tools.web_search import WebSearchTool
+
+
+@pytest.fixture(autouse=True)
+def offline_search(monkeypatch):
+    """All unit tests stay offline, including provider-error fallback cases."""
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    ddgs = MagicMock()
+    ddgs.text.return_value = [
+        {
+            "title": "Offline source",
+            "href": "https://example.com/source",
+            "body": "Offline source evidence.",
+        }
+    ]
+    module = MagicMock()
+    module.DDGS.return_value = ddgs
+    monkeypatch.setitem(sys.modules, "ddgs", module)
+    monkeypatch.setattr(
+        web_search,
+        "fetch_public_source",
+        MagicMock(side_effect=ValueError("No page fixture configured")),
+    )
+    return ddgs
 
 
 class TestWebSearchTool:
@@ -15,9 +41,10 @@ class TestWebSearchTool:
         assert tool.spec.name == "web_search"
         assert tool.spec.category == "search"
 
-    def test_spec_requires_api_key_metadata(self):
+    def test_spec_api_key_is_optional(self):
         tool = WebSearchTool(api_key="test-key")
-        assert tool.spec.metadata["requires_api_key"] == "TAVILY_API_KEY"
+        assert tool.spec.metadata["optional_api_key"] == "TAVILY_API_KEY"
+        assert "requires_api_key" not in tool.spec.metadata
 
     def test_spec_declares_current_and_external_evidence(self):
         tool = WebSearchTool(api_key="test-key")
@@ -267,7 +294,8 @@ class TestWebSearchTool:
         assert result.success is True
         assert result.metadata["engine"] == "duckduckgo"
 
-    def test_empty_results(self, monkeypatch):
+    def test_empty_results(self, monkeypatch, offline_search):
+        offline_search.text.return_value = []
         import builtins
 
         original_import = builtins.__import__
@@ -289,8 +317,9 @@ class TestWebSearchTool:
 
         tool = WebSearchTool(api_key="test-key")
         result = tool.execute(query="obscure query")
-        assert result.success is True
-        assert result.content == "No results found."
+        assert result.success is False
+        assert "no usable results" in result.content
+        assert result.metadata["evidence"]["records"] == []
 
     def test_tool_id(self):
         tool = WebSearchTool(api_key="test-key")
@@ -501,55 +530,55 @@ class TestUrlFetching:
 
     def test_fetch_url_success(self, monkeypatch):
         """Mocked HTTP GET returns HTML, stripped to text."""
-        import httpx
-
         self._mock_ssrf(monkeypatch)
         mock_resp = MagicMock()
         mock_resp.text = "<html><body><p>Hello world</p></body></html>"
         mock_resp.headers = {"content-type": "text/html"}
         mock_resp.raise_for_status = MagicMock()
-        monkeypatch.setattr(httpx, "get", MagicMock(return_value=mock_resp))
+        monkeypatch.setattr(
+            web_search, "fetch_public_source", MagicMock(return_value=mock_resp)
+        )
 
         content = WebSearchTool._fetch_url("https://example.com")
         assert "Hello world" in content
 
     def test_fetch_url_strips_scripts(self, monkeypatch):
-        import httpx
-
         self._mock_ssrf(monkeypatch)
         mock_resp = MagicMock()
         mock_resp.text = "<html><script>var x=1;</script><body>Content</body></html>"
         mock_resp.headers = {"content-type": "text/html"}
         mock_resp.raise_for_status = MagicMock()
-        monkeypatch.setattr(httpx, "get", MagicMock(return_value=mock_resp))
+        monkeypatch.setattr(
+            web_search, "fetch_public_source", MagicMock(return_value=mock_resp)
+        )
 
         content = WebSearchTool._fetch_url("https://example.com")
         assert "var x" not in content
         assert "Content" in content
 
     def test_fetch_url_truncates_long_content(self, monkeypatch):
-        import httpx
-
         self._mock_ssrf(monkeypatch)
         mock_resp = MagicMock()
         mock_resp.text = "<p>" + "x" * 10000 + "</p>"
         mock_resp.headers = {"content-type": "text/html"}
         mock_resp.raise_for_status = MagicMock()
-        monkeypatch.setattr(httpx, "get", MagicMock(return_value=mock_resp))
+        monkeypatch.setattr(
+            web_search, "fetch_public_source", MagicMock(return_value=mock_resp)
+        )
 
         content = WebSearchTool._fetch_url("https://example.com", max_chars=100)
         assert len(content) < 200
         assert "[Content truncated]" in content
 
     def test_fetch_url_pdf_content_type(self, monkeypatch):
-        import httpx
-
         self._mock_ssrf(monkeypatch)
         mock_resp = MagicMock()
         mock_resp.text = "%PDF-1.4 binary data"
         mock_resp.headers = {"content-type": "application/pdf"}
         mock_resp.raise_for_status = MagicMock()
-        monkeypatch.setattr(httpx, "get", MagicMock(return_value=mock_resp))
+        monkeypatch.setattr(
+            web_search, "fetch_public_source", MagicMock(return_value=mock_resp)
+        )
 
         content = WebSearchTool._fetch_url("https://example.com/file.pdf")
         assert "PDF" in content
@@ -565,14 +594,14 @@ class TestExecuteWithUrl:
 
     def test_execute_with_url_query(self, monkeypatch):
         """When query is a URL, fetch instead of search."""
-        import httpx
-
         self._mock_ssrf(monkeypatch)
         mock_resp = MagicMock()
         mock_resp.text = "<html><body>Page content here</body></html>"
         mock_resp.headers = {"content-type": "text/html"}
         mock_resp.raise_for_status = MagicMock()
-        monkeypatch.setattr(httpx, "get", MagicMock(return_value=mock_resp))
+        monkeypatch.setattr(
+            web_search, "fetch_public_source", MagicMock(return_value=mock_resp)
+        )
 
         tool = WebSearchTool(api_key="test-key")
         result = tool.execute(query="https://example.com/article")
@@ -582,14 +611,14 @@ class TestExecuteWithUrl:
 
     def test_execute_with_embedded_url(self, monkeypatch):
         """When query contains a URL within text, detect and fetch it."""
-        import httpx
-
         self._mock_ssrf(monkeypatch)
         mock_resp = MagicMock()
         mock_resp.text = "<html><body>Article text</body></html>"
         mock_resp.headers = {"content-type": "text/html"}
         mock_resp.raise_for_status = MagicMock()
-        monkeypatch.setattr(httpx, "get", MagicMock(return_value=mock_resp))
+        monkeypatch.setattr(
+            web_search, "fetch_public_source", MagicMock(return_value=mock_resp)
+        )
 
         tool = WebSearchTool(api_key="test-key")
         result = tool.execute(query="Summarize https://example.com/article please")
@@ -617,8 +646,8 @@ class TestExecuteWithUrl:
 
         self._mock_ssrf(monkeypatch)
         monkeypatch.setattr(
-            httpx,
-            "get",
+            web_search,
+            "fetch_public_source",
             MagicMock(side_effect=httpx.HTTPError("Connection failed")),
         )
 

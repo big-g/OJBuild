@@ -25,6 +25,7 @@ from openjarvis.core.evidence import (
     blocked_response,
     detect_evidence_requirement,
     evidence_result_metadata,
+    tool_supports_evidence,
 )
 from openjarvis.core.registry import AgentRegistry
 from openjarvis.core.types import Message, Role, ToolCall, ToolResult
@@ -32,6 +33,7 @@ from openjarvis.engine._stubs import InferenceEngine
 from openjarvis.tools._stubs import BaseTool
 
 logger = logging.getLogger(__name__)
+
 
 @AgentRegistry.register("orchestrator")
 class OrchestratorAgent(ToolUsingAgent):
@@ -145,6 +147,23 @@ class OrchestratorAgent(ToolUsingAgent):
     # Governance hook
     # ------------------------------------------------------------------
 
+    def _evidence_prompt(self, input: str) -> str:
+        """Give a model which skipped retrieval one chance to call a tool."""
+        requirement = detect_evidence_requirement(input)
+        providers = [
+            tool.spec.name
+            for tool in self._tools
+            if tool_supports_evidence(tool.spec, requirement)
+        ]
+        if not requirement.required or not providers:
+            return ""
+        return (
+            "This request requires retrieved evidence. Before answering, "
+            "call an available evidence tool: " + ", ".join(providers) + ". "
+            "For a forecast, retrieve forecast details, not just a link. "
+            "Do not invent facts or bypass tool permissions."
+        )
+
     @staticmethod
     def _governance_denial(tool_name: str, reason: str) -> ToolResult:
         return ToolResult(
@@ -208,6 +227,8 @@ class OrchestratorAgent(ToolUsingAgent):
 
         all_tool_results: list[ToolResult] = []
         turns = 0
+        evidence_prompt = self._evidence_prompt(input)
+        evidence_prompted = False
 
         for _turn in range(self._max_turns):
             turns += 1
@@ -219,6 +240,17 @@ class OrchestratorAgent(ToolUsingAgent):
             content = result.get("content", "")
 
             parsed = self._parse_structured_response(content)
+
+            if (
+                not parsed["tool"]
+                and not all_tool_results
+                and evidence_prompt
+                and not evidence_prompted
+                and turns < self._max_turns
+            ):
+                evidence_prompted = True
+                messages.append(Message(role=Role.USER, content=evidence_prompt))
+                continue
 
             # FINAL_ANSWER -> done
             if parsed["final_answer"]:
@@ -405,6 +437,8 @@ class OrchestratorAgent(ToolUsingAgent):
         turns = 0
         total_prompt_tokens = 0
         total_completion_tokens = 0
+        evidence_prompt = self._evidence_prompt(input)
+        evidence_prompted = False
 
         for _turn in range(self._max_turns):
             turns += 1
@@ -427,6 +461,17 @@ class OrchestratorAgent(ToolUsingAgent):
 
             content = result.get("content", "")
             raw_tool_calls = result.get("tool_calls", [])
+
+            if (
+                not raw_tool_calls
+                and not all_tool_results
+                and evidence_prompt
+                and not evidence_prompted
+                and turns < self._max_turns
+            ):
+                evidence_prompted = True
+                messages.append(Message(role=Role.USER, content=evidence_prompt))
+                continue
 
             # No tool calls -> check continuation, then final answer
             if not raw_tool_calls:
