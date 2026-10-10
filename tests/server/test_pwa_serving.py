@@ -104,3 +104,13 @@ class TestPWAServing:
         assert resp.status_code == 200
         # Should get index.html, not the passwd file
         assert "SPA" in resp.text
+
+    def test_unknown_api_routes_return_json_not_frontend(self, client_with_static):
+        for path in ("/v1/unknown-api", "/api/unknown-api"):
+            response = client_with_static.get(path)
+            assert response.status_code == 404
+            assert response.headers["content-type"].startswith("application/json")
+            assert "Unknown API route" in response.json()["detail"]
+        response = client_with_static.get("/3d")
+        assert response.status_code == 200
+        assert "SPA" in response.text

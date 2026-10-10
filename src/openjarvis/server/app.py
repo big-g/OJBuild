@@ -594,6 +594,12 @@ def create_app(
         @app.get("/{full_path:path}")
         async def spa_catch_all(full_path: str):
             """Serve static files directly, fall back to index.html for SPA routes."""
+            if full_path in {"v1", "api"} or full_path.startswith(("v1/", "api/")):
+                from fastapi import HTTPException
+
+                raise HTTPException(
+                    404, "Unknown API route; verify the backend version and API URL"
+                )
             if full_path:
                 candidate = (static_dir / full_path).resolve()
                 # Path traversal prevention

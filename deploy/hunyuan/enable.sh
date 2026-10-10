@@ -55,4 +55,6 @@ sudo systemctl daemon-reload
 sudo systemctl restart ollama.service hunyuan3d-worker.service openjarvis-api.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8090/health
 echo
+curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/openapi.json |
+    "$python" -c 'import json,sys; data=json.load(sys.stdin); assert "/v1/3d/jobs" in data.get("paths", {}), "Running OpenJarvis backend lacks the 3D route: check its WorkingDirectory and installed source path"'
 echo 'OpenJarvis 3D Generation is enabled. Reload the browser after rebuilding the frontend.'

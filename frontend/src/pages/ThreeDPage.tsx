@@ -1,17 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
+import { read3DJson, checked3DDownload } from '../lib/hunyuan-response';
 
 interface Job {
   job_id: string; status: string; model: string; watertight?: boolean;
   vertices?: number; faces?: number; elapsed_seconds?: number; error?: string; background_model?: string | null; chat_mode?: string;
-}
-
-async function checked(response: Response) {
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}));
-    throw new Error(body.detail || `Request failed (${response.status})`);
-  }
-  return response;
 }
 
 export function ThreeDPage() {
@@ -31,7 +24,8 @@ export function ThreeDPage() {
     let cancelled = false;
     const refresh = async () => {
       try {
-        const body = await (await checked(await apiFetch('/v1/3d/jobs'))).json();
+        const body = await read3DJson<{ jobs: Job[]; default_model?: string }>(await apiFetch('/v1/3d/jobs'));
+        if (!Array.isArray(body.jobs)) throw new Error('3D API returned an invalid job list.');
         if (!cancelled) { setJobs(body.jobs); if (!modelChosen.current && body.default_model) { setModel(body.default_model); modelChosen.current = true; } }
       } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load jobs'); }
     };
@@ -44,16 +38,16 @@ export function ThreeDPage() {
     if (file.size > 20 * 1024 * 1024) { setError('Choose an image below 20 MiB.'); return; }
     setSubmitting(true); setError('');
     try {
-      const job = await (await checked(await apiFetch(`/v1/3d/jobs?model=${model}`, {
+      const job = await read3DJson<Job>(await apiFetch(`/v1/3d/jobs?model=${model}`, {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
-      }))).json();
+      }));
       setJobs(rows => [job, ...rows.filter(row => row.job_id !== job.job_id)]);
     } catch (e) { setError(e instanceof Error ? e.message : 'Generation could not start'); }
     finally { setSubmitting(false); }
   };
   const download = async (job: Job) => {
     try {
-      const response = await checked(await apiFetch(`/v1/3d/jobs/${job.job_id}/download`));
+      const response = await checked3DDownload(await apiFetch(`/v1/3d/jobs/${job.job_id}/download`));
       const url = URL.createObjectURL(await response.blob());
       const link = document.createElement('a'); link.href = url; link.download = `${job.job_id}.glb`;
       document.body.appendChild(link); link.click(); link.remove();
