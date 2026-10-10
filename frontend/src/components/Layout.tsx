@@ -63,8 +63,8 @@ export function Layout() {
             onClick={() => useAppStore.getState().setSidebarOpen(false)}
           />
         )}
-        <main className="flex-1 flex flex-col min-w-0 h-full relative overflow-hidden" style={{ background: 'transparent' }}>
-          <div className="flex-1 flex flex-col min-w-0 min-h-0 relative z-[2]">
+        <main className="flex-1 flex flex-col min-w-0 min-h-0 relative overflow-hidden" style={{ background: 'transparent' }}>
+          <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-auto relative z-[2]">
             <Outlet />
           </div>
         </main>
