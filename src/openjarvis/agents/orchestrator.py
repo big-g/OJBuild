@@ -160,10 +160,10 @@ class OrchestratorAgent(ToolUsingAgent):
         return (
             "This request requires retrieved evidence. Before answering, "
             "call an available evidence tool: " + ", ".join(providers) + ". "
-            "For a forecast, retrieve forecast details, not just a link. "
-            "Check the forecast location and validity dates. Search again if "
-            "the page covers a different city. Never relabel another place's "
-            "forecast or blend point and county forecasts. "
+            "Retrieve substantive source details, not just a link. Match the "
+            "requested entity, location, time period, version, and jurisdiction. "
+            "Search again when the retrieved source has the wrong scope. "
+            "Do not relabel facts or combine incompatible source scopes. "
             "Do not invent facts or bypass tool permissions."
         )
 

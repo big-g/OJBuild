@@ -21,7 +21,7 @@ _KEYLESS_BACKENDS = ("duckduckgo", "bing", "brave")
 
 
 class _PageText(HTMLParser):
-    """Extract visible text and preserve paragraph boundaries for forecasts."""
+    """Extract visible source text and preserve paragraph boundaries."""
 
     def __init__(self):
         super().__init__(convert_charrefs=True)
@@ -80,12 +80,11 @@ class WebSearchTool(BaseTool):
                 "Search the web for current information."
                 " No API key required. Reads leading keyless results for details."
                 " Pass a source URL as query to read that page directly."
-                " For US weather, prefer site:forecast.weather.gov searches"
-                " and read the forecast page; check its validity dates and"
-                " forecast location (airport observations are not the location)."
-                " Search the exact requested city and state. If results cover"
-                " another city, search again for the requested place; never"
-                " relabel or blend different point and county forecasts."
+                " Prefer authoritative sources and read their substantive details."
+                " Match the requested entity, location, time period, version,"
+                " and jurisdiction. Check publication and applicability dates."
+                " Refine the search when results have the wrong scope; never"
+                " relabel facts or combine incompatible source scopes."
             ),
             parameters={
                 "type": "object",

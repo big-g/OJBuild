@@ -31,7 +31,14 @@ def verdict(supported):
     }
 
 
-def run(engine, *, answer="Sunday rain chance 70%.", success=True):
+def run(
+    engine,
+    *,
+    answer="Sunday rain chance 70%.",
+    success=True,
+    query=QUERY,
+    content=CONTENT,
+):
     tool = SimpleNamespace(
         spec=ToolSpec(
             name="forecast",
@@ -46,16 +53,16 @@ def run(engine, *, answer="Sunday rain chance 70%.", success=True):
             ToolResult(
                 tool_name="forecast",
                 success=success,
-                content=CONTENT,
-                metadata={"evidence": {"records": [{"content": CONTENT, "url": URL}]}},
+                content=content,
+                metadata={"evidence": {"records": [{"content": content, "url": URL}]}},
             )
         ],
     )
     apply_tool_evidence_to_result(
-        detect_evidence_requirement(QUERY),
+        detect_evidence_requirement(query),
         [tool],
         result,
-        query=QUERY,
+        query=query,
         engine=engine,
         model="test",
         validate_grounding=True,
@@ -167,3 +174,53 @@ def test_supported_draft_does_not_trigger_revision():
     assert result.content == "Sunday rain chance 70%."
     assert "grounding_repair_attempted" not in result.metadata
     assert engine.generate.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "query,evidence,draft,revision",
+    [
+        (
+            "What is the latest release status?",
+            "The release is scheduled; it is not yet approved.",
+            "The release is approved.",
+            "The release is scheduled; it is not yet approved.",
+        ),
+        (
+            "What are the latest requirements in district alpha?",
+            "In district beta, registration is required.",
+            "Registration is required in district alpha.",
+            "The evidence covers district beta, where registration is required. "
+            "It does not establish the requirements in district alpha.",
+        ),
+        (
+            "What is the latest capacity of device alpha?",
+            "Device beta has capacity 64 units.",
+            "Device alpha has capacity 64 units.",
+            "Device beta has capacity 64 units. "
+            "The evidence does not establish the capacity of device alpha.",
+        ),
+    ],
+)
+def test_non_weather_queries_use_same_correction_and_validation(
+    query,
+    evidence,
+    draft,
+    revision,
+):
+    engine = MagicMock()
+    engine.generate.side_effect = [
+        verdict(False),
+        {"content": revision},
+        verdict(True),
+    ]
+    result = run(engine, query=query, content=evidence, answer=draft)
+    assert result.content == revision
+    assert result.metadata["grounding_repair_succeeded"] is True
+    assert engine.generate.call_count == 3
+    for call_index in (1, 2):
+        messages = engine.generate.call_args_list[call_index].args[0]
+        payload = json.loads(messages[1].content)
+        assert payload["query"] == query
+        assert payload["evidence"][0]["content"] == evidence
+        assert "forecast" not in messages[0].content.lower()
+        assert "weather" not in messages[0].content.lower()
