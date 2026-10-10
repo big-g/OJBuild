@@ -559,9 +559,19 @@ _QUOTED_ANCHOR_RE = re.compile(
 )
 
 # Conservative proper-name heuristic. Require at least two capitalized words so
-# ordinary sentence-initial words do not become anchors.
+# ordinary sentence-initial words do not become anchors. Do not join names
+# across sentence punctuation or line breaks (common in forecast layouts).
 _NAME_ANCHOR_RE = re.compile(
-    r"\b(?:[A-Z][\w.-]*\s+){1,3}[A-Z][\w.-]*\b"
+    r"\b(?:[A-Z][\w-]*[ \t]+){1,3}[A-Z][\w-]*\b"
+)
+
+# Title case does not turn a relative time phrase into a proper name. These
+# spans are still present in the original answer sent to the semantic judge;
+# only the high-confidence name shortcut ignores them.
+_RELATIVE_TIME_PROSE_RE = re.compile(
+    r"\b(?:upcoming|coming|next|following|past|previous|recent|last)\s+"
+    r"(?:(?:few|several)\s+)?(?:hours?|days?|weeks?|months?|years?)\b",
+    re.IGNORECASE,
 )
 
 
@@ -592,6 +602,7 @@ def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
     name_source = _DATE_ANCHOR_RE.sub(" ", text)
     name_source = _URL_ANCHOR_RE.sub(" ", name_source)
     name_source = _QUOTED_ANCHOR_RE.sub(" ", name_source)
+    name_source = _RELATIVE_TIME_PROSE_RE.sub(" ", name_source)
 
     names: set[str] = set()
     for match in _NAME_ANCHOR_RE.finditer(name_source):
