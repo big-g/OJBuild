@@ -67,6 +67,9 @@ class HunyuanJobs:
             raise HTTPException(404, "3D job not found")
 
     def call(self, path, **kwargs):
+        lock = os.environ.get("OPENJARVIS_GPU_LOCK_PATH")
+        if path == "/jobs" and kwargs and lock and Path(lock + ".blocked").exists():
+            raise HTTPException(409, "Local GPU needs administrator recovery")
         try:
             with httpx.Client(
                 timeout=90, trust_env=False, follow_redirects=False

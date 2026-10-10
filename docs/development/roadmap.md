@@ -29,8 +29,8 @@ Apply this standard as other configuration forms are added or revised.
 | Phase | Status | Scope |
 |---|---|---|
 | 1 | Complete | Browser voice conversation, speech recognition, speech playback, resume listening |
-| 2 | Active | Authentication; persistent conversations across browser, desktop and Android; knowledge/reasoning and evidence integrity; tool governance and runtime tool addition; trace correlation; centralized Ubuntu backend and client validation |
-| 3 | Planned | Text-to-image and text-to-3D generation, followed by secure remote access |
+| 2 | User verified; complete for progression | Authentication; persistent conversations across browser, desktop and Android; knowledge/reasoning and evidence integrity; tool governance and runtime tool addition; trace correlation; centralized Ubuntu backend and client validation |
+| 3 | Implemented; server acceptance pending | Local text-to-image, image-conditioned text-to-3D, persistent configurable generation/mesh workflows, optional Blender and Trimesh STL processing |
 | 4 | Planned | Home Assistant integration; Echo devices as Jarvis clients in Phase 4.1 |
 | 5 | Planned | Nextcloud monitoring/notifications and a self-hosted email server |
 
@@ -40,6 +40,29 @@ outside the current Phase 2 scope.
 Database-backed model configuration and configurable task routing are now a
 bounded closing Phase 2 objective. Existing explicit model selection remains
 supported. Multi-model collaboration and parallel execution are later extensions.
+
+## Phase 2 acceptance and Phase 3
+
+Gary completed Phase 2 verification to the best of his abilities. This supports
+progression, not a claim of flawless behavior; later defects remain eligible for
+repair. The evidence reasoning fix was confirmed to work better and applies to
+all evidence-required queries, not only weather.
+
+Phase 3 adds account-owned, revisioned saved workflows with explicit step inputs,
+parameters, background progress, errors and immutable artifacts. The first test
+workflow is Hunyuan GLB (or uploaded GLB) → Trimesh inspection/basic repair →
+optional headless Blender → explicit millimetre dimensions → STL export/reload
+validation and before/after reports. Original assets remain intact. Watertightness
+is not printability certification. Local ComfyUI image generation and existing
+Hunyuan generation are approved adapters in the same reusable workflow system.
+Multiple administrator-managed image instances are database backed; registration
+and testing never imply operation authorization.
+
+See [Generation and workflows](../user-guide/generation-workflows.md) for setup,
+limits and server acceptance. Automated CPU/API/frontend tests cover implementation;
+real GPU generation, Blender and slicer acceptance remain to be verified on Ubuntu.
+Secure WAN access follows Phase 3 acceptance; it is not part of this implementation.
+Home Assistant, Echo 4.1 and Nextcloud/email phase ordering remains unchanged.
 
 ## Phase 2: model configuration and task routing
 

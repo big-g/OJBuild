@@ -201,3 +201,17 @@ def test_ollama_payload_uses_alternate_and_bounded_context(tmp_path, monkeypatch
         assert result["content"] == "ok"
     finally:
         engine.close()
+
+
+def test_unknown_image_worker_state_blocks_local_but_not_remote_chat(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "gpu.lock"
+    path.touch()
+    path.with_name("gpu.lock.blocked").touch()
+    monkeypatch.setenv("OPENJARVIS_GPU_LOCK_PATH", str(path))
+    with pytest.raises(EngineConnectionError, match="recovery"):
+        with gpu_reservation("http://127.0.0.1:11434"):
+            pytest.fail("Blocked worker admitted chat")
+    with gpu_reservation("http://192.168.1.20:11434") as lease:
+        assert lease is None

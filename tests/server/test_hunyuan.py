@@ -157,3 +157,21 @@ def test_reject_nonlocal_worker_and_symlink_input_root(tmp_path, setup):
             "/v1/3d/jobs", headers=headers["alice"], content=b"\x89PNG\r\n\x1a\nimage"
         )
     assert not list(target.iterdir())
+
+
+@respx.mock
+def test_unknown_image_worker_state_blocks_hunyuan_submission(
+    setup, tmp_path, monkeypatch
+):
+    client, headers, jobs = setup
+    path = tmp_path / "gpu.lock"
+    path.touch()
+    path.with_name("gpu.lock.blocked").touch()
+    monkeypatch.setenv("OPENJARVIS_GPU_LOCK_PATH", str(path))
+    submission = respx.post(jobs.url + "/jobs").respond(200, json={})
+    response = client.post(
+        "/v1/3d/jobs", headers=headers["alice"], content=b"\x89PNG\r\n\x1a\nimage"
+    )
+    assert response.status_code == 409
+    assert submission.call_count == 0
+    assert not list(jobs.inputs.iterdir())

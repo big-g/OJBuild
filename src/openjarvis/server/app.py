@@ -266,6 +266,25 @@ def create_app(
             hunyuan_url,
         )
     app.include_router(create_hunyuan_router(hunyuan_jobs, config))
+    from openjarvis.server.workflows_router import create_workflows_router
+    from openjarvis.workflow.jobs import WorkflowJobs
+
+    executor = getattr(agent, "_executor", None)
+    workflow_jobs = (
+        WorkflowJobs(
+            artifact_store,
+            hunyuan=hunyuan_jobs,
+            config=config,
+            bus=bus,
+            parent_policy=getattr(executor, "_capability_policy", None),
+            parent_agent=getattr(executor, "_agent_id", "workflow"),
+            boundary_guard=getattr(executor, "_boundary_guard", None),
+        )
+        if artifact_store is not None
+        else None
+    )
+    app.state.workflow_jobs = workflow_jobs
+    app.include_router(create_workflows_router(workflow_jobs))
     app.state.runtime_tool_manager = runtime_tools
     if agent is not None:
         agent._runtime_tool_manager = runtime_tools
@@ -293,9 +312,23 @@ def create_app(
     from openjarvis.server.auth_store import AuthStore
 
     app.state.auth_store = AuthStore()
+    if workflow_jobs is not None:
+
+        def workflow_owner_available(owner):
+            user = app.state.auth_store.get_user(owner)
+            return user is not None and not user["disabled"]
+
+        workflow_jobs.owner_check = workflow_owner_available
+
+    @app.on_event("startup")
+    def _start_workflows():
+        if workflow_jobs is not None:
+            workflow_jobs.start_worker()
 
     @app.on_event("shutdown")
     async def _shutdown_managed_runtime() -> None:
+        if workflow_jobs is not None:
+            workflow_jobs.close()
         # Quiesce every producer before touching the shared MCP pool. Route
         # workers are registered under this lock, so none can slip in after
         # the snapshot. The scheduler has a two-phase stop because closing an

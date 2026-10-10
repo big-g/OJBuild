@@ -11,6 +11,7 @@ import { LogsPage } from './pages/LogsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { FilesPage } from './pages/FilesPage';
 import { ThreeDPage } from './pages/ThreeDPage';
+import { WorkflowsPage } from './pages/WorkflowsPage';
 import { LoginScreen } from './components/LoginScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
@@ -275,6 +276,7 @@ useEffect(() => {
           <Route path="tools" element={authUser.is_admin ? <ToolsPage /> : <Navigate to="/settings" replace />} />
           <Route path="files" element={<FilesPage />} />
           <Route path="3d" element={<ThreeDPage />} />
+          <Route path="workflows" element={<WorkflowsPage />} />
         </Route>
       </Routes>
       <Toaster position="bottom-right" />

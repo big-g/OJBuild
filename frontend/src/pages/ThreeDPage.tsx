@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import { read3DJson, checked3DDownload } from '../lib/hunyuan-response';
+import { useNavigate } from 'react-router';
+import { workflowJson } from './WorkflowsPage';
 
 interface Job {
   job_id: string; status: string; model: string; watertight?: boolean;
@@ -8,6 +10,10 @@ interface Job {
 }
 
 export function ThreeDPage() {
+  const navigate = useNavigate();
+  const [workflows, setWorkflows] = useState<Array<{ id: string; revision: number; definition: { name: string } }>>([]);
+  const [automatic, setAutomatic] = useState('');
+  const [triggers, setTriggers] = useState<Array<{ id: string; job_id: string; state: string; error?: string; run_id?: string }>>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
@@ -15,6 +21,9 @@ export function ThreeDPage() {
   const modelChosen = useRef(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  useEffect(() => {
+    void workflowJson<{ workflows: typeof workflows }>('').then(result => setWorkflows(result.workflows)).catch(() => {});
+  }, []);
   useEffect(() => {
     if (!file) { setPreview(''); return; }
     const url = URL.createObjectURL(file); setPreview(url);
@@ -27,6 +36,10 @@ export function ThreeDPage() {
         const body = await read3DJson<{ jobs: Job[]; default_model?: string }>(await apiFetch('/v1/3d/jobs'));
         if (!Array.isArray(body.jobs)) throw new Error('3D API returned an invalid job list.');
         if (!cancelled) { setJobs(body.jobs); if (!modelChosen.current && body.default_model) { setModel(body.default_model); modelChosen.current = true; } }
+        try {
+          const result = await workflowJson<{ triggers: typeof triggers }>('/after-3d');
+          if (!cancelled) setTriggers(result.triggers);
+        } catch { /* Existing generation remains available if workflows are unavailable. */ }
       } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load jobs'); }
     };
     void refresh();
@@ -42,6 +55,16 @@ export function ThreeDPage() {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
       }));
       setJobs(rows => [job, ...rows.filter(row => row.job_id !== job.job_id)]);
+      const selected = workflows.find(workflow => workflow.id === automatic);
+      if (selected) {
+        try {
+          const result = await workflowJson<{ triggers: typeof triggers }>('/after-3d', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id: job.job_id, workflow_id: selected.id, revision: selected.revision }),
+          });
+          setTriggers(result.triggers);
+        } catch (e) { setError(`Generation started, but the automatic workflow could not be attached: ${e instanceof Error ? e.message : 'request failed'}`); }
+      }
     } catch (e) { setError(e instanceof Error ? e.message : 'Generation could not start'); }
     finally { setSubmitting(false); }
   };
@@ -54,6 +77,12 @@ export function ThreeDPage() {
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) { setError(e instanceof Error ? e.message : 'Download failed'); }
   };
+  const removeAutomatic = async (id: string) => {
+    try {
+      await workflowJson(`/after-3d/${id}`, { method: 'DELETE' });
+      setTriggers(rows => rows.filter(row => row.id !== id));
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not remove attachment.'); }
+  };
   const running = jobs.some(job => job.status === 'running');
   return <main className="p-6 max-w-4xl mx-auto space-y-5">
     <h1 className="text-2xl font-semibold">3D Generation</h1>
@@ -63,6 +92,13 @@ export function ThreeDPage() {
     <div className="rounded-lg border p-4 space-y-4">
       <label className="block">Reference image (PNG or JPEG, up to 20 MiB)
         <input className="block mt-2" type="file" accept="image/png,image/jpeg" onChange={e => setFile(e.target.files?.[0] || null)} />
+      </label>
+      <label className="block">After generation
+        <select className="block mt-2 border rounded p-2 bg-background" value={automatic} onChange={e => setAutomatic(e.target.value)}>
+          <option value="">Keep GLB only</option>
+          {workflows.map(workflow => <option key={workflow.id} value={workflow.id}>{workflow.definition.name}</option>)}
+        </select>
+        <span className="text-sm text-muted-foreground">Choose an approved saved mesh workflow to run automatically on the completed GLB. Create workflows under Generation &amp; Workflows.</span>
       </label>
       {preview && <img src={preview} alt="Reference for generation" className="max-h-64 rounded border object-contain" />}
       <label className="block">Model
@@ -83,10 +119,17 @@ export function ThreeDPage() {
       {job.status === 'running' && <p>Generating your mesh. Status updates automatically.</p>}
       {job.status === 'running' && <p>{job.background_model ? `Chat continues using ${job.background_model} with a reduced context window.` : 'Local chat is paused because there is insufficient GPU memory for a second model.'}</p>}
       {job.error && <p role="alert">{job.error}</p>}
+      {triggers.filter(trigger => trigger.job_id === job.job_id).map(trigger => <p key={trigger.job_id}>Automatic workflow: {trigger.state}{trigger.error ? ` · ${trigger.error}` : ''}{trigger.state !== 'dispatching' && <button className="ml-2 underline" onClick={() => void removeAutomatic(trigger.id)}>{trigger.state === 'waiting' ? 'Cancel attachment' : 'Remove attachment history'}</button>}
+          {trigger.run_id && <button className="underline ml-2" onClick={() => navigate('/workflows')}>View run</button>}</p>)}
       {job.status === 'completed' && <>
         <p>{job.vertices?.toLocaleString()} vertices · {job.faces?.toLocaleString()} faces · {Math.round(job.elapsed_seconds || 0)} seconds</p>
         <p>{job.watertight ? 'Watertight mesh. Check dimensions and printability in your slicer.' : 'Mesh is not watertight. Repair may be needed before printing.'}</p>
         <button className="rounded border px-3 py-2" onClick={() => void download(job)}>Download GLB</button>
+        <button className="rounded border px-3 py-2 ml-2" onClick={() => {
+          void workflowJson<{ id: string }>(`/import-3d/${job.job_id}`, { method: 'POST' })
+            .then(artifact => navigate(`/workflows?file=${artifact.id}`))
+            .catch(e => setError(e instanceof Error ? e.message : 'Could not import GLB'));
+        }}>Use in workflow</button>
       </>}
     </article>)}
   </main>;
