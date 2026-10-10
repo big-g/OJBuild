@@ -14,6 +14,8 @@ it('explains model swapping, persistence, restart requirements and secret handli
   const html = renderToStaticMarkup(<AdministratorSettingsPanel />);
   expect(html).toContain('Server default model');
   expect(html).toContain('Memory extraction model');
+  expect(html).toContain('Chat model during local generation');
+  expect(html).toContain('Automatic smaller model in the same family');
   expect(html).toContain('Follow server default');
   expect(html).toContain('saved in the database');
   expect(html).toContain('server restart');

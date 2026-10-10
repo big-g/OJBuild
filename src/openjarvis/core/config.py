@@ -1158,6 +1158,8 @@ class ServerConfig:
     agent: str = "orchestrator"
     model: str = ""
     workers: int = 1
+    generation_chat_model: str = ""
+    hunyuan_model: str = "turbo"
     cors_origins: list = field(
         default_factory=lambda: [
             "http://localhost:3000",

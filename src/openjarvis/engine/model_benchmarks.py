@@ -12,6 +12,7 @@ import httpx
 from openjarvis.engine._base import EngineConnectionError
 from openjarvis.engine.configured_models import ConfiguredModelEngine
 from openjarvis.engine.connection_discovery import read_json
+from openjarvis.engine.gpu_gate import gpu_guard
 from openjarvis.engine.task_routing import SUITE_VERSION, TASKS
 
 PROBES = {
@@ -201,6 +202,7 @@ def run_diagnostic(connections, selected, task, revision):
     }
     tokens = 0
 
+    @gpu_guard
     def call(content, *, images=None, tools=None, max_tokens=512):
         nonlocal tokens
         if time.monotonic() - started >= 45:

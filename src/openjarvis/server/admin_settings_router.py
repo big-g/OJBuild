@@ -110,7 +110,10 @@ def create_admin_settings_router(app, config):
                 for key in MODEL_FIELDS & changes.keys():
                     value = changes[key]
                     if value is None or value == "":
-                        if value == "" and key != "tools.storage.extraction_model":
+                        if value == "" and key not in {
+                            "tools.storage.extraction_model",
+                            "server.generation_chat_model",
+                        }:
                             raise ValueError(
                                 "Choose an installed model or Reset to bootstrap"
                             )

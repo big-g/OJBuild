@@ -23,6 +23,11 @@ from openjarvis.engine._http_async import (
     AsyncHTTPEngineMixin,
 )
 from openjarvis.engine._stubs import StreamChunk
+from openjarvis.engine.gpu_gate import (
+    background_options,
+    gpu_chat_guard,
+    gpu_stream_guard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +105,7 @@ def _ollama_request_options(
         options["num_ctx"] = _default_num_ctx()
     if kwargs.get("num_gpu") is not None:
         options["num_gpu"] = int(kwargs["num_gpu"])
+    options.update(background_options())
     return options
 
 
@@ -137,12 +143,14 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         # httpx uses its default networking.
         self._async_transport: httpx.AsyncBaseTransport | None = None
         self._client = httpx.Client(
-            base_url=self._host, timeout=timeout,
+            base_url=self._host,
+            timeout=timeout,
             **({"trust_env": False} if not trust_env else {}),
         )
         # Last stream usage — captured from Ollama's final chunk
         self._last_stream_usage: Dict[str, int] = {}
 
+    @gpu_chat_guard
     def generate(
         self,
         messages: Sequence[Message],
@@ -212,7 +220,8 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
         try:
             resp = self._client.post("/api/chat", json=payload)
             if (
-                resp.status_code == 400 and tools
+                resp.status_code == 400
+                and tools
                 and not kwargs.get("require_tools", False)
             ):
                 # Model may not support function calling -- retry without tools
@@ -294,6 +303,7 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                 result["tool_calls"] = tool_calls
         return result
 
+    @gpu_stream_guard
     async def stream(
         self,
         messages: Sequence[Message],
@@ -374,6 +384,7 @@ class OllamaEngine(AsyncHTTPEngineMixin, InferenceEngine):
                 f"Ollama not reachable at {self._host}"
             ) from exc
 
+    @gpu_stream_guard
     async def stream_full(
         self,
         messages: Sequence[Message],

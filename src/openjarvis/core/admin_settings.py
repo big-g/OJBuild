@@ -17,15 +17,27 @@ LIVE = frozenset(
     {
         "intelligence.default_model",
         "server.model",
+        "server.generation_chat_model",
+        "server.hunyuan_model",
         "tools.storage.extraction_model",
     }
 )
-MODEL_FIELDS = LIVE
+MODEL_FIELDS = LIVE - {"server.hunyuan_model"}
 SECRET = re.compile(
     r"api_key|password|secret|credential|private_key|access_token|refresh_token|bearer|key_path|auth_token|(?:^|[._])(?:key|token)$",
     re.I,
 )
 HELP = {
+    "server.hunyuan_model": (
+        "Default Hunyuan3D-2 weights: turbo (faster, lower VRAM) or standard "
+        "(higher quality). Both load FP16 safetensors. Applies to new jobs; "
+        "the generation page can override this per job."
+    ),
+    "server.generation_chat_model": (
+        "Alternate Ollama chat model during local 3D generation. Leave empty to use "
+        "a smaller installed model in the default model family. Applied to new jobs; "
+        "the worker checks VRAM headroom before allowing concurrent chat."
+    ),
     "intelligence.default_model": (
         "Server default for requests without an explicit model. "
         "Existing chat selections and task assignments remain explicit."
@@ -147,6 +159,10 @@ def validate(schema, changes):
             raise ValueError(f"Setting {key[:120]} is not editable here")
         if value is None:  # remove override, restore bootstrap value
             continue
+        if key == "server.hunyuan_model" and (
+            type(value) is not str or value not in {"standard", "turbo"}
+        ):
+            raise ValueError("Hunyuan model must be standard or turbo")
         kind = spec["type"]
         if kind == "list":
             valid = (

@@ -205,3 +205,28 @@ def test_float_override_retains_its_declared_type_across_restart(tmp_path, monke
     assert type(restored.intelligence.temperature) is float
     assert fields(restored)["intelligence.temperature"]["type"] == "float"
     store.update(2, {"intelligence.temperature": 0.6}, "admin", fields(restored))
+
+
+def test_generation_alternate_is_live_and_does_not_change_default(runtime):
+    app, client, _, _, _ = runtime
+    key = "server.generation_chat_model"
+    response = save(client, {key: "qwen3.5:9b"})
+    assert response.status_code == 200
+    assert app.state.config.server.generation_chat_model == "qwen3.5:9b"
+    assert app.state.model == "qwen3.5:9b"
+    field = next(f for f in response.json()["fields"] if f["key"] == key)
+    assert field["application"] == "live"
+    assert not field["pending_restart"]
+    assert save(client, {key: "not-installed:2b"}).status_code == 400
+    assert save(client, {key: ""}).status_code == 200
+    assert app.state.config.server.generation_chat_model == ""
+
+
+def test_hunyuan_default_is_live_and_restricted_to_tested_weights(runtime):
+    app, client, _, _, _ = runtime
+    key = "server.hunyuan_model"
+    assert save(client, {key: "standard"}).status_code == 200
+    assert app.state.config.server.hunyuan_model == "standard"
+    assert save(client, {key: "arbitrary/path"}).status_code == 400
+    assert save(client, {key: None}).status_code == 200
+    assert app.state.config.server.hunyuan_model == "turbo"

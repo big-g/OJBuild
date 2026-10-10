@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, List, Optional
 
 import requests
 
+from openjarvis.engine.gpu_gate import gpu_optional_guard
+
 # numpy is imported lazily inside the functions that use it (not at module
 # load). The CLI imports this module eagerly via the deep-research command
 # chain, so a module-level `import numpy` makes a broken/slow numpy on Windows
@@ -90,6 +92,7 @@ class OllamaEmbedder:
     # Embedding
     # ------------------------------------------------------------------
 
+    @gpu_optional_guard
     def embed(self, text: str) -> Optional[bytes]:
         """Embed a single string. Returns float32 bytes or ``None`` on failure."""
         if not text or not text.strip():

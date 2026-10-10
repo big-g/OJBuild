@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
 import threading
 import time
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
@@ -251,6 +253,19 @@ def create_app(
     app.state.artifact_store = artifact_store
     runtime_tools.artifact_store = artifact_store
     app.include_router(create_artifacts_router(artifact_store))
+    from openjarvis.server.hunyuan_router import HunyuanJobs, create_hunyuan_router
+
+    hunyuan_url = os.environ.get("OPENJARVIS_HUNYUAN_URL")
+    hunyuan_jobs = None
+    if hunyuan_url and artifact_store is not None:
+        hunyuan_jobs = HunyuanJobs(
+            artifact_store.root / "hunyuan" / "jobs.db",
+            Path(
+                os.environ.get("OPENJARVIS_HUNYUAN_INPUTS", "/mnt/ai/hunyuan3d/inputs")
+            ),
+            hunyuan_url,
+        )
+    app.include_router(create_hunyuan_router(hunyuan_jobs, config))
     app.state.runtime_tool_manager = runtime_tools
     if agent is not None:
         agent._runtime_tool_manager = runtime_tools
@@ -476,7 +491,9 @@ def create_app(
             SecurityConfig().model_connections_db_path,
         )
     )
-    app.include_router(create_model_connections_router(app.state.model_connection_store))
+    app.include_router(
+        create_model_connections_router(app.state.model_connection_store)
+    )
     from openjarvis.server.model_routing_router import create_model_routing_router
 
     app.include_router(create_model_routing_router(app.state.model_connection_store))

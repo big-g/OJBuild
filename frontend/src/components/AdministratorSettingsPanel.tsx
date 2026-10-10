@@ -7,7 +7,8 @@ import type { ModelInfo } from '../types';
 
 const DEFAULT = 'intelligence.default_model';
 const MEMORY = 'tools.storage.extraction_model';
-const SPECIAL = new Set([DEFAULT, MEMORY, 'server.model']);
+const GENERATION = 'server.generation_chat_model';
+const SPECIAL = new Set([DEFAULT, MEMORY, GENERATION, 'server.model']);
 
 export function parseAdministratorValue(field: AdministratorField, value: string): unknown {
   if (field.type === 'str') return value;
@@ -61,13 +62,13 @@ export function AdministratorSettingsPanel() {
     <h3 className="font-medium">Administrator server settings</h3>
     <p className="text-sm">Shared across accounts and saved in the database. TOML supplies bootstrap values; Reset removes a saved override. Your explicit chat model and task assignments take precedence over the server default.</p>
     <p className="text-sm">The memory model runs after chat to extract durable facts. Using the same model avoids loading Qwen just for memory extraction.</p>
-    {[DEFAULT, MEMORY].map(key => {
+    {[DEFAULT, MEMORY, GENERATION].map(key => {
       const field = byKey.get(key);
       const current = field ? String(value(field) ?? '') : '';
       return <div key={key} className="space-y-1">
-        <label htmlFor={`admin-${key}`} className="block text-sm font-medium">{key === DEFAULT ? 'Server default model' : 'Memory extraction model'}</label>
+        <label htmlFor={`admin-${key}`} className="block text-sm font-medium">{key === DEFAULT ? 'Server default model' : key === MEMORY ? 'Memory extraction model' : 'Chat model during local generation'}</label>
         <select id={`admin-${key}`} aria-describedby={`hint-${key}`} value={current} disabled={!config || busy} onChange={e => setChanges(c => ({ ...c, [key]: e.target.value }))} className="w-full rounded border p-2" style={{ background: 'var(--color-bg-secondary)' }}>
-          <option value="">{key === MEMORY ? 'Follow server default' : 'Bootstrap / startup selection'}</option>
+          <option value="">{key === MEMORY ? 'Follow server default' : key === GENERATION ? 'Automatic smaller model in the same family' : 'Bootstrap / startup selection'}</option>
           {current && !installed.some(m => m.id === current) && <option value={current}>{current} (not in current catalog)</option>}
           {installed.map(m => <option key={m.id} value={m.id}>{m.display_name || m.id}</option>)}
         </select>
@@ -83,7 +84,7 @@ export function AdministratorSettingsPanel() {
           <label htmlFor={`admin-${field.key}`} className="block text-sm font-medium">{field.key}</label>
           {!field.editable ? <p className="text-xs">{field.reason}</p> : <>
             {field.type === 'bool' ? <input id={`admin-${field.key}`} aria-describedby={`hint-${field.key}`} type="checkbox" checked={!!value(field)} disabled={busy} onChange={e => setChanges(c => ({ ...c, [field.key]: e.target.checked }))} /> : <textarea id={`admin-${field.key}`} aria-describedby={`hint-${field.key}`} rows={field.type === 'list' ? 3 : 1} disabled={busy} value={Array.isArray(value(field)) ? JSON.stringify(value(field)) : String(value(field) ?? '')} onChange={e => setChanges(c => ({ ...c, [field.key]: e.target.value }))} className="block w-full rounded border p-2" />}
-            <p id={`hint-${field.key}`} className="text-xs">{field.help} Type: {field.type === 'list' ? `JSON array of ${field.item_type} values` : field.type}. {field.minimum !== undefined && <>Range: {field.minimum}–{field.maximum}. </>}{field.pending_restart ? 'Saved; restart required.' : 'Applies after server restart.'}</p>
+            <p id={`hint-${field.key}`} className="text-xs">{field.help} Type: {field.type === 'list' ? `JSON array of ${field.item_type} values` : field.type}. {field.minimum !== undefined && <>Range: {field.minimum}–{field.maximum}. </>}{field.application === 'live' ? 'Applies live to new requests or jobs.' : field.pending_restart ? 'Saved; restart required.' : 'Applies after server restart.'}</p>
             {field.overridden && <button disabled={busy} className="text-xs underline" onClick={() => setChanges(c => ({ ...c, [field.key]: null }))}>Reset to bootstrap</button>}
           </>}
         </div>)}

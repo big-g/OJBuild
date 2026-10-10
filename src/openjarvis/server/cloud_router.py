@@ -16,6 +16,7 @@ import httpx
 
 from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message
+from openjarvis.engine.gpu_gate import background_options, gpu_stream_guard
 
 # ---------------------------------------------------------------------------
 # Key / provider detection
@@ -295,13 +296,10 @@ async def _stream_google(
                     if outcome is not None and candidate.get("finishReason"):
                         outcome["finish_reason"] = (
                             "length"
-                            if candidate["finishReason"] == "MAX_TOKENS" else "stop"
+                            if candidate["finishReason"] == "MAX_TOKENS"
+                            else "stop"
                         )
-                    parts = (
-                        candidate
-                        .get("content", {})
-                        .get("parts", [])
-                    )
+                    parts = candidate.get("content", {}).get("parts", [])
                     for part in parts:
                         text = part.get("text", "")
                         if text:
@@ -319,6 +317,7 @@ def _ollama_host() -> str:
     return os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
 
 
+@gpu_stream_guard
 async def stream_local(
     model: str,
     messages: Sequence[Message],
@@ -337,6 +336,7 @@ async def stream_local(
         "options": {
             "temperature": temperature,
             "num_predict": max_tokens,
+            **background_options(),
         },
     }
     host = _ollama_host()

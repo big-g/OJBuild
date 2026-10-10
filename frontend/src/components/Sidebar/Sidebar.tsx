@@ -76,6 +76,7 @@ export function Sidebar() {
     { path: '/', icon: MessageSquare, label: 'Chat' },
     { path: '/dashboard', icon: BarChart3, label: 'Dashboard' },
     { path: '/files', icon: Files, label: 'Files' },
+    { path: '/3d', icon: Files, label: '3D Generation' },
     { path: '/data-sources', icon: Database, label: 'Data Sources' },
     ...(getStoredUser()?.is_admin ? [
       { path: '/tools', icon: Wrench, label: 'Tools' },

@@ -6,7 +6,13 @@ import re
 
 # These handlers independently verify human identity and ownership or validate
 # input-only actions. Adding a new system mutation requires administrator access.
-_PERSONAL_PREFIXES = ("/v1/sessions", "/v1/projects", "/v1/sources", "/v1/files")
+_PERSONAL_PREFIXES = (
+    "/v1/sessions",
+    "/v1/projects",
+    "/v1/sources",
+    "/v1/files",
+    "/v1/3d",
+)
 _PERSONAL_ACTIONS = frozenset(
     {
         "/v1/chat/completions",

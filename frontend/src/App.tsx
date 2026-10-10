@@ -10,6 +10,7 @@ import { DataSourcesPage } from './pages/DataSourcesPage';
 import { LogsPage } from './pages/LogsPage';
 import { ToolsPage } from './pages/ToolsPage';
 import { FilesPage } from './pages/FilesPage';
+import { ThreeDPage } from './pages/ThreeDPage';
 import { LoginScreen } from './components/LoginScreen';
 import { CommandPalette } from './components/CommandPalette';
 import { SetupScreen } from './components/SetupScreen';
@@ -273,6 +274,7 @@ useEffect(() => {
           <Route path="logs" element={authUser.is_admin ? <LogsPage /> : <Navigate to="/settings" replace />} />
           <Route path="tools" element={authUser.is_admin ? <ToolsPage /> : <Navigate to="/settings" replace />} />
           <Route path="files" element={<FilesPage />} />
+          <Route path="3d" element={<ThreeDPage />} />
         </Route>
       </Routes>
       <Toaster position="bottom-right" />

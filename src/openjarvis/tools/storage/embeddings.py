@@ -6,6 +6,8 @@ import concurrent.futures
 from abc import ABC, abstractmethod
 from typing import Any, List, Optional
 
+from openjarvis.engine.gpu_gate import gpu_guard
+
 
 class Embedder(ABC):
     """Base class for text embedding models.
@@ -98,6 +100,7 @@ class OllamaEmbedder(Embedder):
         self._httpx = httpx
         self._dim_cached: Optional[int] = None
 
+    @gpu_guard
     def _embed_batch(self, texts: List[str]) -> List[List[float]]:
         """Issue one HTTP request for ``texts`` and return raw vectors."""
         resp = self._httpx.post(
