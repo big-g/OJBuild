@@ -81,7 +81,11 @@ class WebSearchTool(BaseTool):
                 " No API key required. Reads leading keyless results for details."
                 " Pass a source URL as query to read that page directly."
                 " For US weather, prefer site:forecast.weather.gov searches"
-                " and read the forecast page; check its validity dates."
+                " and read the forecast page; check its validity dates and"
+                " forecast location (airport observations are not the location)."
+                " Search the exact requested city and state. If results cover"
+                " another city, search again for the requested place; never"
+                " relabel or blend different point and county forecasts."
             ),
             parameters={
                 "type": "object",

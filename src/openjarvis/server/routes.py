@@ -1090,6 +1090,7 @@ def _handle_agent(
                 model=str(getattr(agent, "_model", model) or model),
                 validate_conflicts=True,
                 validate_grounding=True,
+                repair_grounding=True,
             )
         return result
 
