@@ -15,6 +15,7 @@ from openjarvis.workflow.providers import (
     image_gpu,
     image_graph,
     request,
+    wait_for_gpu_release,
 )
 
 Image = pytest.importorskip("PIL.Image")
@@ -47,7 +48,9 @@ def test_comfy_prompt_handoff_download_and_memory_release(
     def stats_reply(_request):
         nonlocal samples
         samples += 1
-        free = 14 if samples == 1 or (memory_released and samples >= 3) else 4
+        released = memory_released and samples >= 3
+        # First-use ROCm runtime overhead: the user's reported post-unload values.
+        free = 16854810624 if samples == 1 else 16261316608 if released else 4 * 1024**3
         return Response(
             200,
             json={
@@ -55,7 +58,8 @@ def test_comfy_prompt_handoff_download_and_memory_release(
                     {
                         "type": "cuda",
                         "index": 0,
-                        "vram_free": free * 1024**3,
+                        "vram_free": free,
+                        "torch_vram_total": 79691776 if released else 5 * 1024**3,
                     }
                 ]
             },
@@ -104,6 +108,49 @@ def test_comfy_prompt_handoff_download_and_memory_release(
     assert release.call_count == 1
     assert queue.call_count == stats.call_count == (3 if memory_released else 31)
     assert path.with_name("gpu.lock.blocked").exists() is (not memory_released)
+
+
+@pytest.mark.parametrize(
+    "free,reserved,pending,index,error",
+    [
+        (16261316608, 79691776, [], 0, None),
+        (16854810624, 1024**3, [], 0, "did not release GPU memory"),
+        (14 * 1024**3, 79691776, [], 0, "did not release GPU memory"),
+        (16261316608, 79691776, [[1, "other-job"]], 0, "did not release GPU memory"),
+        (16261316608, 79691776, [], 1, "did not release GPU memory"),
+        (16261316608, None, [], 0, "invalid GPU statistics"),
+    ],
+)
+@respx.mock
+def test_gpu_release_requires_idle_queue_low_allocator_and_available_memory(
+    monkeypatch, free, reserved, pending, index, error
+):
+    monkeypatch.setattr("openjarvis.workflow.providers.time.sleep", lambda _: None)
+    base = "http://127.0.0.1:8188"
+    respx.get(base + "/queue").mock(
+        return_value=Response(200, json={"queue_running": [], "queue_pending": pending})
+    )
+    respx.get(base + "/system_stats").mock(
+        return_value=Response(
+            200,
+            json={
+                "devices": [
+                    {
+                        "type": "cuda",
+                        "index": index,
+                        "vram_free": free,
+                        "torch_vram_total": reserved,
+                    }
+                ]
+            },
+        )
+    )
+    baseline = {0: (16854810624, 0)}
+    if error:
+        with pytest.raises(ValueError, match=error):
+            wait_for_gpu_release(base, baseline)
+    else:
+        wait_for_gpu_release(base, baseline)
 
 
 @respx.mock
@@ -170,7 +217,14 @@ def test_lost_submission_blocks_shared_gpu(tmp_path, monkeypatch):
         return_value=Response(
             200,
             json={
-                "devices": [{"type": "cuda", "index": 0, "vram_free": 14 * 1024**3}],
+                "devices": [
+                    {
+                        "type": "cuda",
+                        "index": 0,
+                        "vram_free": 14 * 1024**3,
+                        "torch_vram_total": 0,
+                    }
+                ],
             },
         )
     )

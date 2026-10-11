@@ -162,7 +162,10 @@ only. Jarvis does not expose provider queues publicly.
 
 Jarvis persists `gpu.lock.blocked` before image submission and clears it only
 after the job has completed/stopped, the queue is empty and free GPU memory
-returns near its pre-job level. ComfyUI's empty HTTP 200 response to `/free`
+returns within 1 GiB of its pre-job level and PyTorch's reserved pool is at most
+256 MiB. The allowance accommodates driver/kernel workspaces retained after
+first use; the separate allocator check includes cached model allocations.
+ComfyUI's empty HTTP 200 response to `/free`
 acknowledges the request; Jarvis polls to confirm unloading finishes. If the API
 crashes, communication fails or cancellation cannot be confirmed, it remains. Further
 local image, Hunyuan submission and Ollama requests fail visibly. Stop the image

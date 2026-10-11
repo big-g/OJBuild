@@ -192,7 +192,7 @@ def stop_image_job(url, identity):
 
 
 def gpu_memory(url):
-    """Capture provider-visible free VRAM; ROCm is reported as a CUDA device."""
+    """Capture free VRAM and PyTorch reservations (ROCm uses type CUDA)."""
     devices = request(url, "/system_stats").get("devices")
     if not isinstance(devices, list):
         raise ValueError("Image server returned invalid GPU statistics")
@@ -201,9 +201,18 @@ def gpu_memory(url):
         if not isinstance(device, dict) or device.get("type") != "cuda":
             continue
         index, free = device.get("index"), device.get("vram_free")
-        if type(index) is not int or type(free) is not int or free < 0:
+        reserved = device.get("torch_vram_total")
+        if (
+            type(index) is not int
+            or index < 0
+            or index in result
+            or type(free) is not int
+            or free < 0
+            or type(reserved) is not int
+            or reserved < 0
+        ):
             raise ValueError("Image server returned invalid GPU statistics")
-        result[index] = free
+        result[index] = (free, reserved)
     if not result:
         raise ValueError("Image server must report an available CUDA/ROCm GPU")
     return result
@@ -211,9 +220,10 @@ def gpu_memory(url):
 
 def wait_for_gpu_release(url, baseline):
     # /free acknowledges flags immediately; unloading occurs in the worker loop.
-    # Keep the shared lock until VRAM returns near its pre-job level. Allow a
-    # small persistent runtime workspace, rather than treating acknowledgement
-    # as proof that the SDXL weights have been removed from the GPU.
+    # ROCm may retain driver/kernel workspaces after first use, outside PyTorch's
+    # allocator. Allow up to 1 GiB of that overhead, but independently require
+    # PyTorch's entire reserved pool (including cached allocations) <= 256 MiB.
+    # Acknowledgement alone is not proof that model weights have been unloaded.
     for _ in range(30):
         queue = request(url, "/queue")
         current = gpu_memory(url)
@@ -221,8 +231,10 @@ def wait_for_gpu_release(url, baseline):
             not queue.get("queue_running")
             and not queue.get("queue_pending")
             and all(
-                current.get(index, -1) >= free - 256 * 1024**2
-                for index, free in baseline.items()
+                index in current
+                and current[index][0] >= free - 1024**3
+                and current[index][1] <= 256 * 1024**2
+                for index, (free, _) in baseline.items()
             )
         ):
             return
