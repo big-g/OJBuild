@@ -43,7 +43,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-generation = ["trimesh>=5.1,<6", "scipy>=1.11", "networkx>=3", "Pillow>=10"]
+generation = ["trimesh>=5.1,<6", "scipy>=1.11", "networkx>=3", "Pillow>=10", "fast-simplification>=0.1.10,<0.2"]
 dev = [
     "maturin>=1.12.6",
     "pytest>=8",

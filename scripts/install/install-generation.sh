@@ -11,8 +11,8 @@ fi
 cd "$service_dir"
 service_python=$("$uv_bin" run --no-sync python -c 'import sys; print(sys.executable)')
 "$service_python" -c 'import openjarvis; print("Service package:", openjarvis.__file__)'
-"$uv_bin" pip install --python "$service_python" 'trimesh>=5.1,<6' 'scipy>=1.11' 'networkx>=3' 'Pillow>=10'
-"$service_python" -c 'import trimesh, scipy, networkx, PIL; print("Mesh dependencies ready:", trimesh.__version__)'
+"$uv_bin" pip install --python "$service_python" 'trimesh>=5.1,<6' 'scipy>=1.11' 'networkx>=3' 'Pillow>=10' 'fast-simplification>=0.1.10,<0.2'
+"$service_python" -c 'import trimesh, scipy, networkx, PIL, fast_simplification; print("Mesh dependencies ready:", trimesh.__version__)'
 # Preserve the existing manually installed Rust extension and generation extras.
 # Future dependency updates must be explicit; uv run must not prune them at restart.
 dropin_dir="/etc/systemd/system/$service_name.d"

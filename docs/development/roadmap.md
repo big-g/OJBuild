@@ -58,6 +58,12 @@ Hunyuan generation are approved adapters in the same reusable workflow system.
 Multiple administrator-managed image instances are database backed; registration
 and testing never imply operation authorization.
 
+Server testing produced a Turbo mesh with 784,544 vertices and 1,569,230 faces
+in 318 seconds. This exceeds the current workflow face budget. A bounded
+CPU preparation helper creates a separate simplified GLB for acceptance testing.
+Native workflow simplification and high-density import remain pending; do not
+mark the GLB inspection/repair/STL acceptance test complete from generation alone.
+
 **Pending Phase 3 integration:** expose saved-workflow discovery, submission,
 status and artifact results through governed chat tools, bound to the authenticated
 account and its approved operations. Generation is a central server capability;

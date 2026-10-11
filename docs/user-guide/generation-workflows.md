@@ -57,6 +57,29 @@ one worker are supported; do not start another API instance on the same catalog.
 The queue holds at most 16 unfinished runs globally; each account retains at most
 200 runs, 100 definitions and 100 automatic attachments.
 
+## Preparing a dense Hunyuan result
+
+High-density outputs can exceed the current workflow limits. Before importing,
+use the CPU preparation helper to create a separate simplified GLB. It accepts
+self-contained GLBs up to 64 MiB, 2 million faces and 1 million vertices, applies
+scene transforms, and targets 300,000 faces by default. It validates export/reload
+and the 20 MiB output limit, never overwrites an existing file, and leaves the
+source untouched. The Linux command is limited to 4 GiB address space and 240 CPU
+seconds. Install the generation dependencies first.
+
+```bash
+cd ~/.openjarvis
+service_python=$(uv run --no-sync python -c 'import sys; print(sys.executable)')
+"$service_python" src/scripts/prepare_workflow_mesh.py /path/to/original.glb /path/to/prepared.glb
+```
+
+Transfer the prepared copy to your browser's computer and upload it in
+**Generation & Workflows**. Run inspection, repair, explicit millimetre scaling
+and STL export. Review the mesh and before/after report: decimation may alter
+geometry and topology and does not establish printability. Automatic processing
+of high-density outputs is pending; **3D → Use in workflow** still applies the
+existing limits to the original GLB.
+
 ## Administration
 
 In the workflow page's administrator section, approve only the needed operations.
