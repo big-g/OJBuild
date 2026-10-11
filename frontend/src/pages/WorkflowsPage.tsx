@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { apiFetch } from '../lib/api';
 import { getStoredUser } from '../lib/auth';
@@ -22,6 +22,14 @@ export async function workflowJson<T>(path: string, options?: RequestInit): Prom
   return value as T;
 }
 const post = (value: unknown): RequestInit => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+
+export async function submitSavedWorkflow(saved: Saved, input: { artifact_id?: string; prompt?: string }): Promise<Run> {
+  const result = await workflowJson<Run>('/runs', post({ workflow_id: saved.id, revision: saved.revision, input }));
+  if (!result.id || !result.status || !result.definition || !Array.isArray(result.steps)) {
+    throw new Error('The server did not return a valid workflow run. Reload your run history before retrying.');
+  }
+  return result;
+}
 
 function ReferenceImage({ artifact }: { artifact: Artifact }) {
   const [url, setUrl] = useState('');
@@ -49,6 +57,8 @@ export function WorkflowsPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
+  const [acceptedRunId, setAcceptedRunId] = useState('');
+  const refreshSequence = useRef(0);
   const [servers, setServers] = useState<Server[]>([]);
   const [serverName, setServerName] = useState('Local image server');
   const [serverUrl, setServerUrl] = useState('http://127.0.0.1:8188');
@@ -56,17 +66,23 @@ export function WorkflowsPage() {
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const isAdmin = getStoredUser()?.is_admin === true;
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     const [next, history, response] = await Promise.all([
       workflowJson<Catalog>(''), workflowJson<{ runs: Run[] }>('/runs'), apiFetch('/v1/files'),
     ]);
     if (!response.ok) throw new Error('Could not load your files.');
     const result = await response.json() as { files: Artifact[] };
-    setCatalog(next); setRuns(history.runs); setFiles(result.files);
+    let settings: { image_servers: Server[] } | undefined;
     if (isAdmin) {
-      const settings = await workflowJson<{ image_servers: Server[] }>('/admin');
-      setServers(settings.image_servers);
+      settings = await workflowJson<{ image_servers: Server[] }>('/admin');
     }
+    if (sequence !== refreshSequence.current) return;
+    setCatalog(next); setRuns(history.runs); setFiles(result.files);
+    if (settings) setServers(settings.image_servers);
   }, [isAdmin]);
+  useEffect(() => {
+    if (acceptedRunId) document.getElementById(`workflow-run-${acceptedRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [acceptedRunId]);
   useEffect(() => {
     let active = true;
     const poll = async () => { if (!active) return; try { await refresh(); } catch (e) { if (active) setError(e instanceof Error ? e.message : 'Could not load workflows.'); } };
@@ -98,9 +114,13 @@ export function WorkflowsPage() {
   });
   const run = () => action(async () => {
     if (!saved) throw new Error('Save the workflow before running it.');
-    await workflowJson('/runs', post({ workflow_id: saved.id, revision: saved.revision,
-      input: { ...(source ? { artifact_id: source } : {}), ...(prompt ? { prompt } : {}) } }));
-    setNotice('Run queued. You can leave this page; the server continues the workflow.');
+    const accepted = await submitSavedWorkflow(saved,
+      { ...(source ? { artifact_id: source } : {}), ...(prompt ? { prompt } : {}) });
+    // Prevent an older in-flight poll from hiding the just-accepted run.
+    refreshSequence.current++;
+    setRuns(current => [accepted, ...current.filter(row => row.id !== accepted.id)]);
+    setAcceptedRunId(accepted.id);
+    setNotice(`Run ${accepted.id} accepted. Status updates below; the server continues when you leave this page.`);
   });
   const upload = (file: File) => action(async () => {
     if (file.size > 20 * 1024 * 1024) throw new Error('Choose a file below 20 MiB.');
@@ -176,6 +196,7 @@ export function WorkflowsPage() {
       <label className="block">Upload a GLB or STL (up to 20 MiB)<input type="file" accept=".glb,.stl" disabled={busy} className="block mt-1" onChange={e => { if (e.target.files?.[0]) void upload(e.target.files[0]); e.target.value = ''; }} /></label>
       <p className="text-sm text-muted-foreground">Completed Hunyuan outputs can be imported from <Link className="underline" to="/3d">3D Generation</Link>. For STL, include a scale step specifying the target dimension in millimetres. A watertight mesh still needs slicer inspection.</p>
       <button disabled={busy || !saved} className="border rounded px-4 py-2 disabled:opacity-50" onClick={() => void run()}>Run saved workflow</button>
+      {!saved && <p className="text-sm text-muted-foreground">Choose a saved workflow, or save your changes, to enable running. Editing step settings requires saving again; changing the text prompt or input file does not.</p>}
     </section>
     {isAdmin && <details className="border rounded p-4 space-y-3">
       <summary className="font-semibold cursor-pointer">Administrator: operations and local image servers</summary>
@@ -191,8 +212,9 @@ export function WorkflowsPage() {
     </details>}
     <section className="space-y-3"><h2 className="text-lg font-semibold">Your runs</h2>
       {!runs.length && <p>No runs yet.</p>}
-      {runs.map(run => <article key={run.id} className="border rounded p-4 space-y-2">
+      {runs.map(run => <article id={`workflow-run-${run.id}`} key={run.id} className={`border rounded p-4 space-y-2 scroll-mt-4 ${run.id === acceptedRunId ? 'ring-2 ring-primary' : ''}`}>
         <h3 className="font-semibold">{run.definition.name} · {run.status}</h3>
+        <p className="text-xs text-muted-foreground break-all">Run {run.id}</p>
         {run.error && <p role="alert">{run.error}</p>}
         {run.steps.map(step => <details key={step.id} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
         {run.output?.artifact && <button disabled={busy} className="border rounded px-3 py-2" onClick={() => void download(run.output!.artifact!)}>Download final output</button>}

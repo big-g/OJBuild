@@ -58,6 +58,16 @@ Hunyuan generation are approved adapters in the same reusable workflow system.
 Multiple administrator-managed image instances are database backed; registration
 and testing never imply operation authorization.
 
+**Pending Phase 3 integration:** expose saved-workflow discovery, submission,
+status and artifact results through governed chat tools, bound to the authenticated
+account and its approved operations. Generation is a central server capability;
+chat, browser/mobile/desktop and future device consoles must share its job service.
+Phase 4.1 Echo voice clients should submit transcribed requests through chat.
+GT100 camera clients should upload images as account-owned artifacts and supply
+their IDs as workflow inputs. Camera capture/device identity and notifications
+need their own client integration; do not run a second image-generation backend
+on each console. Chat invocation is not implemented by the current workflow UI/API.
+
 See [Generation and workflows](../user-guide/generation-workflows.md) for setup,
 limits and server acceptance. Automated CPU/API/frontend tests cover implementation;
 real GPU generation, Blender and slicer acceptance remain to be verified on Ubuntu.
