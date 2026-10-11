@@ -26,18 +26,42 @@ def png():
     return out.getvalue()
 
 
+@pytest.mark.parametrize("memory_released", [True, False])
 @respx.mock
-def test_comfy_prompt_handoff_download_and_memory_release(monkeypatch, tmp_path):
+def test_comfy_prompt_handoff_download_and_memory_release(
+    monkeypatch, tmp_path, memory_released
+):
     monkeypatch.setattr(
         "openjarvis.workflow.providers.image_gpu", lambda: nullcontext()
     )
     path = tmp_path / "gpu.lock"
     monkeypatch.setenv("OPENJARVIS_GPU_LOCK_PATH", str(path))
+    monkeypatch.setattr("openjarvis.workflow.providers.time.sleep", lambda _: None)
     identity = str(uuid.uuid4())
     base = "http://127.0.0.1:8188"
     queue = respx.get(base + "/queue").mock(
         return_value=Response(200, json={"queue_running": [], "queue_pending": []})
     )
+    samples = 0
+
+    def stats_reply(_request):
+        nonlocal samples
+        samples += 1
+        free = 14 if samples == 1 or (memory_released and samples >= 3) else 4
+        return Response(
+            200,
+            json={
+                "devices": [
+                    {
+                        "type": "cuda",
+                        "index": 0,
+                        "vram_free": free * 1024**3,
+                    }
+                ]
+            },
+        )
+
+    stats = respx.get(base + "/system_stats").mock(side_effect=stats_reply)
     submit = respx.post(base + "/prompt").mock(
         return_value=Response(200, json={"prompt_id": identity})
     )
@@ -63,19 +87,23 @@ def test_comfy_prompt_handoff_download_and_memory_release(monkeypatch, tmp_path)
         )
     )
     respx.get(base + "/view").mock(return_value=Response(200, content=png()))
-    release = respx.post(base + "/free").mock(return_value=Response(200, json={}))
+    release = respx.post(base + "/free").mock(return_value=Response(200))
     params = ImageParams(instance_id="local", seed=12).model_dump()
-    output = generate_image(
-        SimpleNamespace(url=base, checkpoint="test.safetensors"), "robot", params
-    )
-    assert output.startswith(b"\x89PNG")
+    instance = SimpleNamespace(url=base, checkpoint="test.safetensors")
+    if memory_released:
+        output = generate_image(instance, "robot", params)
+        assert output.startswith(b"\x89PNG")
+    else:
+        with pytest.raises(ValueError, match="did not release GPU memory"):
+            generate_image(instance, "robot", params)
     import json
 
     payload = json.loads(submit.calls[0].request.content)
     assert payload["prompt"]["2"]["inputs"]["text"] == "robot"
     assert payload["prompt"]["5"]["inputs"]["seed"] == 12
-    assert queue.call_count == 1 and release.call_count == 1
-    assert not path.with_name("gpu.lock.blocked").exists()
+    assert release.call_count == 1
+    assert queue.call_count == stats.call_count == (3 if memory_released else 31)
+    assert path.with_name("gpu.lock.blocked").exists() is (not memory_released)
 
 
 @respx.mock
@@ -138,6 +166,14 @@ def test_lost_submission_blocks_shared_gpu(tmp_path, monkeypatch):
     monkeypatch.setenv("OPENJARVIS_GPU_LOCK_PATH", str(path))
     base = "http://127.0.0.1:8188"
     respx.get(base + "/queue").mock(return_value=Response(200, json={}))
+    respx.get(base + "/system_stats").mock(
+        return_value=Response(
+            200,
+            json={
+                "devices": [{"type": "cuda", "index": 0, "vram_free": 14 * 1024**3}],
+            },
+        )
+    )
     respx.post(base + "/prompt").mock(side_effect=httpx.ReadTimeout("lost reply"))
     with pytest.raises(ValueError, match="submission state is unknown"):
         generate_image(
@@ -165,3 +201,46 @@ def test_cancellation_never_interrupts_someone_elses_running_job():
     interrupt = respx.post(base + "/interrupt").mock(return_value=Response(200))
     assert stop_image_job(base, "own") is False
     assert interrupt.call_count == 0
+
+
+@pytest.mark.parametrize("path", ["/free", "/interrupt", "/queue"])
+@respx.mock
+def test_comfy_control_endpoints_accept_empty_http_success(path):
+    base = "http://127.0.0.1:8188"
+    respx.post(base + path).mock(return_value=Response(200))
+    assert request(base, path, payload={}, acknowledgement=True) is None
+
+
+@respx.mock
+def test_empty_response_does_not_substitute_for_required_json():
+    base = "http://127.0.0.1:8188"
+    respx.get(base + "/queue").mock(return_value=Response(200))
+    with pytest.raises(ValueError, match="invalid JSON"):
+        request(base, "/queue")
+
+
+@respx.mock
+def test_control_acknowledgement_does_not_hide_http_failure():
+    import httpx
+
+    base = "http://127.0.0.1:8188"
+    respx.post(base + "/free").mock(return_value=Response(503))
+    with pytest.raises(httpx.HTTPStatusError):
+        request(base, "/free", payload={}, acknowledgement=True)
+
+
+@pytest.mark.parametrize("state", ["pending", "running"])
+@respx.mock
+def test_stop_own_job_accepts_empty_control_response(state, monkeypatch):
+    from openjarvis.workflow.providers import stop_image_job
+
+    base = "http://127.0.0.1:8188"
+    respx.get(base + "/queue").mock(
+        side_effect=[
+            Response(200, json={"queue_" + state: [[0, "own"]]}),
+            Response(200, json={"queue_running": [], "queue_pending": []}),
+        ]
+    )
+    path = "/queue" if state == "pending" else "/interrupt"
+    respx.post(base + path).mock(return_value=Response(200))
+    assert stop_image_job(base, "own") is True

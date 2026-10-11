@@ -161,7 +161,9 @@ submitting directly through its UI bypasses GPU coordination. Keep it loopback
 only. Jarvis does not expose provider queues publicly.
 
 Jarvis persists `gpu.lock.blocked` before image submission and clears it only
-after the job has completed/stopped and model unloading succeeds. If the API
+after the job has completed/stopped, the queue is empty and free GPU memory
+returns near its pre-job level. ComfyUI's empty HTTP 200 response to `/free`
+acknowledges the request; Jarvis polls to confirm unloading finishes. If the API
 crashes, communication fails or cancellation cannot be confirmed, it remains. Further
 local image, Hunyuan submission and Ollama requests fail visibly. Stop the image
 worker, verify no image process remains, then remove the marker and restart:

@@ -22,7 +22,9 @@ from openjarvis.artifacts.store import _directory
 MAX_BYTES = 20 * 1024**2
 
 
-def request(url, path, *, payload=None, params=None, binary=False):
+def request(
+    url, path, *, payload=None, params=None, binary=False, acknowledgement=False
+):
     data = bytearray()
     with httpx.Client(timeout=30, follow_redirects=False, trust_env=False) as client:
         with client.stream(
@@ -36,7 +38,17 @@ def request(url, path, *, payload=None, params=None, binary=False):
                 if len(data) + len(chunk) > (MAX_BYTES if binary else 2 * 1024**2):
                     raise ValueError("Local generation server returned oversized data")
                 data.extend(chunk)
-    return bytes(data) if binary else json.loads(data)
+    if binary:
+        return bytes(data)
+    if acknowledgement:
+        return None
+    try:
+        value = json.loads(data)
+    except ValueError:
+        raise ValueError("Local generation server returned invalid JSON") from None
+    if not isinstance(value, dict):
+        raise ValueError("Local generation server must return a JSON object")
+    return value
 
 
 @contextmanager
@@ -161,11 +173,11 @@ def stop_image_job(url, identity):
     running = queue.get("queue_running", [])
     pending = queue.get("queue_pending", [])
     if any(item[1] == identity for item in pending):
-        request(url, "/queue", payload={"delete": [identity]})
+        request(url, "/queue", payload={"delete": [identity]}, acknowledgement=True)
     if any(item[1] == identity for item in running):
         if len(running) != 1:
             return False
-        request(url, "/interrupt", payload={})
+        request(url, "/interrupt", payload={}, acknowledgement=True)
     for _ in range(20):
         queue = request(url, "/queue")
         if not any(
@@ -179,6 +191,45 @@ def stop_image_job(url, identity):
     return False
 
 
+def gpu_memory(url):
+    """Capture provider-visible free VRAM; ROCm is reported as a CUDA device."""
+    devices = request(url, "/system_stats").get("devices")
+    if not isinstance(devices, list):
+        raise ValueError("Image server returned invalid GPU statistics")
+    result = {}
+    for device in devices:
+        if not isinstance(device, dict) or device.get("type") != "cuda":
+            continue
+        index, free = device.get("index"), device.get("vram_free")
+        if type(index) is not int or type(free) is not int or free < 0:
+            raise ValueError("Image server returned invalid GPU statistics")
+        result[index] = free
+    if not result:
+        raise ValueError("Image server must report an available CUDA/ROCm GPU")
+    return result
+
+
+def wait_for_gpu_release(url, baseline):
+    # /free acknowledges flags immediately; unloading occurs in the worker loop.
+    # Keep the shared lock until VRAM returns near its pre-job level. Allow a
+    # small persistent runtime workspace, rather than treating acknowledgement
+    # as proof that the SDXL weights have been removed from the GPU.
+    for _ in range(30):
+        queue = request(url, "/queue")
+        current = gpu_memory(url)
+        if (
+            not queue.get("queue_running")
+            and not queue.get("queue_pending")
+            and all(
+                current.get(index, -1) >= free - 256 * 1024**2
+                for index, free in baseline.items()
+            )
+        ):
+            return
+        time.sleep(1)
+    raise ValueError("Image server did not release GPU memory; recover the worker")
+
+
 def generate_image(instance, prompt, params):
     if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 4000:
         raise ValueError("Provide a text prompt of 1–4000 characters")
@@ -186,6 +237,7 @@ def generate_image(instance, prompt, params):
         queue = request(instance.url, "/queue")
         if queue.get("queue_running") or queue.get("queue_pending"):
             raise ValueError("Image server is busy; finish its queued jobs and retry")
+        baseline = gpu_memory(instance.url)
         # Persist the reservation before submission, so an API crash/restart
         # cannot release the GPU to chat while ComfyUI continues externally.
         block_gpu()
@@ -262,7 +314,9 @@ def generate_image(instance, prompt, params):
                         "unload_models": True,
                         "free_memory": True,
                     },
+                    acknowledgement=True,
                 )
+                wait_for_gpu_release(instance.url, baseline)
             except Exception:
                 safe_to_release = False
                 raise
