@@ -4,6 +4,7 @@ export interface MCPDefinition {
   name: string;
   url: string;
   allow_without_confirmation: boolean;
+  evidence_tools?: Record<string, ('fact' | 'current' | 'external' | 'decision')[]>;
   bearer_token?: string;
   credential_secret?: string;
   auth_type?: 'bearer' | 'api_key';
@@ -30,6 +31,7 @@ export interface MCPConnection extends Omit<MCPDefinition, 'bearer_token' | 'cre
 export function connectionDefinition(connection: MCPConnection, token = '', clearToken = false): MCPDefinition {
   return { name: connection.name, url: connection.url,
     allow_without_confirmation: connection.allow_without_confirmation,
+    ...(connection.evidence_tools ? { evidence_tools: connection.evidence_tools } : {}),
     ...(connection.auth_type === 'api_key' ? { auth_type: 'api_key' as const, api_key_header: connection.api_key_header } : {}),
     ...(connection.network_access === 'lan' ? { network_access: connection.network_access,
       lan_addresses: connection.lan_addresses, tls_trust: connection.tls_trust,

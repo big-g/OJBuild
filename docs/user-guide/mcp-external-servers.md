@@ -230,3 +230,28 @@ No single server failure causes OpenJarvis to crash or prevents other tools from
 1. Test the command manually: `python -m my_mcp_server` should start and wait for input on stdin.
 2. Check stderr output in the OpenJarvis logs for error messages from the subprocess.
 3. Ensure all dependencies for the MCP server are installed in the same environment.
+
+
+## Evidence from dynamically added tools
+
+Approved MCP tools are refreshed for ordinary server chat on each request. To use
+retrieved results for factual or current-information answers, discover the catalog,
+edit the connection and select **Evidence capabilities by remote tool**. Select
+`current` for tools returning time-sensitive information, `fact` for factual
+retrieval, `external` for external-source retrieval, and `decision` for tools
+providing source information for decisions. These are administrator-reviewed
+uses, not trusted claims from the remote server. Choose only applicable kinds.
+
+Save, discover again, review the catalog and evidence selections, then approve
+and enable. Editing withdraws previous approval; existing connections retain
+their current approval and have no evidence capabilities until explicitly edited.
+For browser chat, also review **Allow approved tool calls without per-call
+confirmation**: without it, clients lacking a confirmation callback block calls.
+Capability policies continue to apply independently.
+
+Successful nonempty text and structured JSON from a reviewed evidence tool carry
+connection/tool identity, catalog fingerprint and retrieval time into the evidence
+pipeline. Retrieval time does not certify that the provider's data is fresh. Error
+and empty responses do not become evidence; conflict and answer-grounding checks
+still apply. Model selection remains probabilistic; approval does not force a call.
+This change does not add tool execution to image-containing chat requests.

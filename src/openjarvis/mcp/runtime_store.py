@@ -27,7 +27,7 @@ def definition(value):
         not isinstance(value, dict)
         or not {"name", "url"} <= set(value)
         or set(value)
-        - {"name", "url", "allow_without_confirmation"}
+        - {"name", "url", "allow_without_confirmation", "evidence_tools"}
         - NETWORK_FIELDS
         - AUTH_FIELDS
     ):
@@ -44,6 +44,29 @@ def definition(value):
     automatic = value.get("allow_without_confirmation", False)
     if not isinstance(automatic, bool):
         raise ValueError("Execution confirmation setting must be boolean")
+    evidence = value.get("evidence_tools", {})
+    if not isinstance(evidence, dict) or len(evidence) > 1000:
+        raise ValueError(
+            "Evidence settings must map remote tool names to evidence kinds"
+        )
+    reviewed = {}
+    for name, kinds in evidence.items():
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 128
+            or not isinstance(kinds, list)
+            or len(kinds) > 4
+            or any(
+                not isinstance(kind, str)
+                or kind not in {"fact", "current", "external", "decision"}
+                for kind in kinds
+            )
+            or len(set(kinds)) != len(kinds)
+        ):
+            raise ValueError("Invalid per-tool evidence settings")
+        if kinds:
+            reviewed[name] = sorted(kinds)
     settings = policy(value)
     auth = authentication(value)
     return {
@@ -52,6 +75,7 @@ def definition(value):
         **(settings if settings["network_access"] == "lan" else {}),
         **(auth if auth["auth_type"] == "api_key" else {}),
         "allow_without_confirmation": automatic,
+        **({"evidence_tools": reviewed} if reviewed else {}),
     }
 
 

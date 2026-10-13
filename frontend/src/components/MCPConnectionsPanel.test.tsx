@@ -102,3 +102,12 @@ it('displays the API key header in catalog approval without showing the key', ()
   expect(html).toContain('API key header (x-api-key)');
   expect(html).toContain('credential saved');
 });
+
+
+it('shows reviewed evidence capabilities separately from provider hints', () => {
+  const html = renderToStaticMarkup(<MCPCatalogReview connection={{ ...connection,
+    evidence_tools: { lookup: ['fact', 'current'] } }} />);
+  expect(html).toContain('Reviewed evidence uses: fact, current');
+  expect(renderToStaticMarkup(<MCPCatalogReview connection={connection} />))
+    .toContain('None; output cannot support evidence-gated answers');
+});

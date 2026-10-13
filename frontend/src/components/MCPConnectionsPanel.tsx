@@ -21,6 +21,7 @@ export function MCPCatalogReview({ connection }: { connection: MCPConnection }) 
         <p className="font-medium break-all">{tool.remote_name}</p>
         <p className="break-all text-xs">Jarvis name: {tool.name}</p>
         <p className="whitespace-pre-wrap">{tool.description}</p>
+        <p>Reviewed evidence uses: {connection.evidence_tools?.[tool.remote_name]?.join(', ') || 'None; output cannot support evidence-gated answers'}</p>
         <p className="mt-2">Input schema</p>
         <pre className="overflow-x-auto text-xs whitespace-pre-wrap">{JSON.stringify(tool.parameters, null, 2)}</pre>
         <p className="mt-2">Untrusted server annotations</p>
@@ -139,6 +140,22 @@ export function MCPConnectionsPanel() {
         onChange={e => setDefinition({ ...definition, allow_without_confirmation: e.target.checked })} />
         Allow approved tool calls without per-call confirmation</label>
       <p className="text-xs">Enable this only after reviewing tools for automated use. Browser chat and scheduled tasks need this option because they cannot ask for interactive confirmation. Leave it off for clients that can ask before each call. Editing any setting withdraws approval.</p>
+      {editing && <fieldset className="space-y-3"><legend>Evidence capabilities by remote tool</legend>
+        <p className="text-xs">Select only the kinds of source information each tool retrieves. Current means time-sensitive data, such as forecasts. Successful execution is not proof of truth; grounding checks still apply. Save, discover again, then review and approve the changed connection.</p>
+        {editing.tools.map(tool => <div key={tool.remote_name} className="space-y-1">
+          <p className="text-sm break-all">{tool.remote_name} — {tool.description}</p>
+          <div className="flex flex-wrap gap-3">{(['fact', 'current', 'external', 'decision'] as const).map(kind => <label key={kind} className="flex gap-2 text-sm">
+            <input type="checkbox" checked={definition.evidence_tools?.[tool.remote_name]?.includes(kind) || false}
+              onChange={e => {
+                const selected = definition.evidence_tools?.[tool.remote_name] || [];
+                const evidence = { ...definition.evidence_tools };
+                const next = e.target.checked ? [...selected, kind] : selected.filter(value => value !== kind);
+                if (next.length) evidence[tool.remote_name] = next; else delete evidence[tool.remote_name];
+                setDefinition({ ...definition, evidence_tools: evidence });
+              }} />{kind}</label>)}</div>
+        </div>)}
+        {!editing.tools.length && <p className="text-xs">Discover the tool catalog first, then edit this connection to select evidence capabilities.</p>}
+      </fieldset>}
       <div className="flex gap-2"><button className={button} disabled={busy} type="submit">Save connection</button>
         {editing && <button className={button} disabled={busy} type="button" onClick={reset}>Cancel edit</button>}</div>
     </form>

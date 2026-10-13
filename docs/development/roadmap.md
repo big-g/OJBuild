@@ -80,6 +80,18 @@ real GPU generation, Blender and slicer acceptance remain to be verified on Ubun
 Secure WAN access follows Phase 3 acceptance; it is not part of this implementation.
 Home Assistant, Echo 4.1 and Nextcloud/email phase ordering remains unchanged.
 
+## MCP evidence integration follow-up (2026-10-13)
+
+Runtime MCP connection review now supports per-tool factual/current/external/
+decision evidence capabilities. Successful text and structured JSON results retain
+local connection/tool provenance and retrieval timestamps. These tools participate
+in the existing evidence-provider prompt and grounding pipeline without
+query-specific adapters. Configuration edits withdraw approval; remote annotations
+do not grant evidence authority. Existing connections need explicit evidence
+configuration and renewed review. Server acceptance with eris_weather and
+huggingface remains pending. Image-containing chat tool execution remains a
+separate integration gap.
+
 ## Phase 2: model configuration and task routing
 
 **Agreed scope (2026-10-05):** preserve InferenceEngine, EngineRegistry,

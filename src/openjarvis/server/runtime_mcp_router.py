@@ -20,6 +20,9 @@ class Connection(BaseModel):
     auth_type: Literal["bearer", "api_key"] = "bearer"
     api_key_header: str = Field(default="", max_length=64)
     allow_without_confirmation: StrictBool = False
+    evidence_tools: dict[
+        str, list[Literal["fact", "current", "external", "decision"]]
+    ] = Field(default_factory=dict, max_length=1000)
     network_access: Literal["public", "lan"] = "public"
     lan_addresses: str = Field(default="", max_length=2048)
     tls_trust: Literal["system", "custom_ca"] = "system"
@@ -110,6 +113,7 @@ def create_runtime_mcp_router(manager):
             "tls_trust": body.tls_trust,
             "ca_certificate": body.ca_certificate,
             "allow_without_confirmation": body.allow_without_confirmation,
+            "evidence_tools": body.evidence_tools,
         }
 
     def token(body):

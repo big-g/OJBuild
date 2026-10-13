@@ -22,8 +22,9 @@ MAX_JSON_NODES = 20_000
 MAX_JSON_DEPTH = 32
 
 
-def _json_contract(value: Any) -> bytes:
+def _json_contract(value: Any, *, max_bytes: int | None = None) -> bytes:
     """Bound decoded structures before copying, encoding or hashing them."""
+    max_bytes = MAX_TOOL_BYTES if max_bytes is None else max_bytes
     stack = [(value, 0)]
     nodes = 0
     while stack:
@@ -36,14 +37,14 @@ def _json_contract(value: Any) -> bytes:
                 raise ValueError("MCP tool contract exceeds structural limits")
             if any(not isinstance(key, str) for key in item):
                 raise ValueError("MCP tool contract must use JSON string keys")
-            if any(len(key) > MAX_TOOL_BYTES for key in item):
+            if any(len(key) > max_bytes for key in item):
                 raise ValueError("MCP tool contract exceeds size limit")
             stack.extend((child, depth + 1) for child in item.values())
         elif isinstance(item, list):
             if len(item) > MAX_JSON_NODES - nodes:
                 raise ValueError("MCP tool contract exceeds structural limits")
             stack.extend((child, depth + 1) for child in item)
-        elif isinstance(item, str) and len(item) > MAX_TOOL_BYTES:
+        elif isinstance(item, str) and len(item) > max_bytes:
             raise ValueError("MCP tool contract exceeds size limit")
         elif item is None or isinstance(item, (str, bool, int)):
             pass
@@ -57,7 +58,7 @@ def _json_contract(value: Any) -> bytes:
         ).encode("utf-8")
     except (ValueError, UnicodeError) as exc:
         raise ValueError("MCP tool contract is not valid JSON") from exc
-    if len(encoded) > MAX_TOOL_BYTES:
+    if len(encoded) > max_bytes:
         raise ValueError("MCP tool contract exceeds size limit")
     return encoded
 

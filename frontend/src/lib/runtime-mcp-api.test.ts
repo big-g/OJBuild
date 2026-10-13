@@ -56,3 +56,10 @@ it('retains explicit LAN endpoint and certificate policy when editing a connecti
   expect(connectionDefinition(saved)).toEqual(saved);
   expect(connectionDefinition(saved, 'replacement').bearer_token).toBe('replacement');
 });
+
+
+it('preserves reviewed per-tool evidence settings during edits', () => {
+  const saved = { name: 'example', url: 'https://example.com/mcp',
+    allow_without_confirmation: true, evidence_tools: { lookup: ['current'] } } as MCPConnection;
+  expect(connectionDefinition(saved).evidence_tools).toEqual({ lookup: ['current'] });
+});

@@ -58,6 +58,8 @@ def remote(monkeypatch):
             result = super().send(request)
             if request.method == "tools/list" and state["changed"]:
                 result.result["tools"][0]["annotations"] = {"readOnlyHint": True}
+            if request.method == "tools/call" and "result" in state:
+                result.result = state["result"]
             return result
 
         def close(self):
@@ -369,3 +371,116 @@ def test_unsafe_endpoints_rejected_without_connection(tmp_path, remote, url):
     with pytest.raises(ValueError):
         manager.store.create(config(url=url), "admin")
     assert manager.store.list() == [] and remote["clients"] == []
+
+
+def test_reviewed_mcp_evidence_through_live_chat_binding(tmp_path, remote):
+    from types import SimpleNamespace
+
+    from openjarvis.core.evidence import (
+        EvidenceKind,
+        EvidenceRequirement,
+        EvidenceStatus,
+        assess_tool_results,
+    )
+
+    manager = RuntimeToolManager(tmp_path / "tools.db")
+    row = manager.mcp.store.create(
+        config(evidence_tools={"echo": ["current", "fact"]}), "admin"
+    )
+    row = manager.mcp.discover(row["id"], 1, "admin")
+    row = manager.mcp.change(row["id"], row["revision"], "approved", "admin")
+    remote["result"] = {
+        "content": [],
+        "structuredContent": {
+            "location": "Example City",
+            "forecast": "Rain",
+            "chance": 70,
+        },
+    }
+    agent = SimpleNamespace(_tools=[], _executor=ToolExecutor([]))
+    requirement = EvidenceRequirement(required=True, kind=EvidenceKind.CURRENT)
+    with manager.bind_agent(agent):
+        tool = agent._tools[0]
+        from openjarvis.agents.orchestrator import OrchestratorAgent
+
+        selector = object.__new__(OrchestratorAgent)
+        selector._tools = agent._tools
+        assert tool.spec.name in selector._evidence_prompt("What is the weather today?")
+        result = call(tool)
+        assert result.success and '"chance":70' in result.content
+        assessment = assess_tool_results(requirement, agent._tools, [result])
+        assert assessment.status == EvidenceStatus.OBTAINED
+        assert assessment.records[0].source == "mcp:example:echo"
+        assert assessment.records[0].retrieved_at
+        assert (
+            result.metadata["mcp"]["catalog_fingerprint"] == row["approved_fingerprint"]
+        )
+        assert result.metadata["mcp_structured_content"]["chance"] == 70
+    assert agent._tools == []
+    manager.mcp.change(row["id"], row["revision"], "disabled", "admin")
+    assert not call(tool).success
+
+
+def test_mcp_evidence_rejects_unreviewed_error_and_empty_results(tmp_path, remote):
+    from openjarvis.core.evidence import (
+        EvidenceKind,
+        EvidenceRequirement,
+        EvidenceStatus,
+        assess_tool_results,
+    )
+
+    manager = RuntimeMCPManager(tmp_path / "mcp.db")
+    row = installed(manager)
+    requirement = EvidenceRequirement(required=True, kind=EvidenceKind.CURRENT)
+    remote["result"] = {
+        "content": [{"type": "text", "text": "Rain"}],
+        "structuredContent": {"evidence_kinds": ["current"]},
+    }
+    tool = manager.available()[0]
+    result = call(tool)
+    assert "evidence" not in result.metadata
+    assert (
+        assess_tool_results(requirement, [tool], [result]).status
+        != EvidenceStatus.OBTAINED
+    )
+    row = manager.change(
+        row["id"],
+        row["revision"],
+        "updated",
+        "admin",
+        config=config(evidence_tools={"echo": ["current"]}),
+    )
+    assert not call(tool).success
+    row = manager.discover(row["id"], row["revision"], "admin")
+    manager.change(row["id"], row["revision"], "approved", "admin")
+    tool = manager.available()[0]
+    for response in (
+        {"content": []},
+        {"content": [], "structuredContent": {}},
+        {"content": [{"type": "text", "text": "Provider failed"}], "isError": True},
+    ):
+        remote["result"] = response
+        result = call(tool)
+        assert "evidence" not in result.metadata
+        assert (
+            assess_tool_results(requirement, [tool], [result]).status
+            != EvidenceStatus.OBTAINED
+        )
+
+
+def test_evidence_policy_validation_and_unknown_tool_approval(tmp_path, remote):
+    from openjarvis.mcp.runtime_store import definition
+
+    for invalid in (
+        [],
+        {"echo": "current"},
+        {"echo": ["bogus"]},
+        {"echo": ["current", "current"]},
+    ):
+        with pytest.raises(ValueError):
+            definition(config(evidence_tools=invalid))
+    manager = RuntimeMCPManager(tmp_path / "mcp.db")
+    row = manager.store.create(config(evidence_tools={"missing": ["current"]}), "admin")
+    row = manager.discover(row["id"], 1, "admin")
+    with pytest.raises(ValueError, match="undiscovered"):
+        manager.change(row["id"], row["revision"], "approved", "admin")

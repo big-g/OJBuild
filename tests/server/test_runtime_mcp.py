@@ -217,3 +217,29 @@ def test_edit_name_error_has_same_guidance_and_keeps_saved_connection(setup):
         "home_tools" in response.json()["detail"] and "TEST-SECRET" not in response.text
     )
     assert manager.store.get(saved["id"])["revision"] == saved["revision"]
+
+
+def test_per_tool_evidence_web_review_and_reapproval(setup):
+    client, manager, headers, _, remote = setup
+    client.headers.update(headers["admin"])
+    saved = client.post("/v1/runtime-mcp", json=body()).json()
+    path = f"/v1/runtime-mcp/{saved['id']}"
+    saved = client.post(path + "/discover", json={"revision": saved["revision"]}).json()
+    saved = client.post(path + "/approve", json={"revision": saved["revision"]}).json()
+    saved = client.put(
+        path,
+        json={
+            "revision": saved["revision"],
+            "definition": body(evidence_tools={"echo": ["current", "fact"]}),
+        },
+    ).json()
+    assert not saved["approved"] and not saved["enabled"]
+    assert saved["evidence_tools"]["echo"] == ["current", "fact"]
+    saved = client.post(path + "/discover", json={"revision": saved["revision"]}).json()
+    saved = client.post(path + "/approve", json={"revision": saved["revision"]}).json()
+    assert saved["approved"] and saved["enabled"]
+    assert manager.available()[0].spec.evidence_kinds == ["current", "fact"]
+    invalid = client.post(
+        "/v1/runtime-mcp", json=body(name="other", evidence_tools={"echo": ["bogus"]})
+    )
+    assert invalid.status_code == 422 and "TEST-SECRET" not in invalid.text

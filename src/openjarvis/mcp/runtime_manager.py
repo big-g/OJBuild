@@ -139,7 +139,11 @@ class RuntimeMCPTool(MCPToolAdapter):
         self._spec.requires_confirmation = not json.loads(row["definition"])[
             "allow_without_confirmation"
         ]
-        self._spec.evidence_kinds = []
+        self._spec.evidence_kinds = (
+            definition(json.loads(row["definition"]))
+            .get("evidence_tools", {})
+            .get(self.remote_name, [])
+        )
         self._spec.metadata["runtime_mcp_fingerprint"] = self.connection_fingerprint
         self._spec.metadata["runtime_mcp_remote_name"] = self.remote_name
         self.management_identity = f"runtime-mcp:{row['id']}:{spec.name}"
@@ -172,16 +176,51 @@ class RuntimeMCPTool(MCPToolAdapter):
                     raise ValueError("Invalid MCP tool result")
                 if "isError" in result and not isinstance(result["isError"], bool):
                     raise ValueError("Invalid MCP error flag")
+                # Bound and validate structured JSON before retaining or serializing it.
+                catalog._json_contract(result, max_bytes=2 * 1024 * 1024)
                 parts = result["content"]
                 if any(not isinstance(part, dict) for part in parts):
                     raise ValueError("Invalid MCP content")
                 texts = [part["text"] for part in parts if part.get("type") == "text"]
                 if any(not isinstance(text, str) for text in texts):
                     raise ValueError("Invalid MCP text")
+                structured = result.get("structuredContent")
+                if structured is not None:
+                    if not isinstance(structured, dict):
+                        raise ValueError("Invalid MCP structured content")
+                    if structured:
+                        texts.append(canonical(structured))
+                content = "\n".join(texts)
+                success = not result.get("isError", False)
+                provenance = {
+                    "connection_id": self.connection_id,
+                    "connection_name": row["name"],
+                    "remote_tool": self.remote_name,
+                    "catalog_fingerprint": self.connection_fingerprint,
+                    "retrieved_at": datetime.now(timezone.utc).isoformat(),
+                }
+                metadata = {"mcp": provenance}
+                if structured is not None:
+                    metadata["mcp_structured_content"] = structured
+                if success and content.strip() and self._spec.evidence_kinds:
+                    # Evidence authority comes from local review, not provider metadata.
+                    metadata["evidence"] = {
+                        "provider": "mcp:" + row["name"],
+                        "retrieved_at": provenance["retrieved_at"],
+                        "records": [
+                            {
+                                "source": "mcp:" + row["name"] + ":" + self.remote_name,
+                                "source_id": self.management_identity,
+                                "content": content,
+                                "metadata": {"mcp": provenance},
+                            }
+                        ],
+                    }
                 return ToolResult(
                     tool_name=self._spec.name,
-                    content="\n".join(texts),
-                    success=not result.get("isError", False),
+                    content=content,
+                    success=success,
+                    metadata=metadata,
                 )
         except Exception:
             # Provider errors may echo credentials, paths or arbitrary payloads.
@@ -310,7 +349,13 @@ class RuntimeMCPManager:
     def change(self, identity, revision, event, actor, **kwargs):
         if event in {"approved", "enabled"}:
             row = self.store.get(identity)
-            saved_specs(row)
+            specs = saved_specs(row)
+            names = {spec.name for spec in specs}
+            if (
+                set(definition(json.loads(row["definition"])).get("evidence_tools", {}))
+                - names
+            ):
+                raise ValueError("Evidence settings refer to undiscovered remote tools")
             token = self.store.token(row)  # Missing keys cannot be approved.
             if (
                 json.loads(row["definition"]).get("auth_type") == "api_key"
