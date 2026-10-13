@@ -59,7 +59,11 @@ it('retains explicit LAN endpoint and certificate policy when editing a connecti
 
 
 it('preserves reviewed per-tool evidence settings during edits', () => {
-  const saved = { name: 'example', url: 'https://example.com/mcp',
-    allow_without_confirmation: true, evidence_tools: { lookup: ['current'] } } as MCPConnection;
+  const saved: MCPConnection = {
+    id: 'connection-id', revision: 1, name: 'example', url: 'https://example.com/mcp',
+    has_token: false, discovered: true, enabled: true, approved: true,
+    approved_by: 'admin', fingerprint: 'reviewed-fingerprint', tools: [],
+    allow_without_confirmation: true, evidence_tools: { lookup: ['current'] },
+  };
   expect(connectionDefinition(saved).evidence_tools).toEqual({ lookup: ['current'] });
 });
