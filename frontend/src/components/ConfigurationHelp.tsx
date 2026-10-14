@@ -20,7 +20,7 @@ export function ConfigurationHelp({ title, summary, children, id }: {
   const trigger = <DialogTrigger type="button"
     aria-label={`Info: ${title}`} aria-describedby={descriptionIds}
     className="inline-flex cursor-pointer rounded px-1 py-0.5 text-xs underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2"
-    style={{ color: 'var(--color-text-secondary)' }}>Info</DialogTrigger>;
+    style={{ color: 'var(--color-text-secondary)' }}>{title} · Info</DialogTrigger>;
   return <div className="inline-block align-middle">
     {/* Keep field aria-describedby targets available without expanding the layout. */}
     <div id={id} hidden data-configuration-description>{children}</div>

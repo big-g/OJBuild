@@ -23,8 +23,8 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
   };
   return <div className="flex flex-col gap-3" aria-label="Protected credentials">
     <h4>Protected credentials</h4>
-    <ConfigurationHelp title="Protected credentials" summary="Reusable credentials stored securely on the server.">Reusable bearer tokens and API keys, encrypted on the server and restricted to one HTTPS origin.</ConfigurationHelp>
-    <ConfigurationHelp title="Credential format" summary={configurationSummary("For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider\u2019s named header, such as X-API-Key.")}>For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider’s named header, such as X-API-Key.</ConfigurationHelp>
+    <ConfigurationHelp title="Storage and access scope" summary="Reusable credentials stored securely on the server.">Reusable bearer tokens and API keys, encrypted on the server and restricted to one HTTPS origin.</ConfigurationHelp>
+    <ConfigurationHelp title="Origin and token format" summary={configurationSummary("For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider\u2019s named header, such as X-API-Key.")}>For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider’s named header, such as X-API-Key.</ConfigurationHelp>
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {credentials.map((credential) => <div key={credential.id} className="flex flex-wrap gap-3">

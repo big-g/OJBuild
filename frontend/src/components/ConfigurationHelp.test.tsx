@@ -3,6 +3,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ConfigurationHelp, configurationSummary } from './ConfigurationHelp';
+import { CredentialManagerPanel } from './setup/CredentialManagerPanel';
 
 let root: Root;
 beforeEach(() => {
@@ -54,4 +55,13 @@ it('keeps full help available when no concise summary exists', async () => {
   await act(async () => root.render(<ConfigurationHelp title="Complex setting">{'x'.repeat(200)}</ConfigurationHelp>));
   await act(async () => document.querySelector<HTMLButtonElement>('button')!.click());
   expect(document.querySelector('[role="dialog"]')?.textContent).toContain('x'.repeat(200));
+});
+
+
+it('gives credential help links distinct visible topics', async () => {
+  await act(async () => root.render(<CredentialManagerPanel credentials={[]} refresh={vi.fn()} />));
+  const labels = [...document.querySelectorAll('button')].map(button => button.textContent);
+  expect(labels).toContain('Storage and access scope · Info');
+  expect(labels).toContain('Origin and token format · Info');
+  expect(labels).not.toContain('Info');
 });
