@@ -50,3 +50,13 @@ terminal-only configuration workflows. Remaining work includes structured legacy
 configuration and credential migration, field-specific enums/semantic validation,
 more live application adapters, configured-server defaults, environment-only
 inference options, and a deployment-specific controlled service-restart facility.
+
+
+## Configuration help
+
+Configuration forms use an **Info** link for full descriptions, setup guides and
+examples. Hover over the link or focus it with the keyboard to see a concise
+summary when one is available. Click or press Enter/Space to open the full help
+dialog. Press Escape or use Close to return to the form; focus returns to the
+Info link. Long help scrolls within the dialog on smaller screens. Labels,
+validation errors, status messages and saved values remain on the form.

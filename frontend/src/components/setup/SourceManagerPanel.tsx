@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from '../ConfigurationHelp';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   setSourceSharing, setSourcePreference, createSourceInstance, listSourceAdapters, listSourceInstances, listSourceCredentials,
@@ -31,7 +32,7 @@ export function SourceConfigurationFields({
     return conditions.every((condition) => condition.one_of ? condition.one_of.includes(fieldValue(condition.field)) : fieldValue(condition.field) === condition.equals);
   };
   return <>
-    {adapter.fields.filter(visible).map((field) => <label key={field.name} className="flex flex-col gap-1">
+    {adapter.fields.filter(visible).map((field) => <div key={field.name} className="flex flex-col gap-1"><label className="flex flex-col gap-1">
       {field.label}
       {field.type === 'credential' ? <select aria-label={field.label} required={field.required} value={String(fieldValue(field.name))} onChange={(event) => changeField(field, event.target.value)}>
         <option value="">{field.required ? 'Choose a protected credential…' : 'No authentication'}</option>
@@ -64,8 +65,9 @@ export function SourceConfigurationFields({
         onChange={(event) => changeField(field, field.type === 'checkbox' ? event.target.checked
           : field.type === 'number' ? Number(event.target.value) : event.target.value)}
       />}
-      {field.description && <span style={{ fontSize: 12, color: 'var(--color-text-secondary)' }}>{field.description}</span>}
-    </label>)}
+      </label>
+      {field.description && <ConfigurationHelp title={field.label} summary={configurationSummary(field.description)}>{field.description}</ConfigurationHelp>}
+    </div>)}
   </>;
 }
 
@@ -192,7 +194,7 @@ export function SourceManagerPanel() {
         <label>Source type <select value={adapterId} disabled={!!editing} onChange={(event) => {
           setAdapterId(event.target.value); setConfig(event.target.value === 'api_service' ? { definition: JSON.stringify(API_SERVICE_EXAMPLES.generic), operation: 'readings', inputs: '{}' } : {}); setNotice(''); setPreview(null);
         }}>{adapters.map((item) => <option key={item.adapter_id} value={item.adapter_id}>{item.display_name}</option>)}</select></label>
-        <p>{adapter.description}</p>
+        <ConfigurationHelp title={adapter.display_name} summary={configurationSummary(adapter.description)}>{adapter.description}</ConfigurationHelp>
         {adapterId === 'json_api' && <APIConnectionHelp />}
         <label>Name <input aria-label="Source name" value={name} maxLength={120} required onChange={(event) => setName(event.target.value)} /></label>
         {adapterId === 'api_service' ? <APIServiceEditor credentials={credentials} config={config} onChange={value => { setConfig(value); setNotice(''); setPreview(null); }} /> : <SourceConfigurationFields credentials={credentials} adapter={adapter} config={config} onChange={(value) => { setConfig(value); setNotice(''); setPreview(null); }} />}

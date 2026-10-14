@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from './ConfigurationHelp';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { getStoredUser } from '../lib/auth';
 import { fetchModels } from '../lib/api';
@@ -43,12 +44,12 @@ export function ModelConnectionsPanel({ onConnectionsChanged, backendRevision = 
   const input = 'block w-full rounded border px-3 py-2 bg-transparent';
   return <section id="model-server-connections" className="rounded-lg border p-4 space-y-3" aria-label="Model server connections">
     <h3 className="font-semibold">Model server connections</h3>
-    <p className="text-sm">The backend’s configured Ollama servers carry forward automatically when task configuration loads. Save additional Ollama servers here. Test the catalog, read model capabilities, then enable the connection for chat. Models appear in the installed model picker with their server names. Adding a connection does not change the current chat model.</p>
-    <details className="text-sm"><summary className="cursor-pointer">Connection setup help</summary>
+    <ConfigurationHelp title="Model connection setup" summary={configurationSummary("The backend\u2019s configured Ollama servers carry forward automatically when task configuration loads. Save additional Ollama servers here. Test the catalog, read model capabilities, then enable the connection for chat. Models appear in the installed model picker with their server names. Adding a connection does not change the current chat model.")}>The backend’s configured Ollama servers carry forward automatically when task configuration loads. Save additional Ollama servers here. Test the catalog, read model capabilities, then enable the connection for chat. Models appear in the installed model picker with their server names. Adding a connection does not change the current chat model.</ConfigurationHelp>
+    <ConfigurationHelp title="Connection setup help" summary="Setup steps and configuration behavior.">
       <p className="mt-2">Use localhost for Ollama on the OpenJarvis server, or the private IP of another machine running Ollama. Localhost refers to the backend server, not this browser. Remote Ollama must listen on its LAN address and allow access from the OpenJarvis server through its firewall.</p>
       <p>Test reads the installed model catalog only. It does not pull, load or run models. Read capabilities asks Ollama for a model manifest without running it. Capability labels are provider reports, not behavioral verification. Enable for chat makes reported chat-capable models available to all authenticated users. Requests also check live availability and required tool/image capabilities. HTTP LAN traffic is unencrypted; use only a trusted LAN or verified HTTPS.</p>
       <p>Each connection has its own identity, so identical model names on different servers stay separate. Edits and catalog/capability reads disable the connection; review and enable it again. Disabled/removed connections block later model calls in an active agent run. A generation already submitted may finish. After enabling, these chat models become available in Model task assignments and diagnostics below.</p>
-    </details>
+    </ConfigurationHelp>
     <form className="space-y-3" onSubmit={(e: FormEvent) => { e.preventDefault(); void act(async () => {
       if (editing) await updateModelConnection(editing, name.trim(), url.trim());
       else await createModelConnection(name.trim(), url.trim());
@@ -56,10 +57,10 @@ export function ModelConnectionsPanel({ onConnectionsChanged, backendRevision = 
     }); }}>
       <label className="block text-sm" htmlFor="model-connection-name">Connection name</label>
       <input id="model-connection-name" className={input} aria-describedby="model-name-hint" required maxLength={24} pattern="[a-z][a-z0-9_]{0,23}" value={name} onChange={e => setName(e.target.value)} placeholder="home_gpu" disabled={busy} />
-      <p id="model-name-hint" className="text-xs">1–24 characters. Start with a lowercase letter; use lowercase letters, digits or underscores. Example: home_gpu.</p>
+      <ConfigurationHelp title="Model connection setup" summary={configurationSummary("1\u201324 characters. Start with a lowercase letter; use lowercase letters, digits or underscores. Example: home_gpu.")} id="model-name-hint">1–24 characters. Start with a lowercase letter; use lowercase letters, digits or underscores. Example: home_gpu.</ConfigurationHelp>
       <label className="block text-sm" htmlFor="model-connection-url">Ollama server URL</label>
       <input id="model-connection-url" className={input} aria-describedby="model-url-hint" type="url" required maxLength={2048} value={url} onChange={e => setUrl(e.target.value)} disabled={busy} />
-      <p id="model-url-hint" className="text-xs">HTTP(S) root URL, up to 2048 characters. Examples: http://localhost:11434 or http://192.168.1.20:11434. Use an explicit LAN IP; omit credentials and /api paths. Public servers and authenticated endpoints are not supported in this batch.</p>
+      <ConfigurationHelp title="Model connection setup" summary={configurationSummary("HTTP(S) root URL, up to 2048 characters. Examples: http://localhost:11434 or http://192.168.1.20:11434. Use an explicit LAN IP; omit credentials and /api paths. Public servers and authenticated endpoints are not supported in this batch.")} id="model-url-hint">HTTP(S) root URL, up to 2048 characters. Examples: http://localhost:11434 or http://192.168.1.20:11434. Use an explicit LAN IP; omit credentials and /api paths. Public servers and authenticated endpoints are not supported in this batch.</ConfigurationHelp>
       <button disabled={busy} className="rounded border px-3 py-2 disabled:opacity-50">{editing ? 'Save changes' : 'Add Ollama connection'}</button>
       {editing && <button disabled={busy} type="button" className="ml-2 rounded border px-3 py-2" onClick={reset}>Cancel edit</button>}
     </form>

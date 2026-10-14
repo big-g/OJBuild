@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from './ConfigurationHelp';
 import { useCallback, useEffect, useState, useId } from 'react';
 import { connectionDefinition, mcpRequest, type MCPConnection, type MCPDefinition } from '../lib/runtime-mcp-api';
 import { importLegacyMCP, reviewLegacyMCP, type LegacyMCPEntry } from '../lib/runtime-mcp-api';
@@ -20,7 +21,7 @@ export function MCPCatalogReview({ connection }: { connection: MCPConnection }) 
       <div className="space-y-3 mt-3">{connection.tools.map(tool => <article key={tool.name} className="border rounded-lg p-3" style={{ borderColor: 'var(--color-border)' }}>
         <p className="font-medium break-all">{tool.remote_name}</p>
         <p className="break-all text-xs">Jarvis name: {tool.name}</p>
-        <p className="whitespace-pre-wrap">{tool.description}</p>
+        <ConfigurationHelp title={tool.remote_name} summary={configurationSummary(tool.description)}>{tool.description}</ConfigurationHelp>
         <p>Reviewed evidence uses: {connection.evidence_tools?.[tool.remote_name]?.join(', ') || 'None; output cannot support evidence-gated answers'}</p>
         <p className="mt-2">Input schema</p>
         <pre className="overflow-x-auto text-xs whitespace-pre-wrap">{JSON.stringify(tool.parameters, null, 2)}</pre>
@@ -77,15 +78,15 @@ export function MCPConnectionsPanel() {
   };
   return <section className="space-y-5 pt-8 border-t" style={{ borderColor: 'var(--color-border)' }}>
     <header><h2 className="text-lg font-semibold">MCP connections</h2>
-      <p className="text-sm mt-2">Save a public or explicitly authorized LAN HTTPS connection, discover its tools, then review and approve the whole catalog.
-        Approved tools are shared across accounts. Saving and discovery do not authorize calls.</p>
-      <details className="mt-3 text-sm space-y-2"><summary className="cursor-pointer">What is MCP? Connection setup help</summary>
+      <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Save a public or explicitly authorized LAN HTTPS connection, discover its tools, then review and approve the whole catalog. Approved tools are shared across accounts. Saving and discovery do not authorize calls.")}>Save a public or explicitly authorized LAN HTTPS connection, discover its tools, then review and approve the whole catalog.
+        Approved tools are shared across accounts. Saving and discovery do not authorize calls.</ConfigurationHelp>
+      <ConfigurationHelp title="What is MCP? Connection setup help" summary="Setup steps and configuration behavior.">
         <p>MCP (Model Context Protocol) lets Jarvis use tools provided by another service. Ask the service provider for its MCP HTTPS endpoint and, if required, an access token.</p>
         <ol className="list-decimal pl-5 space-y-1"><li>Choose a short connection name, such as <code>home_tools</code>. This is your label for the connection, not the provider’s display name.</li><li>Paste the provider’s full HTTPS endpoint, such as <code>https://example.com/mcp</code>. A website homepage may not be an MCP endpoint.</li><li>Use Public HTTPS for an internet service. For a service on your home or office network, select Authorized private LAN and list its exact IP addresses.</li><li>Save, then select Discover / refresh to fetch the list of tools. Review what each tool can do and what information it accepts.</li><li>Select Approve catalog &amp; enable only when you trust the tools. Saving or discovering alone does not let Jarvis call them.</li></ol>
         <p>A bearer token is a secret access key supplied by the provider. Paste it into the token field, not the URL. Leave it blank when the provider does not require one.</p>
         <p>An API key may be accepted as a Bearer token or in a separate header. Follow the provider’s instructions: choose Bearer token for Authorization: Bearer, or API key header for a header such as X-API-Key. No conversion is needed; paste the raw credential. OAuth sign-in or token exchange is not performed by this form.</p>
         <p>Certificate trust checks the service’s identity and encrypted connection. Start with System trust. Choose Private CA certificates only when your LAN service administrator supplies a PEM CA certificate; never paste a private key.</p>
-      </details></header>
+      </ConfigurationHelp></header>
     {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
     {notice && <p role="status">{notice}</p>}
     <form className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }} onSubmit={e => {
@@ -103,18 +104,18 @@ export function MCPConnectionsPanel() {
           aria-describedby={nameHelpId} title="Use 1–24 characters: start with a lowercase letter, then use lowercase letters, digits or underscores."
           onInvalid={e => e.currentTarget.setCustomValidity('Enter a connection name with 1–24 characters. Start with a lowercase letter; use only lowercase letters, digits or underscores. Example: home_tools.')}
           value={definition.name} onChange={e => { e.currentTarget.setCustomValidity(''); setDefinition({ ...definition, name: e.target.value }); }} /></label>
-      <p id={nameHelpId} className="text-xs">Use 1–24 characters. Start with a lowercase letter (a–z); use only lowercase letters, digits (0–9) or underscores (_). No spaces, capital letters or hyphens. Examples: <code>home_tools</code>, <code>weather2</code>.</p>
+      <ConfigurationHelp title="Connection name" summary={configurationSummary("Use 1\u201324 characters. Start with a lowercase letter (a\u2013z); use only lowercase letters, digits (0\u20139) or underscores (_). No spaces, capital letters or hyphens. Examples: home_tools, weather2.")} id={nameHelpId}>Use 1–24 characters. Start with a lowercase letter (a–z); use only lowercase letters, digits (0–9) or underscores (_). No spaces, capital letters or hyphens. Examples: <code>home_tools</code>, <code>weather2</code>.</ConfigurationHelp>
       <label className="block text-sm">HTTPS endpoint
         <input className={field} style={style} required type="url" maxLength={4096} placeholder="https://example.com/mcp"
           value={definition.url} onChange={e => setDefinition({ ...definition, url: e.target.value })} /></label>
-      <p className="text-xs">Use HTTPS without URL credentials or queries. Local package installation remains a separate roadmap item.</p>
+      <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Use HTTPS without URL credentials or queries. Local package installation remains a separate roadmap item.")}>Use HTTPS without URL credentials or queries. Local package installation remains a separate roadmap item.</ConfigurationHelp>
       <label className="block text-sm">Network access<select className={field} style={style} value={definition.network_access || 'public'} onChange={e => setDefinition({ ...definition, network_access: e.target.value as 'public' | 'lan', lan_addresses: '', tls_trust: 'system', ca_certificate: '' })}><option value="public">Public HTTPS (default)</option><option value="lan">Authorized private LAN</option></select></label>
       {definition.network_access === 'lan' && <>
         <label className="block text-sm">Authorized LAN IP addresses<textarea className={field} style={style} required maxLength={2048} placeholder="192.168.1.20, fd00::20" value={definition.lan_addresses || ''} onChange={e => setDefinition({ ...definition, lan_addresses: e.target.value })} /></label>
-        <p className="text-xs">Authorize 1–32 exact RFC1918 or IPv6 unique-local addresses, not subnets. Every DNS answer must be listed. Loopback, link-local and metadata endpoints remain blocked. Saving authorizes catalog discovery at this endpoint; tool calls still require review and approval.</p>
+        <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Authorize 1\u201332 exact RFC1918 or IPv6 unique-local addresses, not subnets. Every DNS answer must be listed. Loopback, link-local and metadata endpoints remain blocked. Saving authorizes catalog discovery at this endpoint; tool calls still require review and approval.")}>Authorize 1–32 exact RFC1918 or IPv6 unique-local addresses, not subnets. Every DNS answer must be listed. Loopback, link-local and metadata endpoints remain blocked. Saving authorizes catalog discovery at this endpoint; tool calls still require review and approval.</ConfigurationHelp>
         <label className="block text-sm">Certificate trust<select className={field} style={style} value={definition.tls_trust || 'system'} onChange={e => setDefinition({ ...definition, tls_trust: e.target.value as 'system' | 'custom_ca', ca_certificate: '' })}><option value="system">System trust</option><option value="custom_ca">Private CA certificates</option></select></label>
         {definition.tls_trust === 'custom_ca' && <label className="block text-sm">PEM CA certificates<textarea className={field} style={style} required maxLength={16384} value={definition.ca_certificate || ''} onChange={e => setDefinition({ ...definition, ca_certificate: e.target.value })} /></label>}
-        <p className="text-xs">Certificate and hostname verification stay enabled. Private CA trust applies only to this connection. LAN HTTPS may use a custom port.</p>
+        <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Certificate and hostname verification stay enabled. Private CA trust applies only to this connection. LAN HTTPS may use a custom port.")}>Certificate and hostname verification stay enabled. Private CA trust applies only to this connection. LAN HTTPS may use a custom port.</ConfigurationHelp>
       </>}
       <label className="block text-sm">Authentication method
         <select className={field} style={style} aria-describedby={authHelpId} value={definition.auth_type || 'bearer'} onChange={e => {
@@ -122,12 +123,12 @@ export function MCPConnectionsPanel() {
           setToken(''); setClearToken(false);
         }}><option value="bearer">Bearer token (Authorization: Bearer)</option><option value="api_key">API key header</option></select>
       </label>
-      <p id={authHelpId} className="text-xs">Use the method specified by your MCP provider. Bearer with no saved token allows an unauthenticated connection. An API key header requires a saved key before discovery.</p>
+      <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Use the method specified by your MCP provider. Bearer with no saved token allows an unauthenticated connection. An API key header requires a saved key before discovery.")} id={authHelpId}>Use the method specified by your MCP provider. Bearer with no saved token allows an unauthenticated connection. An API key header requires a saved key before discovery.</ConfigurationHelp>
       {definition.auth_type === 'api_key' && <>
         <label className="block text-sm">API key header name
           <input className={field} style={style} required maxLength={64} pattern="[A-Za-z][A-Za-z0-9-]{0,63}" aria-describedby={headerHelpId} placeholder="X-API-Key" value={definition.api_key_header || ''} onChange={e => setDefinition({ ...definition, api_key_header: e.target.value })} />
         </label>
-        <p id={headerHelpId} className="text-xs">Enter the provider’s header name, for example X-API-Key. Use 1–64 ASCII letters, digits or hyphens, starting with a letter. Header names are case-insensitive. Authorization, HTTP routing/transport and MCP protocol headers are reserved.</p>
+        <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Enter the provider\u2019s header name, for example X-API-Key. Use 1\u201364 ASCII letters, digits or hyphens, starting with a letter. Header names are case-insensitive. Authorization, HTTP routing/transport and MCP protocol headers are reserved.")} id={headerHelpId}>Enter the provider’s header name, for example X-API-Key. Use 1–64 ASCII letters, digits or hyphens, starting with a letter. Header names are case-insensitive. Authorization, HTTP routing/transport and MCP protocol headers are reserved.</ConfigurationHelp>
       </>}
       <label className="block text-sm">{editing ? 'Replace saved credential (blank keeps it if settings are unchanged)' : definition.auth_type === 'api_key' ? 'API key' : 'Bearer token (optional)'}
         <input className={field} style={style} type="password" autoComplete="off" maxLength={8192}
@@ -135,15 +136,15 @@ export function MCPConnectionsPanel() {
           value={token} onChange={e => { setToken(e.target.value); setClearToken(false); }} /></label>
       {editing?.has_token && <label className="flex gap-2 text-sm"><input type="checkbox" checked={clearToken}
         onChange={e => { setClearToken(e.target.checked); setToken(''); }} />Remove saved token</label>}
-      <p id={credentialHelpId} className="text-xs">Paste only the raw token or key, without the Bearer prefix or header name. Use 1–8192 printable ASCII characters without spaces. Credentials are encrypted on the server and never returned to this form. Changing the endpoint, authentication method, API key header, authorized addresses or certificate trust clears a retained token unless you explicitly replace it.</p>
+      <ConfigurationHelp title="MCP credential" summary={configurationSummary("Paste only the raw token or key, without the Bearer prefix or header name. Use 1\u20138192 printable ASCII characters without spaces. Credentials are encrypted on the server and never returned to this form. Changing the endpoint, authentication method, API key header, authorized addresses or certificate trust clears a retained token unless you explicitly replace it.")} id={credentialHelpId}>Paste only the raw token or key, without the Bearer prefix or header name. Use 1–8192 printable ASCII characters without spaces. Credentials are encrypted on the server and never returned to this form. Changing the endpoint, authentication method, API key header, authorized addresses or certificate trust clears a retained token unless you explicitly replace it.</ConfigurationHelp>
       <label className="flex gap-2 text-sm"><input type="checkbox" checked={definition.allow_without_confirmation}
         onChange={e => setDefinition({ ...definition, allow_without_confirmation: e.target.checked })} />
         Allow approved tool calls without per-call confirmation</label>
-      <p className="text-xs">Enable this only after reviewing tools for automated use. Browser chat and scheduled tasks need this option because they cannot ask for interactive confirmation. Leave it off for clients that can ask before each call. Editing any setting withdraws approval.</p>
+      <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Enable this only after reviewing tools for automated use. Browser chat and scheduled tasks need this option because they cannot ask for interactive confirmation. Leave it off for clients that can ask before each call. Editing any setting withdraws approval.")}>Enable this only after reviewing tools for automated use. Browser chat and scheduled tasks need this option because they cannot ask for interactive confirmation. Leave it off for clients that can ask before each call. Editing any setting withdraws approval.</ConfigurationHelp>
       {editing && <fieldset className="space-y-3"><legend>Evidence capabilities by remote tool</legend>
-        <p className="text-xs">Select only the kinds of source information each tool retrieves. Current means time-sensitive data, such as forecasts. Successful execution is not proof of truth; grounding checks still apply. Save, discover again, then review and approve the changed connection.</p>
+        <ConfigurationHelp title="Evidence capabilities" summary={configurationSummary("Select only the kinds of source information each tool retrieves. Current means time-sensitive data, such as forecasts. Successful execution is not proof of truth; grounding checks still apply. Save, discover again, then review and approve the changed connection.")}>Select only the kinds of source information each tool retrieves. Current means time-sensitive data, such as forecasts. Successful execution is not proof of truth; grounding checks still apply. Save, discover again, then review and approve the changed connection.</ConfigurationHelp>
         {editing.tools.map(tool => <div key={tool.remote_name} className="space-y-1">
-          <p className="text-sm break-all">{tool.remote_name} — {tool.description}</p>
+          <p className="text-sm break-all">{tool.remote_name} <ConfigurationHelp title={tool.remote_name} summary={configurationSummary(tool.description)}>{tool.description}</ConfigurationHelp></p>
           <div className="flex flex-wrap gap-3">{(['fact', 'current', 'external', 'decision'] as const).map(kind => <label key={kind} className="flex gap-2 text-sm">
             <input type="checkbox" checked={definition.evidence_tools?.[tool.remote_name]?.includes(kind) || false}
               onChange={e => {
@@ -154,18 +155,18 @@ export function MCPConnectionsPanel() {
                 setDefinition({ ...definition, evidence_tools: evidence });
               }} />{kind}</label>)}</div>
         </div>)}
-        {!editing.tools.length && <p className="text-xs">Discover the tool catalog first, then edit this connection to select evidence capabilities.</p>}
+        {!editing.tools.length && <p className="text-sm">Discover the tool catalog first, then edit this connection to select evidence capabilities.</p>}
       </fieldset>}
       <div className="flex gap-2"><button className={button} disabled={busy} type="submit">Save connection</button>
         {editing && <button className={button} disabled={busy} type="button" onClick={reset}>Cancel edit</button>}</div>
     </form>
     <section className="rounded-xl border p-5 space-y-3" style={{ borderColor: 'var(--color-border)' }}>
       <h3 className="font-medium">Import legacy MCP connections</h3>
-      <p className="text-sm">Review the server's existing configuration, then select individual public HTTPS connections.
+      <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Review the server's existing configuration, then select individual public HTTPS connections. Credentials are never shown. Import saves a disabled connection requiring confirmation, discovery and fresh approval. Local commands, private endpoints and tool filters need separate configuration.")}>Review the server's existing configuration, then select individual public HTTPS connections.
         Credentials are never shown. Import saves a disabled connection requiring confirmation, discovery and fresh approval.
-        Local commands, private endpoints and tool filters need separate configuration.</p>
-      <p className="text-xs">Import does not edit or disable the legacy configuration. Remove or disable migrated legacy entries
-        and restart the service before approving their replacements to avoid two active paths.</p>
+        Local commands, private endpoints and tool filters need separate configuration.</ConfigurationHelp>
+      <ConfigurationHelp title="MCP configuration" summary={configurationSummary("Import does not edit or disable the legacy configuration. Remove or disable migrated legacy entries and restart the service before approving their replacements to avoid two active paths.")}>Import does not edit or disable the legacy configuration. Remove or disable migrated legacy entries
+        and restart the service before approving their replacements to avoid two active paths.</ConfigurationHelp>
       <button className={button} disabled={busy} onClick={() => void perform(async () => {
         setLegacy(await reviewLegacyMCP());
       }, 'Legacy configuration reviewed. Nothing was imported or connected.')}>

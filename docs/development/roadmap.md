@@ -18,7 +18,11 @@ and indexed data. Extensibility must retain bounded execution and observable err
 
 Configuration forms must provide visible format/range hints and realistic examples
 next to constrained fields, with accessible associations to their inputs. Explain
-unfamiliar terms and multi-step setup in expandable help available within the app.
+unfamiliar terms and multi-step setup through an Info link opening a full-description
+dialog. Where a concise summary is available, show it on hover or keyboard focus.
+Keep configuration screens compact; preserve labels, input constraints, status and
+validation feedback. Help dialogs must support keyboard dismissal, focus return,
+small-screen scrolling and rich examples/links.
 Validation failures must explain how to correct the input without echoing secrets.
 MCP connection setup now supplies naming rules/examples, actionable name errors
 and an in-app guide covering endpoints, tokens, LAN trust and catalog approval.

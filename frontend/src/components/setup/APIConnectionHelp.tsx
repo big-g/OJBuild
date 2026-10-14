@@ -1,8 +1,8 @@
+import { ConfigurationHelp } from '../ConfigurationHelp';
 import type { SourceTestResult } from '../../lib/sources-api';
 
 export function APIConnectionHelp() {
-  return <details className="text-sm">
-    <summary className="cursor-pointer">Connect a service API and use its data with Jarvis</summary>
+  return <ConfigurationHelp title="Connect a service API and use its data with Jarvis" summary="Connect a service that returns JSON data for Jarvis to analyze.">
     <p>This connection reads JSON data from a service using HTTP GET. It can supply monitoring readings, forecasts, inventories or other service data for Jarvis to analyze. AI model providers are configured separately.</p>
     <ol className="list-decimal pl-5 space-y-2">
       <li>Enter the service’s data endpoint, for example <code>https://api.example.com/readings?station=home</code>. Use non-secret query parameters only; never paste keys or passwords into the URL.</li>
@@ -14,7 +14,7 @@ export function APIConnectionHelp() {
     </ol>
     <p>Connections are personal by default. Universal access requires administrator approval. Fetch time says when Jarvis read the API; preserve measurement timestamps and units in the returned data. Scheduled sync updates the knowledge store; it does not automatically send alerts.</p>
     <p>Currently supported: public HTTP/HTTPS JSON GET endpoints, protected header credentials over HTTPS and bounded pagination. Private LAN APIs, OAuth-only general services, XML responses and API operations that change data require additional adapters.</p>
-  </details>;
+  </ConfigurationHelp>;
 }
 
 export function SourceTestPreview({ result }: { result: SourceTestResult }) {

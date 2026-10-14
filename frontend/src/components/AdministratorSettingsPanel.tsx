@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from './ConfigurationHelp';
 import { useEffect, useState } from 'react';
 import { getStoredUser } from '../lib/auth';
 import { fetchModels } from '../lib/api';
@@ -60,8 +61,8 @@ export function AdministratorSettingsPanel() {
   const sections = [...new Set(filtered.map(f => f.key.split('.')[0]))];
   return <div id="administrator-settings" className="space-y-3 rounded-lg border p-4" style={{ borderColor: 'var(--color-border)' }}>
     <h3 className="font-medium">Administrator server settings</h3>
-    <p className="text-sm">Shared across accounts and saved in the database. TOML supplies bootstrap values; Reset removes a saved override. Your explicit chat model and task assignments take precedence over the server default.</p>
-    <p className="text-sm">The memory model runs after chat to extract durable facts. Using the same model avoids loading Qwen just for memory extraction.</p>
+    <ConfigurationHelp title="Administrator settings" summary={configurationSummary("Shared across accounts and saved in the database. TOML supplies bootstrap values; Reset removes a saved override. Your explicit chat model and task assignments take precedence over the server default.")}>Shared across accounts and saved in the database. TOML supplies bootstrap values; Reset removes a saved override. Your explicit chat model and task assignments take precedence over the server default.</ConfigurationHelp>
+    <ConfigurationHelp title="Administrator settings" summary={configurationSummary("The memory model runs after chat to extract durable facts. Using the same model avoids loading Qwen just for memory extraction.")}>The memory model runs after chat to extract durable facts. Using the same model avoids loading Qwen just for memory extraction.</ConfigurationHelp>
     {[DEFAULT, MEMORY, GENERATION].map(key => {
       const field = byKey.get(key);
       const current = field ? String(value(field) ?? '') : '';
@@ -72,19 +73,20 @@ export function AdministratorSettingsPanel() {
           {current && !installed.some(m => m.id === current) && <option value={current}>{current} (not in current catalog)</option>}
           {installed.map(m => <option key={m.id} value={m.id}>{m.display_name || m.id}</option>)}
         </select>
-        <p id={`hint-${key}`} className="text-xs">{field?.help} Existing-backend models are selectable here; configured-server models use task assignments.</p>
+        <ConfigurationHelp id={`hint-${key}`} title={key === MEMORY ? "Memory extraction model" : key === GENERATION ? "Chat during generation" : "Server default model"} summary={field?.help ? configurationSummary(field.help) : undefined}>{field?.help} Existing-backend models are selectable here; configured-server models use task assignments.</ConfigurationHelp>
         {field?.overridden && <button disabled={busy} className="text-xs underline" onClick={() => setChanges(c => ({ ...c, [key]: null }))}>Reset to bootstrap</button>}
       </div>;
     })}
     <details><summary className="cursor-pointer">All server parameters</summary>
-      <p className="text-sm my-2">Model defaults apply live. Other parameters require an OpenJarvis server restart. Protected credentials and structured integrations use their dedicated screens; this editor never displays saved secrets. These are OpenJarvis parameters; Ollama daemon and operating-system settings are managed separately.</p>
+      <ConfigurationHelp title="Administrator settings" summary={configurationSummary("Model defaults apply live. Other parameters require an OpenJarvis server restart. Protected credentials and structured integrations use their dedicated screens; this editor never displays saved secrets. These are OpenJarvis parameters; Ollama daemon and operating-system settings are managed separately.")}>Model defaults apply live. Other parameters require an OpenJarvis server restart. Protected credentials and structured integrations use their dedicated screens; this editor never displays saved secrets. These are OpenJarvis parameters; Ollama daemon and operating-system settings are managed separately.</ConfigurationHelp>
       <label className="block text-sm">Find a parameter<input value={query} onChange={e => setQuery(e.target.value)} type="search" className="block w-full rounded border p-2" /></label>
       {sections.map(section => <details key={section} open={!!query} className="my-3"><summary className="cursor-pointer font-medium">{section}</summary>
         {filtered.filter(f => f.key.split('.')[0] === section).map(field => <div key={field.key} className="space-y-1 border-b py-3">
           <label htmlFor={`admin-${field.key}`} className="block text-sm font-medium">{field.key}</label>
           {!field.editable ? <p className="text-xs">{field.reason}</p> : <>
             {field.type === 'bool' ? <input id={`admin-${field.key}`} aria-describedby={`hint-${field.key}`} type="checkbox" checked={!!value(field)} disabled={busy} onChange={e => setChanges(c => ({ ...c, [field.key]: e.target.checked }))} /> : <textarea id={`admin-${field.key}`} aria-describedby={`hint-${field.key}`} rows={field.type === 'list' ? 3 : 1} disabled={busy} value={Array.isArray(value(field)) ? JSON.stringify(value(field)) : String(value(field) ?? '')} onChange={e => setChanges(c => ({ ...c, [field.key]: e.target.value }))} className="block w-full rounded border p-2" />}
-            <p id={`hint-${field.key}`} className="text-xs">{field.help} Type: {field.type === 'list' ? `JSON array of ${field.item_type} values` : field.type}. {field.minimum !== undefined && <>Range: {field.minimum}–{field.maximum}. </>}{field.application === 'live' ? 'Applies live to new requests or jobs.' : field.pending_restart ? 'Saved; restart required.' : 'Applies after server restart.'}</p>
+            <ConfigurationHelp title={field.key} summary={field.help ? configurationSummary(field.help) : undefined}>{field.help}</ConfigurationHelp>
+            <p id={`hint-${field.key}`} className="text-xs">Type: {field.type === 'list' ? `JSON array of ${field.item_type} values` : field.type}. {field.minimum !== undefined && <>Range: {field.minimum}–{field.maximum}. </>}{field.application === 'live' ? 'Applies live to new requests or jobs.' : field.pending_restart ? 'Saved; restart required.' : 'Applies after server restart.'}</p>
             {field.overridden && <button disabled={busy} className="text-xs underline" onClick={() => setChanges(c => ({ ...c, [field.key]: null }))}>Reset to bootstrap</button>}
           </>}
         </div>)}

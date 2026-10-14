@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from '../ConfigurationHelp';
 import { useState } from 'react';
 import { createSourceCredential, removeSourceCredential, rotateSourceCredential } from '../../lib/sources-api';
 import type { SourceCredential } from '../../lib/sources-api';
@@ -22,8 +23,8 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
   };
   return <div className="flex flex-col gap-3" aria-label="Protected credentials">
     <h4>Protected credentials</h4>
-    <p>Reusable bearer tokens and API keys, encrypted on the server and restricted to one HTTPS origin.</p>
-    <p className="text-sm">For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider’s named header, such as X-API-Key.</p>
+    <ConfigurationHelp title="Protected credentials" summary="Reusable credentials stored securely on the server.">Reusable bearer tokens and API keys, encrypted on the server and restricted to one HTTPS origin.</ConfigurationHelp>
+    <ConfigurationHelp title="Credential format" summary={configurationSummary("For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider\u2019s named header, such as X-API-Key.")}>For a service API, use its scheme and host only, such as https://api.example.com, without the endpoint path or query. Paste the raw key/token: Bearer sends Authorization: Bearer, while API key header sends the key in the provider’s named header, such as X-API-Key.</ConfigurationHelp>
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
     {credentials.map((credential) => <div key={credential.id} className="flex flex-wrap gap-3">
@@ -48,7 +49,7 @@ export function CredentialManagerPanel({ credentials, refresh }: { credentials: 
           {['api_key', 'query_api_key'].includes(kind) && <label>{kind === 'query_api_key' ? 'Query parameter name' : 'Header name'} <input required maxLength={64} pattern={kind === 'query_api_key' ? "[A-Za-z][A-Za-z0-9_.-]{0,63}" : "[A-Za-z][A-Za-z0-9-]{0,63}"} placeholder="X-API-Key" value={header} onChange={(e) => setHeader(e.target.value)} /><span>{kind === 'query_api_key' ? 'Use 1–64 letters, digits, dots, underscores or hyphens, starting with a letter.' : 'Use 1–64 letters, digits or hyphens, starting with a letter. Reserved HTTP headers are not allowed.'}</span></label>}
         </>}
         <label>{rotation ? 'Replacement secret' : 'Secret'} <input type="password" autoComplete="new-password" required maxLength={8192} value={secret} onChange={(e) => setSecret(e.target.value)} /></label>
-        <p>For Basic authentication, enter username:password. Query keys are injected into HTTPS requests on the server; do not put them in service URLs. Secret values cannot be displayed again. Keep the server credential database and its original encryption key together in protected backups.</p>
+        <ConfigurationHelp title="Credential format" summary={configurationSummary("For Basic authentication, enter username:password. Query keys are injected into HTTPS requests on the server; do not put them in service URLs. Secret values cannot be displayed again. Keep the server credential database and its original encryption key together in protected backups.")}>For Basic authentication, enter username:password. Query keys are injected into HTTPS requests on the server; do not put them in service URLs. Secret values cannot be displayed again. Keep the server credential database and its original encryption key together in protected backups.</ConfigurationHelp>
         <div className="flex gap-3"><button type="submit">{rotation ? 'Rotate credential' : 'Save credential'}</button><button type="button" onClick={close}>Cancel</button></div>
       </fieldset>
     </form>}

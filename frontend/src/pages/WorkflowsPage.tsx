@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from '../components/ConfigurationHelp';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router';
 import { apiFetch } from '../lib/api';
@@ -173,13 +174,13 @@ export function WorkflowsPage() {
             const value = step.parameters?.[key] ?? property.default ?? '';
             const hint = [property.minimum !== undefined ? `Minimum ${property.minimum}` : '', property.maximum !== undefined ? `maximum ${property.maximum}` : '', key === 'target_mm' ? 'millimetres; uniform scaling preserves proportions' : '', key === 'voxel_size' ? 'Uses the input mesh units. Smaller values retain more detail and use more memory; remeshing may alter shape.' : '', key === 'keep_largest' ? 'Removes other disconnected components when enabled.' : ''].filter(Boolean).join('; ');
             const set = (next: unknown) => changeStep(index, { parameters: { ...step.parameters, [key]: next } });
-            return <label key={key} className="block text-sm" htmlFor={`${step.id}-${key}`}>{property.title || key}{operation?.parameters.required?.includes(key) ? ' (required)' : ''}
+            return <div key={key} className="block text-sm"><label htmlFor={`${step.id}-${key}`}>{property.title || key}{operation?.parameters.required?.includes(key) ? ' (required)' : ''}</label>
               {key === 'instance_id' ? <select id={`${step.id}-${key}`} className="block border rounded p-2 bg-background" value={String(value)} onChange={e => set(e.target.value)}><option value="">Choose an enabled image server</option>{catalog.image_servers.filter(s => s.enabled).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
               : property.enum ? <select id={`${step.id}-${key}`} className="block border rounded p-2 bg-background" value={String(value)} onChange={e => set(e.target.value)}>{property.enum.map(option => <option key={option}>{option}</option>)}</select>
               : property.type === 'boolean' ? <input id={`${step.id}-${key}`} type="checkbox" className="ml-2" checked={Boolean(value)} onChange={e => set(e.target.checked)} />
               : <input id={`${step.id}-${key}`} aria-describedby={hint ? `${step.id}-${key}-hint` : undefined} type={property.type === 'integer' || property.type === 'number' ? 'number' : 'text'} min={property.minimum} max={property.maximum} step={property.type === 'integer' ? 1 : 'any'} className="block border rounded p-2 bg-background" value={String(value)} onChange={e => set(property.type === 'integer' || property.type === 'number' ? Number(e.target.value) : e.target.value)} />}
-              {hint && <span id={`${step.id}-${key}-hint`} className="block text-muted-foreground">{hint}</span>}
-            </label>;
+              {hint && <ConfigurationHelp id={`${step.id}-${key}-hint`} title={property.title || key} summary={configurationSummary(hint)}>{hint}</ConfigurationHelp>}
+            </div>;
           })}
           <button disabled={busy} className="underline" onClick={() => { setSaved(null); setDefinition({ ...definition, steps: definition.steps.filter((_, i) => i !== index) }); }}>Remove step</button>
           <button disabled={busy || index === 0} className="underline ml-3 disabled:opacity-50" onClick={() => moveStep(index, -1)}>Move up</button>
@@ -200,9 +201,9 @@ export function WorkflowsPage() {
     </section>
     {isAdmin && <details className="border rounded p-4 space-y-3">
       <summary className="font-semibold cursor-pointer">Administrator: operations and local image servers</summary>
-      <p>Operations start disabled. Approval authorizes the listed permissions for workflow execution; any existing server capability policy also applies. Configuration alone does not enable a server.</p>
-      {catalog.operations.map(operation => <div key={operation.id} className="border-b py-2"><p>{operation.description}</p><p className="text-xs">Required permissions: {operation.capabilities.join(', ')}</p><button disabled={busy} className="underline" onClick={() => void action(async () => { await workflowJson(`/admin/operations/${operation.id}`, post({ enabled: !operation.enabled })); })}>{operation.enabled ? 'Disable' : 'Approve and enable'}</button></div>)}
-      <p>Connect a private local ComfyUI server with an installed Stable Diffusion or SDXL checkpoint. No weights are downloaded by OpenJarvis. Image generation pauses local chat; Hunyuan keeps its existing alternate-model policy.</p>
+      <ConfigurationHelp title="Operation approval" summary="Approval grants permission to run a workflow operation.">Operations start disabled. Approval authorizes the listed permissions for workflow execution; any existing server capability policy also applies. Configuration alone does not enable a server.</ConfigurationHelp>
+      {catalog.operations.map(operation => <div key={operation.id} className="border-b py-2"><p>{operation.id} <ConfigurationHelp title={operation.id} summary={configurationSummary(operation.description)}>{operation.description}</ConfigurationHelp></p><p className="text-xs">Required permissions: {operation.capabilities.join(', ')}</p><button disabled={busy} className="underline" onClick={() => void action(async () => { await workflowJson(`/admin/operations/${operation.id}`, post({ enabled: !operation.enabled })); })}>{operation.enabled ? 'Disable' : 'Approve and enable'}</button></div>)}
+      <ConfigurationHelp title="Local image server setup" summary="Connect an installed local ComfyUI worker and checkpoint.">Connect a private local ComfyUI server with an installed Stable Diffusion or SDXL checkpoint. No weights are downloaded by OpenJarvis. Image generation pauses local chat; Hunyuan keeps its existing alternate-model policy.</ConfigurationHelp>
       <label className="block">Server name<input className="block border rounded p-2 bg-background" value={serverName} onChange={e => setServerName(e.target.value)} /></label>
       <label className="block">Local URL<input className="block border rounded p-2 bg-background" value={serverUrl} onChange={e => setServerUrl(e.target.value)} aria-describedby="image-url-hint" /><span id="image-url-hint" className="text-sm">Example: http://127.0.0.1:8188. Loopback HTTP only; port 1024–65535.</span></label>
       <label className="block">Installed checkpoint filename<input className="block border rounded p-2 bg-background" value={checkpoint} onChange={e => setCheckpoint(e.target.value)} placeholder="sd_xl_base_1.0.safetensors" aria-describedby="checkpoint-hint" /><span id="checkpoint-hint" className="text-sm">Exact filename from ComfyUI’s checkpoint list, without directories. SD/SDXL only; Flux and custom node graphs need separate adapters.</span></label>

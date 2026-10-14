@@ -1,3 +1,4 @@
+import { ConfigurationHelp, configurationSummary } from '../components/ConfigurationHelp';
 import { useCallback, useEffect, useState } from 'react';
 import { getStoredUser } from '../lib/auth';
 import { editableDefinition, runtimeRequest, type RuntimeAdapter, type RuntimeDefinition, type RuntimeTool, type ToolAudit } from '../lib/runtime-tools-api';
@@ -50,10 +51,10 @@ export function ToolsPage() {
     <div className="max-w-4xl mx-auto space-y-5">
       <header>
         <h1 className="text-lg font-semibold">Runtime Tools</h1>
-        <p className="text-sm mt-2" style={{ color: 'var(--color-text-secondary)' }}>
+        <ConfigurationHelp title="Tool configuration" summary={configurationSummary("Configure runtime tools without restarting Jarvis. Review and approve a saved definition to make it available to all accounts. Editing a tool withdraws approval.")}>
           Configure runtime tools without restarting Jarvis. Review and approve a saved definition to make it available to all accounts.
           Editing a tool withdraws approval.
-        </p>
+        </ConfigurationHelp>
       </header>
       {error && <p role="alert" style={{ color: 'var(--color-error)' }}>{error}</p>}
       {notice && <p role="status">{notice}</p>}
