@@ -162,7 +162,16 @@ class OrchestratorAgent(ToolUsingAgent):
             "call an available evidence tool: " + ", ".join(providers) + ". "
             "Retrieve substantive source details, not just a link. Match the "
             "requested entity, location, time period, version, and jurisdiction. "
-            "Search again when the retrieved source has the wrong scope. "
+            "Choose tools whose described capabilities match the requested "
+            "information. "
+            "Resolve required entity identifiers and coordinates from retrieved "
+            "sources, "
+            "rather than guessing them. Search again when the retrieved source has the "
+            "wrong scope or only provides a current observation for a future "
+            "prediction. "
+            "Continue with suitable available tools unless the user restricts "
+            "providers; "
+            "if none can fulfill the request, clearly state the limitation. "
             "Do not relabel facts or combine incompatible source scopes. "
             "Do not invent facts or bypass tool permissions."
         )
@@ -231,6 +240,14 @@ class OrchestratorAgent(ToolUsingAgent):
         all_tool_results: list[ToolResult] = []
         turns = 0
         evidence_prompt = self._evidence_prompt(input)
+        if evidence_prompt:
+            if messages and messages[0].role == Role.SYSTEM:
+                messages[0] = Message(
+                    role=Role.SYSTEM,
+                    content=messages[0].content + "\n\n" + evidence_prompt,
+                )
+            else:
+                messages.insert(0, Message(role=Role.SYSTEM, content=evidence_prompt))
         evidence_prompted = False
 
         for _turn in range(self._max_turns):
@@ -441,6 +458,14 @@ class OrchestratorAgent(ToolUsingAgent):
         total_prompt_tokens = 0
         total_completion_tokens = 0
         evidence_prompt = self._evidence_prompt(input)
+        if evidence_prompt:
+            if messages and messages[0].role == Role.SYSTEM:
+                messages[0] = Message(
+                    role=Role.SYSTEM,
+                    content=messages[0].content + "\n\n" + evidence_prompt,
+                )
+            else:
+                messages.insert(0, Message(role=Role.SYSTEM, content=evidence_prompt))
         evidence_prompted = False
 
         for _turn in range(self._max_turns):

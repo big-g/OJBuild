@@ -84,6 +84,17 @@ real GPU generation, Blender and slicer acceptance remain to be verified on Ubun
 Secure WAN access follows Phase 3 acceptance; it is not part of this implementation.
 Home Assistant, Echo 4.1 and Nextcloud/email phase ordering remains unchanged.
 
+## Retrieval reasoning follow-up (2026-10-13)
+
+Server evidence showed valid decimal rounding rejected by the numeric anchor gate
+and an answer substituting a nearby entity's current observations for the requested
+forecast. The general grounding gate now permits conservative lower-precision
+decimal displays before semantic validation. Integer claims remain exact; units,
+entity applicability and time scope still need validation. Orchestrator evidence
+selection guidance applies before the first inference in both modes, requiring
+retrieved identifiers and suitable source scope. Live forecast acceptance remains
+pending; a working MCP call does not establish forecast accuracy or completeness.
+
 ## MCP evidence integration follow-up (2026-10-13)
 
 Runtime MCP connection review now supports per-tool factual/current/external/

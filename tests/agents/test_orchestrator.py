@@ -1217,3 +1217,27 @@ def test_explicit_evidence_conflict_blocks_response():
 
     assert result.content == "The available sources conflict."
     assert result.metadata["evidence_status"] == "conflicting"
+
+
+def test_matching_scope_guidance_precedes_first_tool_selection_in_both_modes():
+    class Measurements(_CalculatorStub):
+        @property
+        def spec(self):
+            return ToolSpec(
+                name="lookup_measurements", description="Retrieve measurements",
+                parameters={}, evidence_kinds=["current"],
+            )
+
+    for mode in ("function_calling", "structured"):
+        engine = _make_engine_no_tools(content="No data retrieved.")
+        agent = OrchestratorAgent(
+            engine, "test-model", tools=[Measurements()], mode=mode,
+            max_turns=1, system_prompt="Existing instructions.",
+        )
+        agent.run("What are the latest measurements?")
+        messages = engine.generate.call_args_list[0].args[0]
+        assert messages[0].role == Role.SYSTEM
+        assert "Existing instructions." in messages[0].content
+        assert "lookup_measurements" in messages[0].content
+        assert "rather than guessing" in messages[0].content
+        assert "current observation for a future prediction" in messages[0].content

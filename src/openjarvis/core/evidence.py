@@ -9,6 +9,13 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from decimal import (
+    ROUND_HALF_EVEN,
+    ROUND_HALF_UP,
+    Decimal,
+    InvalidOperation,
+    localcontext,
+)
 from enum import Enum
 from typing import Any, Iterable, Mapping, Optional
 from urllib.parse import urlparse
@@ -508,11 +515,18 @@ establish facts about the requested subject. Cite only actual mismatches;
 do not list a matching value as unsupported. Concise paraphrases are allowed
 when they preserve the evidence's meaning and certainty.
 
+Decimal values may be displayed with fewer decimal places using conventional
+rounding. This does not establish that the entity, units, field or time scope
+match. A current observation does not establish a future prediction. A reported
+range does not establish a future range without explicit supporting evidence.
+Claims that another location or entity is representative require evidence;
+proximity or similarity cannot be assumed from the query or prior knowledge.
+
 Return JSON only, matching the requested schema."""
 
 
-def _normalized_numeric_anchors(text: str) -> set[str]:
-    """Extract hard numeric anchors while ignoring structural/date numbers."""
+def _numeric_tokens(text: str) -> Iterable[str]:
+    """Extract numeric tokens while ignoring structural/date numbers."""
     scrubbed = re.sub(r"(?m)^\s*\d+[.)]\s+", "", text)
     scrubbed = re.sub(r"\[(?:\d+|\d+(?:\s*,\s*\d+)+)\]", "", scrubbed)
     # A URL is provenance, not support for numbers mentioned in an answer.
@@ -524,9 +538,14 @@ def _normalized_numeric_anchors(text: str) -> set[str]:
     # numeric claims before the date-specific validation runs.
     scrubbed = _DATE_ANCHOR_RE.sub("", scrubbed)
 
-    anchors: set[str] = set()
     for match in re.finditer(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", scrubbed):
-        value = match.group(0).replace(",", "")
+        yield match.group(0).replace(",", "")
+
+
+def _normalized_numeric_anchors(text: str) -> set[str]:
+    """Normalize exact numeric values without changing their magnitude."""
+    anchors: set[str] = set()
+    for value in _numeric_tokens(text):
         negative = value.startswith("-")
         unsigned = value[1:] if negative else value
 
@@ -582,6 +601,54 @@ _RELATIVE_TIME_PROSE_RE = re.compile(
     r"(?:(?:few|several)\s+)?(?:hours?|days?|weeks?|months?|years?)\b",
     re.IGNORECASE,
 )
+
+
+def _rounded_decimal_anchors(answer: str, evidence_anchors: set[str]) -> set[str]:
+    """Allow lower-precision decimal displays, never a general numeric tolerance.
+
+    Whole-number claims still require exact anchors. Retain the answer's displayed
+    precision, including trailing zeroes, and require every occurrence to match.
+    Passing this precheck does not bypass semantic entity/unit/scope validation.
+    """
+    targets: dict[str, set[int]] = {}
+    for token in _numeric_tokens(answer):
+        anchor = next(iter(_normalized_numeric_anchors(token)))
+        precision = len(token.split(".")[1]) if "." in token else -1
+        targets.setdefault(anchor, set()).add(precision)
+    sources = [
+        value for value in evidence_anchors if "." in value and len(value) <= 128
+    ]
+    supported = set()
+    with localcontext() as context:
+        context.prec = 256
+        for anchor, precisions in targets.items():
+            if len(anchor) > 128 or -1 in precisions:
+                continue
+            matched = True
+            for precision in precisions:
+                if precision > 128:
+                    matched = False
+                    break
+                quantum = Decimal(1).scaleb(-precision)
+                expected = Decimal(anchor)
+                found = False
+                for source in sources:
+                    if len(source.split(".")[1]) <= precision:
+                        continue
+                    try:
+                        value = Decimal(source)
+                        found = any(value.quantize(quantum, rounding=mode) == expected
+                                    for mode in (ROUND_HALF_EVEN, ROUND_HALF_UP))
+                    except InvalidOperation:
+                        found = False
+                    if found:
+                        break
+                if not found:
+                    matched = False
+                    break
+            if matched:
+                supported.add(anchor)
+    return supported
 
 
 def _normalized_text_anchors(text: str) -> dict[str, set[str]]:
@@ -1209,6 +1276,7 @@ def validate_response_grounding(
     query_anchors = _normalized_numeric_anchors(query)
     missing_anchors = sorted(
         answer_anchors - evidence_anchors - query_anchors
+        - _rounded_decimal_anchors(answer, evidence_anchors)
     )
     if missing_anchors:
         return GroundingAssessment(
