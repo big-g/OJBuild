@@ -11,7 +11,7 @@ type Definition = { version: 1; name: string; steps: Step[] };
 type Saved = { id: string; revision: number; definition: Definition };
 type Artifact = { id: string; filename: string; size: number };
 type Value = { artifact_id?: string; artifact?: Artifact; report_artifact?: Artifact; units?: string; report?: { after?: { dimensions?: number[]; watertight?: boolean; components?: number } } };
-type Run = { id: string; status: string; definition: Definition; output?: Value; error?: string; cancel_requested?: boolean; steps: { id: string; operation: string; status: string; error?: string; output?: Value; elapsed_seconds?: number }[] };
+type Run = { id: string; status: string; definition: Definition; output?: Value; error?: string; cancel_requested?: boolean; steps: { id: string; operation: string; status: string; error?: string; failure?: { category: string; recovery: string }; output?: Value; elapsed_seconds?: number }[] };
 type Server = { id: string; revision: number; name: string; enabled: boolean; url?: string; checkpoint?: string };
 type Catalog = { workflows: Saved[]; operations: Operation[]; templates: Definition[]; image_servers: Server[] };
 
@@ -57,6 +57,10 @@ export function WorkflowsPage() {
   const [prompt, setPrompt] = useState('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [refreshWarning, setRefreshWarning] = useState('');
+  const pendingRefresh = useRef<Promise<void> | null>(null);
+  const refreshAbort = useRef<AbortController | null>(null);
+  const actionActive = useRef(false);
   const [busy, setBusy] = useState(false);
   const [acceptedRunId, setAcceptedRunId] = useState('');
   const refreshSequence = useRef(0);
@@ -66,34 +70,66 @@ export function WorkflowsPage() {
   const [checkpoint, setCheckpoint] = useState('');
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const isAdmin = getStoredUser()?.is_admin === true;
-  const refresh = useCallback(async () => {
+  const refresh = useCallback((): Promise<void> => {
+    if (pendingRefresh.current) return pendingRefresh.current;
     const sequence = ++refreshSequence.current;
-    const [next, history, response] = await Promise.all([
-      workflowJson<Catalog>(''), workflowJson<{ runs: Run[] }>('/runs'), apiFetch('/v1/files'),
-    ]);
-    if (!response.ok) throw new Error('Could not load your files.');
-    const result = await response.json() as { files: Artifact[] };
-    let settings: { image_servers: Server[] } | undefined;
-    if (isAdmin) {
-      settings = await workflowJson<{ image_servers: Server[] }>('/admin');
-    }
-    if (sequence !== refreshSequence.current) return;
-    setCatalog(next); setRuns(history.runs); setFiles(result.files);
-    if (settings) setServers(settings.image_servers);
+    const controller = new AbortController();
+    refreshAbort.current = controller;
+    const options = { signal: controller.signal };
+    const task = (async () => {
+      const results = await Promise.allSettled([
+        workflowJson<Catalog>('', options).then(next => {
+          if (sequence === refreshSequence.current && !controller.signal.aborted) setCatalog(next);
+        }),
+        workflowJson<{ runs: Run[] }>('/runs', options).then(history => {
+          if (sequence === refreshSequence.current && !controller.signal.aborted) setRuns(history.runs);
+        }),
+        apiFetch('/v1/files', options).then(async response => {
+          if (!response.ok) throw new Error('Could not load your files.');
+          const result = await response.json() as { files: Artifact[] };
+          if (sequence === refreshSequence.current && !controller.signal.aborted) setFiles(result.files);
+        }),
+        ...(isAdmin ? [workflowJson<{ image_servers: Server[] }>('/admin', options).then(settings => {
+          if (sequence === refreshSequence.current && !controller.signal.aborted) setServers(settings.image_servers);
+        })] : []),
+      ]);
+      if (sequence !== refreshSequence.current || controller.signal.aborted) return;
+      const failed = results.filter(result => result.status === 'rejected').length;
+      setRefreshWarning(failed ? 'Some sections could not refresh. Showing the last available data; updates will retry automatically.' : '');
+    })().finally(() => {
+      if (pendingRefresh.current === task) pendingRefresh.current = null;
+    });
+    pendingRefresh.current = task;
+    return task;
   }, [isAdmin]);
   useEffect(() => {
     if (acceptedRunId) document.getElementById(`workflow-run-${acceptedRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [acceptedRunId]);
+  const pollingDelay = runs.some(run => ['queued', 'running'].includes(run.status)) ? 5000 : 15000;
   useEffect(() => {
     let active = true;
-    const poll = async () => { if (!active) return; try { await refresh(); } catch (e) { if (active) setError(e instanceof Error ? e.message : 'Could not load workflows.'); } };
-    void poll(); const timer = setInterval(() => { void poll(); }, 5000);
-    return () => { active = false; clearInterval(timer); };
-  }, [refresh]);
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await refresh();
+      if (active) timer = setTimeout(() => { void poll(); }, pollingDelay);
+    };
+    void poll();
+    return () => {
+      active = false; clearTimeout(timer);
+      refreshSequence.current++;
+      refreshAbort.current?.abort();
+      pendingRefresh.current = null;
+    };
+  }, [refresh, pollingDelay]);
   const action = async (fn: () => Promise<void>) => {
+    if (actionActive.current) return;
+    actionActive.current = true;
     setBusy(true); setError(''); setNotice('');
-    try { await fn(); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : 'Action failed.'); }
-    finally { setBusy(false); }
+    try { await fn(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Action failed.'); }
+    finally { actionActive.current = false; setBusy(false); }
+    // A refresh failure never changes the outcome of an accepted action.
+    void refresh();
   };
   const changeStep = (index: number, changes: Partial<Step>) => {
     setSaved(null);
@@ -156,7 +192,8 @@ export function WorkflowsPage() {
     <p>Save and rerun ordered operations. Each step receives the original input or a previous step’s output. Jobs continue on the server when this page is closed.</p>
     {error && <p role="alert" className="text-red-500">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    <section className="border rounded p-4 space-y-3">
+    {refreshWarning && <p role="status">{refreshWarning}</p>}
+    <fieldset disabled={busy} aria-label="Workflow editor" className="border rounded p-4 space-y-3">
       <h2 className="text-lg font-semibold">Choose or create a workflow</h2>
       <div className="flex flex-wrap gap-2">
         <button disabled={busy} className="border rounded px-3 py-2" onClick={() => load({ version: 1, name: 'My workflow', steps: [] })}>New workflow</button>
@@ -189,7 +226,7 @@ export function WorkflowsPage() {
       })}
       <div className="flex gap-3"><button disabled={busy || definition.steps.length >= 12} className="border rounded px-3 py-2" onClick={addStep}>Add step</button><button disabled={busy || !definition.steps.length} className="border rounded px-3 py-2" onClick={() => void save()}>Save workflow</button>{editing && <button disabled={busy} className="underline" onClick={() => void action(async () => { await workflowJson(`/${editing.id}?revision=${editing.revision}`, { method: 'DELETE' }); load({ version: 1, name: 'My workflow', steps: [] }); })}>Delete saved workflow</button>}</div>
       <p className="text-sm text-muted-foreground">Removing a step may require updating later input handoffs before saving. To make a variant, choose New workflow or start from a template.</p>
-    </section>
+    </fieldset>
     <section className="border rounded p-4 space-y-3">
       <h2 className="text-lg font-semibold">Run against your input</h2>
       <label className="block">Text prompt (up to 4000 characters)<textarea maxLength={4000} className="block border rounded p-2 w-full bg-background" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="A single toy robot, isolated on a plain background, front three-quarter view" /></label>
@@ -202,7 +239,7 @@ export function WorkflowsPage() {
     {isAdmin && <details className="border rounded p-4 space-y-3">
       <summary className="font-semibold cursor-pointer">Administrator: operations and local image servers</summary>
       <ConfigurationHelp title="Operation approval" summary="Approval grants permission to run a workflow operation.">Operations start disabled. Approval authorizes the listed permissions for workflow execution; any existing server capability policy also applies. Configuration alone does not enable a server.</ConfigurationHelp>
-      {catalog.operations.map(operation => <div key={operation.id} className="border-b py-2"><p>{operation.id} <ConfigurationHelp title={operation.id} summary={configurationSummary(operation.description)}>{operation.description}</ConfigurationHelp></p><p className="text-xs">Required permissions: {operation.capabilities.join(', ')}</p><button disabled={busy} className="underline" onClick={() => void action(async () => { await workflowJson(`/admin/operations/${operation.id}`, post({ enabled: !operation.enabled })); })}>{operation.enabled ? 'Disable' : 'Approve and enable'}</button></div>)}
+      {catalog.operations.map(operation => <div key={operation.id} className="border-b py-2"><div>{operation.id} <ConfigurationHelp title={operation.id} summary={configurationSummary(operation.description)}>{operation.description}</ConfigurationHelp></div><p className="text-xs">Required permissions: {operation.capabilities.join(', ')}</p><button disabled={busy} className="underline" onClick={() => void action(async () => { await workflowJson(`/admin/operations/${operation.id}`, post({ enabled: !operation.enabled })); })}>{operation.enabled ? 'Disable' : 'Approve and enable'}</button></div>)}
       <ConfigurationHelp title="Local image server setup" summary="Connect an installed local ComfyUI worker and checkpoint.">Connect a private local ComfyUI server with an installed Stable Diffusion or SDXL checkpoint. No weights are downloaded by OpenJarvis. Image generation pauses local chat; Hunyuan keeps its existing alternate-model policy.</ConfigurationHelp>
       <label className="block">Server name<input className="block border rounded p-2 bg-background" value={serverName} onChange={e => setServerName(e.target.value)} /></label>
       <label className="block">Local URL<input className="block border rounded p-2 bg-background" value={serverUrl} onChange={e => setServerUrl(e.target.value)} aria-describedby="image-url-hint" /><span id="image-url-hint" className="text-sm">Example: http://127.0.0.1:8188. Loopback HTTP only; port 1024–65535.</span></label>
@@ -217,7 +254,7 @@ export function WorkflowsPage() {
         <h3 className="font-semibold">{run.definition.name} · {run.status}</h3>
         <p className="text-xs text-muted-foreground break-all">Run {run.id}</p>
         {run.error && <p role="alert">{run.error}</p>}
-        {run.steps.map(step => <details key={step.id} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
+        {run.steps.map(step => <details key={step.id} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.failure && <p className="text-sm"><strong>{step.failure.category.replace(/_/g, " ")}: </strong>{step.failure.recovery}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
         {run.output?.artifact && <button disabled={busy} className="border rounded px-3 py-2" onClick={() => void download(run.output!.artifact!)}>Download final output</button>}
         {['queued', 'running'].includes(run.status) ? <button disabled={busy || run.cancel_requested} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}/cancel`, post({})); })}>{run.cancel_requested ? 'Stopping after active step…' : 'Stop after active step'}</button> : <button disabled={busy} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}`, { method: 'DELETE' }); })}>Delete run history</button>}
       </article>)}

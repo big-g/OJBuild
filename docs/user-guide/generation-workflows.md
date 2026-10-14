@@ -222,3 +222,50 @@ Then verify a real 512×512 image run, text → image → Hunyuan → STL, optio
 Blender remesh, automatic post-generation attachment, cancel/reload, a second
 account's isolation, and existing chat/3D behavior on the GPU server. The scripted
 mesh check does not certify the model workers or the printer.
+
+## Chat and camera-assisted workflow use
+
+The server orchestrator exposes `workflow_list`, `workflow_submit`, and
+`workflow_status` to authenticated users when workflow storage is available.
+Ask Jarvis to list your saved workflows, run one by name with a prompt or an
+existing file, and check its run ID. Submission returns a queued job; it does
+not imply generation completed. The same jobs and output files appear in
+Workflows and Files. A lost submission response should be checked against run
+history before retrying to avoid duplicate generation.
+
+These tools use the authenticated account, never a model-supplied owner.
+Operation approvals, saved revision checks, file ownership and capability
+policies still apply. Installations enforcing managed-tool approval must also
+approve these three built-in tools through their normal governance process.
+An administrator must configure and approve generation operations first; chat
+cannot enable providers or grant permissions.
+
+The orchestrator now preserves attached images through its tool loop. Choose a
+model supporting both vision and tools for camera-assisted requests. Images
+remain request-scoped rather than being stored in conversation history. An
+attachment is not automatically a workflow input file: upload an image to Files
+and supply its artifact ID for an image-to-3D workflow. Other agent types that
+do not declare multimodal support retain their existing direct vision route.
+
+## Submission and recovery feedback
+
+A ComfyUI HTTP 400 rejection is reported as a rejected submission. Jarvis clears
+the GPU reservation only after confirming the worker is idle and memory has
+returned to the allowed baseline. Timeouts, unverified worker health and unknown
+submission outcomes remain blocked. This does not repair accelerator faults.
+
+Failed image steps show a failure category and recovery guidance when available.
+The run ID shown in Workflows is also included in operation failure logs. For
+`gpu_recovery_required`, follow the stop/verify/clear/restart procedure above;
+do not remove the reservation while a worker may still be using the GPU.
+
+The workflow editor is disabled while saving. Accepted actions retain their
+success state if a later refresh fails. Run history, files, catalog and admin
+settings refresh independently, with polling every five seconds during active
+jobs and every fifteen seconds otherwise.
+
+MCP setup now saves and discovers tools together. Review the discovered schemas,
+select evidence uses where appropriate, save the classification, and explicitly
+approve the catalog. Readiness separates approval, automatic chat calls and
+evidence classification. Catalog discovery is not a continuous health check;
+each invocation still validates the remote service and reviewed catalog.

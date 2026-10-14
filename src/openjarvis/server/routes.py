@@ -217,7 +217,7 @@ async def chat_completions(request_body: ChatCompletionRequest, request: Request
     images = any(message.images for message in request_body.messages)
     tools = bool(request_body.tools) or (
         agent is not None
-        and not images
+        and (not images or getattr(agent, "supports_multimodal", False) is True)
         and (
             bool(getattr(agent, "_tools", None))
             or (
@@ -307,7 +307,10 @@ async def _chat_completions(
             runtime = getattr(request.app.state, "runtime_tool_manager", None)
             agent_uses_tools = (
                 agent is not None
-                and not has_images
+                and (
+                    not has_images
+                    or getattr(agent, "supports_multimodal", False) is True
+                )
                 and not request_body.tools
                 and (
                     bool(getattr(agent, "_tools", None))
@@ -463,7 +466,7 @@ async def _chat_completions(
 
     use_server_agent = (
         agent is not None
-        and not image_messages
+        and (not image_messages or getattr(agent, "supports_multimodal", False) is True)
         and not request_body.tools
         and (
             not request_body.stream
@@ -1069,7 +1072,7 @@ def _handle_agent(
     from openjarvis.agents._stubs import AgentContext
 
     # Build context from prior messages
-    ctx = AgentContext()
+    ctx = AgentContext(input_images=req.messages[-1].images if req.messages else None)
     if len(req.messages) > 1:
         prior = _to_messages(req.messages[:-1])
         for m in prior:

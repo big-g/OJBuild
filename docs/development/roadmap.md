@@ -28,6 +28,25 @@ MCP connection setup now supplies naming rules/examples, actionable name errors
 and an in-app guide covering endpoints, tokens, LAN trust and catalog approval.
 Apply this standard as other configuration forms are added or revised.
 
+## Reliability and usability review — October 14, 2026
+
+Implemented multimodal orchestrator message handling, authenticated workflow
+list/submit/status chat tools, and request identity propagation for parallel
+calls. Workflow actions retain owner, revision, operation approval and capability
+checks. Managed-tool enforcement requires approval of the new built-in chat tools
+through the existing governance process.
+
+ComfyUI validation rejection verifies idle state before clearing a GPU reservation;
+ambiguous submission and unhealthy cleanup remain blocked. Image failures include
+recovery guidance and run IDs in logs. Workflow saves lock the editor, refreshes
+preserve accepted actions, resources update independently, and polling cannot
+overlap. MCP setup combines save/discovery and exposes separate approval,
+automatic-call and evidence readiness states with contextual help labels.
+
+Live acceptance on darkflashsvr, vision model/tool interoperability, and generated
+object quality remain separate verification steps. These changes do not mark
+Phase 3 acceptance complete.
+
 ## Project phases
 
 | Phase | Status | Scope |

@@ -298,3 +298,44 @@ def test_stop_own_job_accepts_empty_control_response(state, monkeypatch):
     path = "/queue" if state == "pending" else "/interrupt"
     respx.post(base + path).mock(return_value=Response(200))
     assert stop_image_job(base, "own") is True
+
+
+@pytest.mark.parametrize("healthy", [True, False])
+def test_explicit_submission_rejection_only_releases_healthy_idle_worker(
+    tmp_path, monkeypatch, healthy
+):
+    import httpx
+
+    from openjarvis.workflow import providers
+
+    monkeypatch.setattr(providers, "image_gpu", lambda: nullcontext())
+    path = tmp_path / "gpu.lock"
+    monkeypatch.setenv("OPENJARVIS_GPU_LOCK_PATH", str(path))
+    monkeypatch.setattr(providers, "gpu_memory", lambda url: {"baseline": True})
+    calls = []
+
+    def request(url, endpoint, **kwargs):
+        calls.append(endpoint)
+        if endpoint == "/queue":
+            return {}
+        assert endpoint == "/prompt"
+        req = httpx.Request("POST", url + endpoint)
+        raise httpx.HTTPStatusError(
+            "rejected", request=req, response=httpx.Response(400, request=req)
+        )
+
+    def verify(url, baseline):
+        assert baseline == {"baseline": True}
+        if not healthy:
+            raise ValueError("worker unhealthy")
+
+    monkeypatch.setattr(providers, "request", request)
+    monkeypatch.setattr(providers, "wait_for_gpu_release", verify)
+    with pytest.raises(ValueError, match="rejected"):
+        generate_image(
+            SimpleNamespace(url="http://127.0.0.1:8188", checkpoint="missing"),
+            "mug",
+            ImageParams(instance_id="local").model_dump(),
+        )
+    assert calls == ["/queue", "/prompt"]
+    assert path.with_name("gpu.lock.blocked").exists() is (not healthy)

@@ -349,7 +349,15 @@ class OperationTool(BaseTool):
                 metadata={"workflow_output": value},
             )
         except Exception as exc:
-            logger.exception("Workflow operation %s failed", self.tool_id)
+            from openjarvis.core.correlation import current_identity
+            from openjarvis.workflow.errors import GenerationError
+
+            identity = current_identity()
+            logger.exception(
+                "Workflow operation %s failed (run %s)",
+                self.tool_id,
+                identity.trace_id if identity else "unknown",
+            )
             # Only curated value errors are public; provider/server errors stay private.
             detail = (
                 str(exc)
@@ -359,7 +367,12 @@ class OperationTool(BaseTool):
                 )
             )
             return ToolResult(
-                tool_name=self.tool_id, success=False, content=detail[:500]
+                tool_name=self.tool_id,
+                success=False,
+                content=detail[:500],
+                metadata={"failure": exc.public_details()}
+                if isinstance(exc, GenerationError)
+                else {},
             )
 
 
@@ -748,6 +761,8 @@ class WorkflowJobs:
                     )
                     if not result.success:
                         item["error"] = result.content[:500]
+                        if result.metadata.get("failure"):
+                            item["failure"] = result.metadata["failure"]
                         self.store.update(
                             row["id"],
                             "failed",

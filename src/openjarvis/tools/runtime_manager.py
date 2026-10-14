@@ -126,6 +126,7 @@ class RuntimeRegistry(ToolManagementRegistry):
 class RuntimeToolManager:
     def __init__(self, db_path):
         self.artifact_store = None
+        self.workflow_jobs = None
         self.store = RuntimeToolStore(db_path)
         from openjarvis.mcp.runtime_manager import RuntimeMCPManager
 
@@ -246,6 +247,10 @@ class RuntimeToolManager:
             and identity.user_id
         ):
             tools.append(ArtifactSaveTool(self.artifact_store))
+            if self.workflow_jobs is not None:
+                from openjarvis.tools.workflow import workflow_tools
+
+                tools.extend(workflow_tools(self.workflow_jobs))
         return tools + self.mcp.available()
 
     @contextmanager
@@ -265,7 +270,8 @@ class RuntimeToolManager:
         replacements = {
             tool.spec.name
             for tool in runtime_tools
-            if tool.spec.name == "artifact_save"
+            if tool.spec.name
+            in {"artifact_save", "workflow_list", "workflow_submit", "workflow_status"}
         }
         tools = [tool for tool in old_tools if tool.spec.name not in replacements]
         names = {tool.spec.name for tool in tools}

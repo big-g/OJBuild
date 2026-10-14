@@ -29,6 +29,7 @@ class AgentContext:
     tools: List[str] = field(default_factory=list)
     memory_results: List[Any] = field(default_factory=list)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    input_images: Optional[List[str]] = None
 
 
 @dataclass(slots=True)
@@ -210,7 +211,15 @@ class BaseAgent(ABC):
             )
         if context_messages:
             messages.extend(context_messages)
-        messages.append(Message(role=Role.USER, content=input))
+        messages.append(
+            Message(
+                role=Role.USER,
+                content=input,
+                images=list(context.input_images)
+                if context and context.input_images
+                else None,
+            )
+        )
         return messages
 
     def _generate(self, messages: list[Message], **extra_kwargs: Any) -> dict:

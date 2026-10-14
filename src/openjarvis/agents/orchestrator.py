@@ -16,6 +16,7 @@ import concurrent.futures
 import json
 import logging
 import re
+from contextvars import copy_context
 from typing import Any, Callable, List, Optional
 
 from openjarvis.agents._stubs import AgentContext, AgentResult, ToolUsingAgent
@@ -51,6 +52,7 @@ class OrchestratorAgent(ToolUsingAgent):
     training pipelines.
     """
 
+    supports_multimodal = True
     agent_id = "orchestrator"
     _default_temperature = 0.7
     _default_max_tokens = 1024
@@ -579,7 +581,8 @@ class OrchestratorAgent(ToolUsingAgent):
                         max_workers=len(approved_calls),
                     ) as pool:
                         futures = {
-                            pool.submit(_exec_tool, tc): tc for tc in approved_calls
+                            pool.submit(copy_context().run, _exec_tool, tc): tc
+                            for tc in approved_calls
                         }
                         for future in concurrent.futures.as_completed(futures):
                             tc_orig = futures[future]

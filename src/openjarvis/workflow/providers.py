@@ -18,6 +18,7 @@ from pathlib import Path
 import httpx
 
 from openjarvis.artifacts.store import _directory
+from openjarvis.workflow.errors import GenerationError
 
 MAX_BYTES = 20 * 1024**2
 
@@ -60,8 +61,11 @@ def image_gpu():
             "Configure the shared GPU lock before enabling local image generation"
         )
     if Path(path + ".blocked").exists():
-        raise ValueError(
-            "Local GPU requires administrator recovery after an image job failure"
+        raise GenerationError(
+            "Local GPU requires administrator recovery after an image job failure",
+            "gpu_recovery_required",
+            "Administrator: stop the image worker, verify it stopped, clear the "
+            "blocked marker using the generation guide, then restart the worker.",
         )
     fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
     try:
@@ -252,6 +256,7 @@ def generate_image(instance, prompt, params):
         baseline = gpu_memory(instance.url)
         # Persist the reservation before submission, so an API crash/restart
         # cannot release the GPU to chat while ComfyUI continues externally.
+        graph = image_graph(instance.checkpoint, prompt, params)
         block_gpu()
         safe_to_release = False
         try:
@@ -259,11 +264,35 @@ def generate_image(instance, prompt, params):
                 instance.url,
                 "/prompt",
                 payload={
-                    "prompt": image_graph(instance.checkpoint, prompt, params),
+                    "prompt": graph,
                     "client_id": uuid.uuid4().hex,
                 },
             )
             prompt_id = str(uuid.UUID(response["prompt_id"]))
+        except httpx.HTTPStatusError as exc:
+            # ComfyUI's validation response explicitly rejects the prompt.
+            # Keep the reservation if health/idle verification fails.
+            if exc.response.status_code == 400:
+                try:
+                    wait_for_gpu_release(instance.url, baseline)
+                except Exception:
+                    raise ValueError(
+                        "Image job rejected and worker health is unverified; "
+                        "administrator recovery is required"
+                    ) from exc
+                path = os.environ.get("OPENJARVIS_GPU_LOCK_PATH")
+                if path:
+                    Path(path + ".blocked").unlink(missing_ok=True)
+                raise GenerationError(
+                    "Image job rejected before execution. Check the selected "
+                    "checkpoint and generation settings, then retry.",
+                    "submission_rejected",
+                    "Verify the checkpoint filename and generation parameters. "
+                    "No GPU recovery is needed; the worker was verified idle.",
+                ) from exc
+            raise ValueError(
+                "Image submission state is unknown; recover the worker"
+            ) from exc
         except Exception:
             # Submission may have succeeded even if its acknowledgement was lost.
             block_gpu()
@@ -276,9 +305,11 @@ def generate_image(instance, prompt, params):
                 history = request(instance.url, "/history/" + prompt_id).get(prompt_id)
                 if history:
                     if history.get("status", {}).get("status_str") == "error":
-                        raise ValueError(
-                            "Image server rejected the job; check its log "
-                            "and checkpoint"
+                        raise GenerationError(
+                            "Image server failed while executing the job.",
+                            "execution_failed",
+                            "Check the image worker log at this run's time for "
+                            "the failing node, checkpoint or accelerator error.",
                         )
                     images = history.get("outputs", {}).get("7", {}).get("images", [])
                     if images:
@@ -329,9 +360,17 @@ def generate_image(instance, prompt, params):
                     acknowledgement=True,
                 )
                 wait_for_gpu_release(instance.url, baseline)
-            except Exception:
+            except Exception as exc:
                 safe_to_release = False
-                raise
+                raise GenerationError(
+                    (str(exc) + ". " if isinstance(exc, ValueError) else "")
+                    + "Image worker cleanup failed; GPU remains reserved.",
+                    "gpu_recovery_required",
+                    "Administrator: stop the image worker, verify it stopped, "
+                    "clear the blocked marker using the generation guide, then "
+                    "restart the worker. Check the run ID in API logs for the "
+                    "original failure.",
+                ) from exc
             finally:
                 path = os.environ.get("OPENJARVIS_GPU_LOCK_PATH")
                 if safe_to_release and path:

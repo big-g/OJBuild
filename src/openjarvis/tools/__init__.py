@@ -217,3 +217,6 @@ __all__ = [
     "ToolExecutor",
     "ToolSpec",
 ]
+
+# Owner-scoped workflow adapters; service instances are bound per server turn.
+import openjarvis.tools.workflow  # noqa: F401, E402

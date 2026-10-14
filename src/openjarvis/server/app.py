@@ -283,6 +283,7 @@ def create_app(
         if artifact_store is not None
         else None
     )
+    runtime_tools.workflow_jobs = workflow_jobs
     app.state.workflow_jobs = workflow_jobs
     app.include_router(create_workflows_router(workflow_jobs))
     app.state.runtime_tool_manager = runtime_tools

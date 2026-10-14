@@ -111,3 +111,13 @@ it('shows reviewed evidence capabilities separately from provider hints', () => 
   expect(renderToStaticMarkup(<MCPCatalogReview connection={connection} />))
     .toContain('None; output cannot support evidence-gated answers');
 });
+
+it('distinguishes approval from automatic calls and evidence readiness', async () => {
+  const { MCPReadiness } = await import('./MCPConnectionsPanel');
+  const ready = { ...connection, approved: true, enabled: true, discovered: true, allow_without_confirmation: false, evidence_tools: {} };
+  const html = renderToStaticMarkup(<MCPReadiness connection={ready} />);
+  expect(html).toContain('Approved and enabled');
+  expect(html).toContain('Blocked — approval');
+  expect(html).toContain('No tools classified');
+  expect(html).toContain('live availability checked on each call');
+});
