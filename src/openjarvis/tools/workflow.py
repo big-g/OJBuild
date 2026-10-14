@@ -3,14 +3,17 @@
 import json
 from datetime import datetime, timezone
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from openjarvis.artifacts.store import ArtifactError
 from openjarvis.core.correlation import current_identity
 from openjarvis.core.registry import ToolRegistry
 from openjarvis.core.types import ToolResult
 from openjarvis.tools._stubs import BaseTool, ToolSpec
-from openjarvis.workflow.jobs import StrictModel
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
 
 
 class ListInputs(StrictModel):

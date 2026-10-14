@@ -126,8 +126,10 @@ def test_previews_never_execute_and_are_bounded():
     result = preview("x.py", b"a" * 100000)
     assert result["truncated"] and len(result["text"]) == 65536
     assert preview("x.pdf", b"\x00\xff")["kind"] == "bytes"
-    ascii_stl = (b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\n"
-                 b"vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid")
+    ascii_stl = (
+        b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\n"
+        b"vertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nendsolid"
+    )
     assert preview("model.stl", ascii_stl)["triangles"] == [[0, 0, 0, 1, 0, 0, 0, 1, 0]]
     facet = struct.pack("<12fH", 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0)
     binary = b"x" * 80 + struct.pack("<I", MAX_FACETS + 1) + facet * (MAX_FACETS + 1)
@@ -140,3 +142,19 @@ def test_previews_never_execute_and_are_bounded():
         preview("bad.stl", ascii_stl.replace(b"vertex 1", b"vertex 1e999"))["kind"]
         != "stl"
     )
+
+
+def test_glb_original_has_separate_bounded_budget(tmp_path, monkeypatch):
+    import openjarvis.artifacts.store as module
+
+    monkeypatch.setattr(module, "MAX_FILE_BYTES", 20)
+    monkeypatch.setattr(module, "MAX_GLB_BYTES", 64)
+    store = ArtifactStore(tmp_path / "files")
+    item = store.save("alice", "dense.GLB", "x" * 64)
+    assert len(store.read("alice", item["id"])[1]) == 64
+    with pytest.raises(ArtifactNotFound):
+        store.read("bob", item["id"])
+    with pytest.raises(ArtifactError, match="limited"):
+        store.save("alice", "too-large.glb", "x" * 65)
+    with pytest.raises(ArtifactError, match="limited"):
+        store.save("alice", "image.png", "x" * 21)

@@ -43,7 +43,7 @@ function ReferenceImage({ artifact }: { artifact: Artifact }) {
     }).catch(() => {});
     return () => { disposed = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [artifact.id]);
-  return url ? <img src={url} alt="Generated reference" className="max-h-64 rounded border" /> : null;
+  return url ? <img src={url} alt="Workflow image preview" className="max-h-64 rounded border" style={{ backgroundColor: '#ddd', backgroundImage: 'conic-gradient(#aaa 25%, transparent 0 50%, #aaa 0 75%, transparent 0)', backgroundSize: '20px 20px' }} /> : null;
 }
 
 export function WorkflowsPage() {
@@ -65,6 +65,7 @@ export function WorkflowsPage() {
   const [acceptedRunId, setAcceptedRunId] = useState('');
   const refreshSequence = useRef(0);
   const [servers, setServers] = useState<Server[]>([]);
+  const [readiness, setReadiness] = useState<Record<string, boolean>>({});
   const [serverName, setServerName] = useState('Local image server');
   const [serverUrl, setServerUrl] = useState('http://127.0.0.1:8188');
   const [checkpoint, setCheckpoint] = useState('');
@@ -89,8 +90,8 @@ export function WorkflowsPage() {
           const result = await response.json() as { files: Artifact[] };
           if (sequence === refreshSequence.current && !controller.signal.aborted) setFiles(result.files);
         }),
-        ...(isAdmin ? [workflowJson<{ image_servers: Server[] }>('/admin', options).then(settings => {
-          if (sequence === refreshSequence.current && !controller.signal.aborted) setServers(settings.image_servers);
+        ...(isAdmin ? [workflowJson<{ image_servers: Server[]; readiness?: Record<string, boolean> }>('/admin', options).then(settings => {
+          if (sequence === refreshSequence.current && !controller.signal.aborted) { setServers(settings.image_servers); setReadiness(settings.readiness || {}); }
         })] : []),
       ]);
       if (sequence !== refreshSequence.current || controller.signal.aborted) return;
@@ -160,7 +161,7 @@ export function WorkflowsPage() {
     setNotice(`Run ${accepted.id} accepted. Status updates below; the server continues when you leave this page.`);
   });
   const upload = (file: File) => action(async () => {
-    if (file.size > 20 * 1024 * 1024) throw new Error('Choose a file below 20 MiB.');
+    if (file.size > (file.name.toLowerCase().endsWith('.glb') ? 64 : 20) * 1024 * 1024) throw new Error('GLB originals may be up to 64 MiB; other files up to 20 MiB.');
     const content = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]);
       reader.onerror = () => reject(new Error('Could not read the file.')); reader.readAsDataURL(file);
@@ -209,7 +210,7 @@ export function WorkflowsPage() {
           <label className="block">Input from<select className="block border rounded p-2 bg-background" value={step.input} onChange={e => changeStep(index, { input: e.target.value })}><option value="input">Original input</option>{definition.steps.slice(0, index).map(previous => <option key={previous.id} value={previous.id}>{previous.id}</option>)}</select></label>
           {Object.entries(operation?.parameters.properties || {}).map(([key, property]) => {
             const value = step.parameters?.[key] ?? property.default ?? '';
-            const hint = [property.minimum !== undefined ? `Minimum ${property.minimum}` : '', property.maximum !== undefined ? `maximum ${property.maximum}` : '', key === 'target_mm' ? 'millimetres; uniform scaling preserves proportions' : '', key === 'voxel_size' ? 'Uses the input mesh units. Smaller values retain more detail and use more memory; remeshing may alter shape.' : '', key === 'keep_largest' ? 'Removes other disconnected components when enabled.' : ''].filter(Boolean).join('; ');
+            const hint = [property.description || '', property.minimum !== undefined ? `Minimum ${property.minimum}` : '', property.maximum !== undefined ? `maximum ${property.maximum}` : '', key === 'target_mm' ? 'millimetres; uniform scaling preserves proportions' : '', key === 'voxel_size' ? 'Uses the input mesh units. Smaller values retain more detail and use more memory; remeshing may alter shape.' : '', key === 'keep_largest' ? 'Removes other disconnected components when enabled.' : ''].filter(Boolean).join('; ');
             const set = (next: unknown) => changeStep(index, { parameters: { ...step.parameters, [key]: next } });
             return <div key={key} className="block text-sm"><label htmlFor={`${step.id}-${key}`}>{property.title || key}{operation?.parameters.required?.includes(key) ? ' (required)' : ''}</label>
               {key === 'instance_id' ? <select id={`${step.id}-${key}`} className="block border rounded p-2 bg-background" value={String(value)} onChange={e => set(e.target.value)}><option value="">Choose an enabled image server</option>{catalog.image_servers.filter(s => s.enabled).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select>
@@ -231,14 +232,16 @@ export function WorkflowsPage() {
       <h2 className="text-lg font-semibold">Run against your input</h2>
       <label className="block">Text prompt (up to 4000 characters)<textarea maxLength={4000} className="block border rounded p-2 w-full bg-background" value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="A single toy robot, isolated on a plain background, front three-quarter view" /></label>
       <label className="block">Existing file<select className="block border rounded p-2 bg-background" value={source} onChange={e => setSource(e.target.value)}><option value="">No input file</option>{files.map(file => <option key={file.id} value={file.id}>{file.filename} · {file.id.slice(0, 8)}</option>)}</select></label>
-      <label className="block">Upload a GLB or STL (up to 20 MiB)<input type="file" accept=".glb,.stl" disabled={busy} className="block mt-1" onChange={e => { if (e.target.files?.[0]) void upload(e.target.files[0]); e.target.value = ''; }} /></label>
+      <label className="block">Upload an image or mesh (GLB up to 64 MiB; others 20 MiB)<input type="file" accept=".glb,.stl,.ply,.png,.jpg,.jpeg,.webp" disabled={busy} className="block mt-1" onChange={e => { if (e.target.files?.[0]) void upload(e.target.files[0]); e.target.value = ''; }} /></label>
       <p className="text-sm text-muted-foreground">Completed Hunyuan outputs can be imported from <Link className="underline" to="/3d">3D Generation</Link>. For STL, include a scale step specifying the target dimension in millimetres. A watertight mesh still needs slicer inspection.</p>
       <button disabled={busy || !saved} className="border rounded px-4 py-2 disabled:opacity-50" onClick={() => void run()}>Run saved workflow</button>
       {!saved && <p className="text-sm text-muted-foreground">Choose a saved workflow, or save your changes, to enable running. Editing step settings requires saving again; changing the text prompt or input file does not.</p>}
     </section>
+    {files.find(file => file.id === source && /\.(png|jpe?g|webp)$/i.test(file.filename)) && <ReferenceImage artifact={files.find(file => file.id === source)!} />}
     {isAdmin && <details className="border rounded p-4 space-y-3">
       <summary className="font-semibold cursor-pointer">Administrator: operations and local image servers</summary>
       <ConfigurationHelp title="Operation approval" summary="Approval grants permission to run a workflow operation.">Operations start disabled. Approval authorizes the listed permissions for workflow execution; any existing server capability policy also applies. Configuration alone does not enable a server.</ConfigurationHelp>
+      <p className="text-sm">Local prerequisites (presence only; run a test to verify): {Object.entries(readiness).map(([name, ready]) => `${name}: ${ready ? 'installed' : 'missing'}`).join(' · ')}</p>
       {catalog.operations.map(operation => <div key={operation.id} className="border-b py-2"><div>{operation.id} <ConfigurationHelp title={operation.id} summary={configurationSummary(operation.description)}>{operation.description}</ConfigurationHelp></div><p className="text-xs">Required permissions: {operation.capabilities.join(', ')}</p><button disabled={busy} className="underline" onClick={() => void action(async () => { await workflowJson(`/admin/operations/${operation.id}`, post({ enabled: !operation.enabled })); })}>{operation.enabled ? 'Disable' : 'Approve and enable'}</button></div>)}
       <ConfigurationHelp title="Local image server setup" summary="Connect an installed local ComfyUI worker and checkpoint.">Connect a private local ComfyUI server with an installed Stable Diffusion or SDXL checkpoint. No weights are downloaded by OpenJarvis. Image generation pauses local chat; Hunyuan keeps its existing alternate-model policy.</ConfigurationHelp>
       <label className="block">Server name<input className="block border rounded p-2 bg-background" value={serverName} onChange={e => setServerName(e.target.value)} /></label>
@@ -254,7 +257,7 @@ export function WorkflowsPage() {
         <h3 className="font-semibold">{run.definition.name} · {run.status}</h3>
         <p className="text-xs text-muted-foreground break-all">Run {run.id}</p>
         {run.error && <p role="alert">{run.error}</p>}
-        {run.steps.map(step => <details key={step.id} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.failure && <p className="text-sm"><strong>{step.failure.category.replace(/_/g, " ")}: </strong>{step.failure.recovery}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
+        {run.steps.map(step => <details key={step.id} open={step.operation === 'image_remove_background' && step.status === 'completed'} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.failure && <p className="text-sm"><strong>{step.failure.category.replace(/_/g, " ")}: </strong>{step.failure.recovery}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
         {run.output?.artifact && <button disabled={busy} className="border rounded px-3 py-2" onClick={() => void download(run.output!.artifact!)}>Download final output</button>}
         {['queued', 'running'].includes(run.status) ? <button disabled={busy || run.cancel_requested} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}/cancel`, post({})); })}>{run.cancel_requested ? 'Stopping after active step…' : 'Stop after active step'}</button> : <button disabled={busy} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}`, { method: 'DELETE' }); })}>Delete run history</button>}
       </article>)}

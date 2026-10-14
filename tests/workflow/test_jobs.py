@@ -54,7 +54,7 @@ def test_real_glb_pipeline_preserves_original_and_reuses_saved_workflow(service)
         ),
     )
     assert run["status"] == "completed", run.get("error")
-    assert [step["status"] for step in run["steps"]] == ["completed"] * 4
+    assert [step["status"] for step in run["steps"]] == ["completed"] * 6
     output = run["output"]
     _, stl = service.artifacts.read("alice", output["artifact_id"])
     final = trimesh.load(io.BytesIO(stl), file_type="stl")
@@ -67,7 +67,7 @@ def test_real_glb_pipeline_preserves_original_and_reuses_saved_workflow(service)
         report_id = step["output"]["report_artifact"]["id"]
         report = json.loads(service.artifacts.read("alice", report_id)[1])
         assert report["operation"] == step["operation"]
-    definition["definition"]["steps"][2]["parameters"]["target_mm"] = 60.0
+    definition["definition"]["steps"][4]["parameters"]["target_mm"] = 60.0
     updated = service.store.save("alice", definition["definition"], definition["id"], 1)
     second = execute(
         service,
@@ -82,7 +82,7 @@ def test_real_glb_pipeline_preserves_original_and_reuses_saved_workflow(service)
     )
     assert second["status"] == "completed"
     assert second["output"]["report"]["after"]["dimensions"] == [20, 40, 60]
-    assert run["definition"]["steps"][2]["parameters"]["target_mm"] == 100
+    assert run["definition"]["steps"][4]["parameters"]["target_mm"] == 100
 
 
 def test_glb_scene_transforms_and_components_are_preserved():
@@ -366,3 +366,44 @@ def test_optional_blender_dependency_failure_is_actionable(tmp_path, monkeypatch
         process(
             source, tmp_path / "out.ply", "mesh_blender_remesh", {"voxel_size": 0.1}
         )
+
+
+def test_dense_glb_native_simplification_and_reinspection(tmp_path):
+    mesh = trimesh.creation.icosphere(subdivisions=8)
+    data = mesh.export(file_type="glb")
+    source, output = tmp_path / "dense.glb", tmp_path / "simple.ply"
+    source.write_bytes(data)
+    with pytest.raises(ValueError, match="simplify first"):
+        load(data, "glb")
+    from openjarvis.workflow.providers import mesh_operation
+
+    simplified, result = mesh_operation(
+        "dense.glb", data, "mesh_simplify", {"target_faces": 10000}
+    )
+    output.write_bytes(simplified)
+    assert result["before"]["faces"] > 400000
+    assert result["after"]["faces"] <= 10000
+    assert source.read_bytes() == data
+    inspected = process(output, tmp_path / "unused", "mesh_inspect", {})
+    assert inspected["after"]["faces"] == result["after"]["faces"]
+    assert np.allclose(inspected["after"]["dimensions"], [2, 2, 2], atol=0.01)
+
+
+def test_foreground_workflow_handoff_preserves_original(service):
+    from tests.workflow.test_background import png
+
+    data = png(True)
+    original = service.save_bytes("alice", "original.png", data)
+    definition = service.store.save(
+        "alice",
+        next(t for t in templates() if t["name"] == "Prepare foreground preview"),
+    )
+    service.approve("admin", "image_remove_background", True)
+    run = execute(
+        service,
+        service.submit("alice", definition["id"], 1, {"artifact_id": original["id"]}),
+    )
+    assert run["status"] == "completed", run.get("error")
+    assert run["output"]["artifact_id"] != original["id"]
+    assert run["output"]["report"]["preserved_alpha"]
+    assert service.artifacts.read("alice", original["id"])[1] == data

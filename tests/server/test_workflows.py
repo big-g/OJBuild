@@ -203,7 +203,13 @@ def test_server_acceptance_script_runs_real_saved_revisions(clients, monkeypatch
     alice, _, _, service, app = clients
     app.include_router(create_artifacts_router(service.artifacts))
     monkeypatch.undo()
-    for operation in ("mesh_inspect", "mesh_repair", "mesh_scale", "mesh_export_stl"):
+    for operation in (
+        "mesh_inspect",
+        "mesh_simplify",
+        "mesh_repair",
+        "mesh_scale",
+        "mesh_export_stl",
+    ):
         service.approve("admin", operation, True)
     script = Path(__file__).parents[2] / "scripts" / "check_phase3.py"
     checks = runpy.run_path(str(script))["checks"]

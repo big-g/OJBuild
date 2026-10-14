@@ -81,21 +81,27 @@ Hunyuan generation are approved adapters in the same reusable workflow system.
 Multiple administrator-managed image instances are database backed; registration
 and testing never imply operation authorization.
 
-Server testing produced a Turbo mesh with 784,544 vertices and 1,569,230 faces
-in 318 seconds. This exceeds the current workflow face budget. A bounded
-CPU preparation helper creates a separate simplified GLB for acceptance testing.
-Native workflow simplification and high-density import remain pending; do not
-mark the GLB inspection/repair/STL acceptance test complete from generation alone.
+**Phase 3 implementation complete; real-world acceptance pending.** Dense GLB
+originals can be imported up to 64 MiB / 2 million faces / 1 million vertices.
+Native CPU simplification creates a bounded copy before repair, reinspection,
+explicit scaling and STL export. The earlier standalone preparation helper is
+optional. The 784,544-vertex / 1,569,230-face Turbo result is the live acceptance
+fixture, not proof that the finished pipeline is printable.
 
-**Pending Phase 3 integration:** expose saved-workflow discovery, submission,
-status and artifact results through governed chat tools, bound to the authenticated
-account and its approved operations. Generation is a central server capability;
-chat, browser/mobile/desktop and future device consoles must share its job service.
-Phase 4.1 Echo voice clients should submit transcribed requests through chat.
-GT100 camera clients should upload images as account-owned artifacts and supply
-their IDs as workflow inputs. Camera capture/device identity and notifications
-need their own client integration; do not run a second image-generation backend
-on each console. Chat invocation is not implemented by the current workflow UI/API.
+Local background removal is an approved CPU workflow operation using a fixed,
+checksum-verified administrator-installed U2Net model. It preserves existing
+alpha by default, saves a transparent PNG preview, and stops on preparation
+failure. Separate foreground-preview and prepared-image-to-3D templates allow
+visual review before spending GPU time. The combined text-to-3D/STL template
+includes foreground preparation and simplification; automatic continuation is
+explicitly chosen by running that saved workflow.
+
+Saved-workflow discovery, submission, status and artifact results are exposed
+through governed chat tools, bound to the authenticated account and approved
+operations. Browser/mobile/desktop and future consoles share the central job
+service. Upload camera images as account-owned artifacts and pass their IDs to
+workflow tools. Echo/GT100 capture, device identity and notifications remain
+Phase 4.1 client integration; they do not require a second generation backend.
 
 See [Generation and workflows](../user-guide/generation-workflows.md) for setup,
 limits and server acceptance. Automated CPU/API/frontend tests cover implementation;
@@ -123,8 +129,9 @@ in the existing evidence-provider prompt and grounding pipeline without
 query-specific adapters. Configuration edits withdraw approval; remote annotations
 do not grant evidence authority. Existing connections need explicit evidence
 configuration and renewed review. Server acceptance with eris_weather and
-huggingface remains pending. Image-containing chat tool execution remains a
-separate integration gap.
+huggingface remains pending. Image-containing orchestrator chat now retains
+images during tool execution; live acceptance depends on the selected model’s
+vision and tool-calling capabilities.
 
 ## Phase 2: model configuration and task routing
 

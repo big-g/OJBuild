@@ -10,6 +10,8 @@ from pathlib import Path
 
 MAX_FACES = 400_000
 MAX_VERTICES = 800_000
+DENSE_FACES = 2_000_000
+DENSE_VERTICES = 1_000_000
 
 
 def check_glb(data):
@@ -29,14 +31,18 @@ def check_glb(data):
             )
     for entry in document.get("accessors", []):
         count = entry.get("count", 0)
-        if not isinstance(count, int) or count < 0 or count > MAX_VERTICES * 3:
+        if not isinstance(count, int) or count < 0 or count > DENSE_FACES * 3:
             raise ValueError("GLB accessor exceeds mesh limits")
 
 
-def load(data, kind):
+def load(data, kind, *, dense=False):
     import numpy as np
     import trimesh
 
+    face_limit = DENSE_FACES if dense else MAX_FACES
+    vertex_limit = DENSE_VERTICES if dense else MAX_VERTICES
+    if len(data) > (64 if kind == "glb" else 20) * 1024**2:
+        raise ValueError("Mesh input exceeds file size limit")
     if kind not in {"glb", "stl", "ply"}:
         raise ValueError("Use a GLB, STL or workflow PLY artifact")
     if kind == "glb":
@@ -49,19 +55,24 @@ def load(data, kind):
     )
     if len(scene.geometry) > 128 or len(scene.graph.nodes_geometry) > 128:
         raise ValueError("Mesh scene exceeds instance limit")
-    estimate = sum(
-        len(g.faces) for g in scene.geometry.values() if isinstance(g, trimesh.Trimesh)
-    )
-    if estimate * max(1, len(scene.graph.nodes_geometry)) > MAX_FACES:
-        raise ValueError("Mesh exceeds face limit")
+    faces = vertices = 0
+    for node in scene.graph.nodes_geometry:
+        _, name = scene.graph[node]
+        geometry = scene.geometry[name]
+        if not isinstance(geometry, trimesh.Trimesh):
+            raise ValueError("Scene contains non-mesh geometry")
+        faces += len(geometry.faces)
+        vertices += len(geometry.vertices)
+    if faces > face_limit or vertices > vertex_limit:
+        raise ValueError("Mesh exceeds face limit or vertex limit; simplify first")
     # Applies each instance's world transform; do not concatenate raw geometries.
     mesh = scene.to_mesh()
     mesh.metadata["workflow_source_meshes"] = len(scene.geometry)
     mesh.metadata["workflow_source_instances"] = len(scene.graph.nodes_geometry)
     if (
         not len(mesh.faces)
-        or len(mesh.faces) > MAX_FACES
-        or len(mesh.vertices) > MAX_VERTICES
+        or len(mesh.faces) > face_limit
+        or len(mesh.vertices) > vertex_limit
         or not np.isfinite(mesh.vertices).all()
     ):
         raise ValueError("Mesh is empty, non-finite or exceeds processing limits")
@@ -100,9 +111,22 @@ def process(input_path, output_path, operation, params):
     import numpy as np
     import trimesh
 
-    mesh = load(input_path.read_bytes(), input_path.suffix[1:])
+    mesh = load(
+        input_path.read_bytes(),
+        input_path.suffix[1:],
+        dense=operation in {"mesh_simplify", "mesh_inspect"},
+    )
     before = report(mesh)
-    if operation == "mesh_repair":
+    if operation == "mesh_simplify":
+        target = params.get("target_faces", 300_000)
+        if type(target) is not int or not 100 <= target <= MAX_FACES:
+            raise ValueError("Target faces must be between 100 and 400000")
+        if len(mesh.faces) > target:
+            mesh = mesh.simplify_quadric_decimation(face_count=target)
+        mesh.remove_unreferenced_vertices()
+        if len(mesh.faces) > target:
+            raise ValueError("Simplification did not reach the requested face budget")
+    elif operation == "mesh_repair":
         mesh.update_faces(mesh.unique_faces())
         mesh.update_faces(mesh.nondegenerate_faces())
         mesh.remove_unreferenced_vertices()
@@ -173,8 +197,9 @@ def process(input_path, output_path, operation, params):
         raise ValueError("Unknown mesh operation")
     if (
         not len(mesh.faces)
-        or len(mesh.faces) > MAX_FACES
-        or len(mesh.vertices) > MAX_VERTICES
+        or len(mesh.faces) > (DENSE_FACES if operation == "mesh_inspect" else MAX_FACES)
+        or len(mesh.vertices)
+        > (DENSE_VERTICES if operation == "mesh_inspect" else MAX_VERTICES)
         or not np.isfinite(mesh.vertices).all()
     ):
         raise ValueError("Processed mesh is empty or exceeds limits")
@@ -190,8 +215,13 @@ def process(input_path, output_path, operation, params):
             raise ValueError("STL dimensions changed during export")
         after = report(reloaded)
         after["units"] = "mm"
-    else:
+    elif operation != "mesh_inspect":
         data = mesh.export(file_type="ply")
+        reloaded = load(data, "ply")
+        if len(reloaded.faces) != len(mesh.faces) or not np.allclose(
+            reloaded.bounds, mesh.bounds
+        ):
+            raise ValueError("Mesh changed during export/reload")
     if operation != "mesh_inspect":
         if len(data) > 20 * 1024**2:
             raise ValueError("Processed file exceeds 20 MiB")

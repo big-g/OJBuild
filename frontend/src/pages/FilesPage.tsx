@@ -35,7 +35,7 @@ export function FilesPage() {
   };
   return <div className="p-6 max-w-6xl mx-auto" style={{ color: 'var(--color-text-primary)' }}>
     <h1 className="text-2xl font-semibold mb-3">My files</h1>
-    <p className="text-sm mb-4">Files are stored on your OpenJarvis server and belong to your account. Ask Jarvis to save a file, or use Save file on a chat code block. Limit: 20 MiB per file, 100 files and 200 MiB per account.</p>
+    <p className="text-sm mb-4">Files are stored on your OpenJarvis server and belong to your account. Ask Jarvis to save a file, or use Save file on a chat code block. Limit: 20 MiB per file (64 MiB for GLB originals), 100 files and 200 MiB per account.</p>
     <button disabled={busy || loading} onClick={() => void action(refresh)} className="border rounded px-3 py-1 mb-4">Refresh files</button>
     {error && <p role="alert" className="mb-3">{error}</p>}
     {loading ? <p>Loading files…</p> : files.length === 0 && <p>No saved files yet.</p>}

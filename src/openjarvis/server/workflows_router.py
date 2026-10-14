@@ -72,15 +72,22 @@ def templates():
     mesh = [
         {"id": "inspect", "operation": "mesh_inspect", "input": "input"},
         {
+            "id": "simplify",
+            "operation": "mesh_simplify",
+            "input": "inspect",
+            "parameters": {"target_faces": 300000},
+        },
+        {
             "id": "repair",
             "operation": "mesh_repair",
-            "input": "inspect",
+            "input": "simplify",
             "parameters": {"fill_small_holes": True, "keep_largest": False},
         },
+        {"id": "reinspect", "operation": "mesh_inspect", "input": "repair"},
         {
             "id": "scale",
             "operation": "mesh_scale",
-            "input": "repair",
+            "input": "reinspect",
             "parameters": {"target_mm": 100.0, "axis": "longest"},
         },
         {
@@ -104,6 +111,12 @@ def templates():
             "negative_prompt": "",
         },
     }
+    foreground = {
+        "id": "foreground",
+        "operation": "image_remove_background",
+        "input": "input",
+        "parameters": {"preserve_alpha": True},
+    }
     return [
         {"version": 1, "name": "GLB inspection, repair and STL", "steps": mesh},
         {"version": 1, "name": "Text to image", "steps": [image]},
@@ -112,10 +125,11 @@ def templates():
             "name": "Text to 3D and STL",
             "steps": [
                 image,
+                {**foreground, "input": "image"},
                 {
                     "id": "generate",
                     "operation": "hunyuan_generate",
-                    "input": "image",
+                    "input": "foreground",
                     "parameters": {"model": "turbo"},
                 },
                 *[
@@ -127,6 +141,19 @@ def templates():
                     }
                     for step in mesh
                 ],
+            ],
+        },
+        {"version": 1, "name": "Prepare foreground preview", "steps": [foreground]},
+        {
+            "version": 1,
+            "name": "Prepared image to 3D",
+            "steps": [
+                {
+                    "id": "generate",
+                    "operation": "hunyuan_generate",
+                    "input": "input",
+                    "parameters": {"model": "turbo"},
+                }
             ],
         },
     ]
@@ -290,7 +317,32 @@ def create_workflows_router(service):
 
     @router.get("/admin")
     def configuration(actor=Depends(admin)):
+        import importlib.util
+        import os
+        import shutil
+        from pathlib import Path
+
+        from openjarvis.workflow.background_worker import DEFAULT_MODEL
+
+        dependencies = {
+            name: importlib.util.find_spec(name) is not None
+            for name in (
+                "trimesh",
+                "scipy",
+                "fast_simplification",
+                "PIL",
+                "rembg",
+                "onnxruntime",
+            )
+        }
         return {
+            "readiness": {
+                **dependencies,
+                "blender": shutil.which("blender") is not None,
+                "background_model": Path(
+                    os.environ.get("OPENJARVIS_BACKGROUND_MODEL", DEFAULT_MODEL)
+                ).is_file(),
+            },
             "operations": service.operations(),
             "image_servers": service.instances(admin=True),
         }

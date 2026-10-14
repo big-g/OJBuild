@@ -14,7 +14,8 @@ describe('workflow controls', () => {
     const html = renderToStaticMarkup(<MemoryRouter><WorkflowsPage /></MemoryRouter>);
     expect(html).toContain('Run saved workflow');
     expect(html).toContain('Editing step settings requires saving again');
-    expect(html).toContain('up to 20 MiB');
+    expect(html).toContain('GLB up to 64 MiB; others 20 MiB');
+    expect(html).toContain('.png,.jpg,.jpeg,.webp');
     expect(html).toContain('target dimension in millimetres');
     expect(html).not.toContain('Administrator: operations');
   });

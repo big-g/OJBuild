@@ -45,6 +45,28 @@ class EmptyParams(StrictModel):
     pass
 
 
+class SimplifyParams(StrictModel):
+    target_faces: int = Field(
+        default=300_000,
+        ge=100,
+        le=400_000,
+        description=(
+            "Simplifies a copy; may alter detail and topology. "
+            "Review before repair/export."
+        ),
+    )
+
+
+class BackgroundParams(StrictModel):
+    preserve_alpha: bool = Field(
+        default=True,
+        description=(
+            "Keep an existing foreground alpha mask. Disable to segment "
+            "again with the installed CPU model."
+        ),
+    )
+
+
 class RepairParams(StrictModel):
     fill_small_holes: bool = True
     keep_largest: bool = False
@@ -80,6 +102,8 @@ class HunyuanParams(StrictModel):
 PARAMETERS = {
     "artifact_copy": EmptyParams,
     "mesh_inspect": EmptyParams,
+    "mesh_simplify": SimplifyParams,
+    "image_remove_background": BackgroundParams,
     "mesh_repair": RepairParams,
     "mesh_scale": ScaleParams,
     "mesh_blender_remesh": BlenderParams,
@@ -89,6 +113,8 @@ PARAMETERS = {
 }
 DESCRIPTIONS = {
     "artifact_copy": "Copy an owned file, preserving its original",
+    "mesh_simplify": "Simplify a dense mesh copy; review lost detail",
+    "image_remove_background": "Remove background on CPU; save transparent preview",
     "mesh_inspect": "Report dimensions, components, winding and watertightness",
     "mesh_repair": "Clean duplicate/degenerate faces, fix normals and small holes",
     "mesh_scale": "Uniformly scale one dimension to millimetres",
@@ -645,7 +671,12 @@ class WorkflowJobs:
         from openjarvis.workflow.mesh_worker import check_glb
         from openjarvis.workflow.providers import request
 
-        data = request(self.hunyuan.url, "/jobs/" + job_id + "/download", binary=True)
+        data = request(
+            self.hunyuan.url,
+            "/jobs/" + job_id + "/download",
+            binary=True,
+            max_bytes=64 * 1024**2,
+        )
         check_glb(data)
         return self.save_bytes(owner, job_id + ".glb", data)
 
@@ -822,6 +853,18 @@ class WorkflowJobs:
                 "prompt": value.get("prompt", ""),
                 "provider": params["instance_id"],
                 "checkpoint": instance.checkpoint,
+            }
+        if operation == "image_remove_background":
+            from openjarvis.workflow.providers import remove_background
+
+            _, data = self.artifacts.read(owner, value.get("artifact_id"))
+            output, report = remove_background(data, params)
+            artifact = self.save_bytes(owner, "foreground.png", output)
+            return {
+                **value,
+                "artifact_id": artifact["id"],
+                "artifact": artifact,
+                "report": report,
             }
         if operation == "hunyuan_generate":
             from openjarvis.workflow.providers import generate_mesh

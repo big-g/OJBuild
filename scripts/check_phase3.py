@@ -31,8 +31,8 @@ def checks(client, timeout):
     required = {step["operation"] for step in definition["steps"]}
     if not required <= enabled:
         raise RuntimeError(
-            "An administrator must approve inspect, repair, scale and STL export "
-            "in the workflow page"
+            "An administrator must approve inspect, simplify, repair, scale "
+            "and STL export in the workflow page"
         )
     original = trimesh.creation.box(extents=[1, 2, 3]).export(file_type="glb")
     artifact = request(
@@ -54,7 +54,11 @@ def checks(client, timeout):
     run_ids = []
     for target in (100.0, 60.0):
         if target == 60.0:
-            definition["steps"][2]["parameters"]["target_mm"] = target
+            next(
+                step
+                for step in definition["steps"]
+                if step["operation"] == "mesh_scale"
+            )["parameters"]["target_mm"] = target
             saved = request(
                 client,
                 "POST",

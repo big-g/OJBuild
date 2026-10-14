@@ -56,7 +56,8 @@ metadata, never filesystem paths. Direct generic file-read/write tools reserve t
 root for owner-aware access. Existing privileged shell/code tools are not an
 operating-system sandbox and should retain their separate capability restrictions.
 
-Each file is limited to **20 MiB**; each account to **100 files / 200 MiB**. The API
+Files are limited to **20 MiB**, with **64 MiB for GLB originals**; each account
+is limited to **100 files / 200 MiB**. The API
 rejects oversized request bodies before JSON decoding. Quotas are enforced atomically
 across concurrent saves. Files are immutable; save a replacement as a new file and
 delete the old one. Directories use `0700`, files `0600`, and reads verify size/hash

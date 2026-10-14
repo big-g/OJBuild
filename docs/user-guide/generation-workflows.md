@@ -22,6 +22,8 @@ makes the attachment fail visibly rather than running changed instructions.
 |---|---|
 | Artifact copy | Saves a separate immutable copy |
 | Mesh inspect | Dimensions/bounds, vertex/face counts, source instances, connected components, degenerate/duplicate faces, normals, winding, watertightness and volume when valid |
+| Mesh simplify | Accepts dense originals and creates a separate PLY copy at the selected face budget (default 300,000); detail and topology may change |
+| Remove image background | Local CPU U2Net segmentation; preserves an existing alpha mask by default and saves a transparent PNG for review |
 | Mesh repair | Removes duplicate/degenerate faces, merges vertices, removes unused vertices and fixes winding/normals; optional small-hole filling or largest component |
 | Mesh scale | Uniformly scales the longest/X/Y/Z dimension to 1–3000 mm, preserving proportions; establishes the workflow's explicit millimetre units |
 | Blender remesh | Optional headless voxel remesh; use after scaling, before STL export; voxel size uses current coordinates and may remove detail |
@@ -30,16 +32,18 @@ makes the attachment fail visibly rather than running changed instructions.
 | Hunyuan generation | Uses the existing local Hunyuan worker; turbo/standard model and reproducible seed; receives a PNG from an earlier step or uploaded input |
 
 **Text to image** and **Text to 3D and STL** are reusable templates. Select an
-enabled image server before saving. Text to 3D first generates a PNG, passes it
-to Hunyuan and then processes the resulting GLB. It is image-conditioned shape
+enabled image server before saving. Text to 3D generates a PNG, removes its background, passes the foreground
+to Hunyuan, simplifies the GLB, then inspects/repairs/reinspects/scales/exports it. It is image-conditioned shape
 generation; texture generation is not added by this workflow.
 
 Original files are preserved. Mesh steps save separate PLY intermediates and
 JSON before/after reports; STL is a separate final artifact. PLY intermediates
 avoid inventing GLB metre units for Hunyuan's normalized coordinates. Source GLB
 scene transforms and instances are applied. External GLB buffers/images are
-rejected; upload a self-contained binary GLB. Limits are 20 MiB per file,
-400,000 faces, 800,000 vertices and 128 source geometries/instances. Existing
+rejected; upload a self-contained binary GLB. GLB originals may be up to 64 MiB; other files and processed outputs are limited
+to 20 MiB. Inspection and simplification accept up to 2 million faces and 1 million
+vertices. Other mesh operations accept 400,000 faces and 800,000 vertices. All
+mesh inputs are limited to 128 source geometries/instances. Existing
 private file quotas apply (100 files / 200 MiB per account), including reports.
 Delete old files in **Files** when needed; deleting run history keeps files.
 
@@ -57,28 +61,63 @@ one worker are supported; do not start another API instance on the same catalog.
 The queue holds at most 16 unfinished runs globally; each account retains at most
 200 runs, 100 definitions and 100 automatic attachments.
 
-## Preparing a dense Hunyuan result
+## Preparing foregrounds and dense meshes
 
-High-density outputs can exceed the current workflow limits. Before importing,
-use the CPU preparation helper to create a separate simplified GLB. It accepts
-self-contained GLBs up to 64 MiB, 2 million faces and 1 million vertices, applies
-scene transforms, and targets 300,000 faces by default. It validates export/reload
-and the 20 MiB output limit, never overwrites an existing file, and leaves the
-source untouched. The Linux command is limited to 4 GiB address space and 240 CPU
-seconds. Install the generation dependencies first.
+Run `bash scripts/install/install-generation.sh` from the source checkout, then
+`bash scripts/install/install-background-removal.sh`. The latter adds pinned
+`rembg[cpu]==2.0.67` to the existing API interpreter without pruning dependencies
+and downloads the official U2Net model once to
+`/mnt/ai/openjarvis/models/background/u2net.onnx`, verifying its published checksum.
+The service account must be able to read it. An administrator can override the
+path with `OPENJARVIS_BACKGROUND_MODEL`; request inputs cannot select model paths.
+Requests never download a model and explicitly use CPU inference. Existing useful
+alpha masks require only Pillow. Background steps have a 6 GiB address-space,
+240 CPU-second and 260-second wall-clock bound. Mesh steps use 4 GiB / 240 CPU
+seconds. Preserve the ComfyUI `--disable-async-offload` service override on AMD.
 
-```bash
-cd ~/.openjarvis
-service_python=$(uv run --no-sync python -c 'import sys; print(sys.executable)')
-"$service_python" src/scripts/prepare_workflow_mesh.py /path/to/original.glb /path/to/prepared.glb
-```
+1. Upload an image in **Generation & Workflows** and choose **Prepare foreground
+   preview**. Approve `image_remove_background` in administrator controls, save,
+   and run. The completed step opens its checkerboard preview automatically.
+2. Inspect handles, holes, edges and all intended components. If the mask is bad,
+   use a clearer reference or an externally prepared transparent PNG. No automatic
+   segmentation method guarantees the desired object.
+3. Select that foreground artifact as input to **Prepared image to 3D**, or select
+   it in the existing 3D page. The direct 3D page accepts prepared images; it does
+   not silently apply background removal.
+4. Use **3D → Use in workflow** or upload the original GLB directly. Choose **GLB
+   inspection, repair and STL**. Its six steps are inspect → simplify → repair →
+   reinspect → scale → export. Set the intended millimetre dimension before saving.
+   Simplification defaults to 300,000 faces and leaves the source unchanged.
+5. Review reports and inspect the STL in a slicer. For meshes requiring voxel
+   remeshing, insert Blender remesh after scale, then another inspection before
+   export. Failed watertight export is a useful stop, not a reason to automatically
+   bypass the check.
 
-Transfer the prepared copy to your browser's computer and upload it in
-**Generation & Workflows**. Run inspection, repair, explicit millimetre scaling
-and STL export. Review the mesh and before/after report: decimation may alter
-geometry and topology and does not establish printability. Automatic processing
-of high-density outputs is pending; **3D → Use in workflow** still applies the
-existing limits to the original GLB.
+Existing saved definitions are immutable by revision and are not silently changed.
+Load the updated template and save a new workflow or explicit revision. Reapprove
+changed operations if requested by the implementation/provenance gate. The older
+`scripts/prepare_workflow_mesh.py` remains an optional standalone utility.
+
+## Phase 3 real-world acceptance
+
+- Run foreground preparation on a real SDXL reference and a transparent PNG.
+  Verify the preview, preserved original, and useful mask (especially mug handles).
+- Run two consecutive generations on the RX 9060 XT. Both should complete and
+  release GPU reservations; no second job should require manual recovery.
+- Import the earlier 1,569,230-face Hunyuan GLB directly. Confirm simplification,
+  before/after counts, reinspection and intentional millimetre scaling. Inspect
+  both shape and wall thickness in the slicer; watertightness alone is insufficient.
+- Rerun the same saved workflow, leave/reopen the page during execution, and check
+  persisted progress/artifacts. Verify another account cannot access its outputs.
+- In chat, ask for saved workflows, request one by name with its source file ID,
+  then ask for its status. Confirm the returned run is the same one in Workflows.
+  Use a model capable of tool calling; operation approval still applies.
+- Test a missing model and a failed mesh export. Each should stop successors,
+  display an actionable error and retain completed outputs. Restore prerequisites
+  and submit a new run explicitly.
+
+Automated CPU/API/UI tests do not establish live GPU, Blender, slicer, or remote
+console acceptance. Phase 4.1 handles device capture/identity and WAN access.
 
 ## Administration
 

@@ -24,7 +24,14 @@ MAX_BYTES = 20 * 1024**2
 
 
 def request(
-    url, path, *, payload=None, params=None, binary=False, acknowledgement=False
+    url,
+    path,
+    *,
+    payload=None,
+    params=None,
+    binary=False,
+    acknowledgement=False,
+    max_bytes=MAX_BYTES,
 ):
     data = bytearray()
     with httpx.Client(timeout=30, follow_redirects=False, trust_env=False) as client:
@@ -36,7 +43,7 @@ def request(
         ) as response:
             response.raise_for_status()
             for chunk in response.iter_bytes():
-                if len(data) + len(chunk) > (MAX_BYTES if binary else 2 * 1024**2):
+                if len(data) + len(chunk) > (max_bytes if binary else 2 * 1024**2):
                     raise ValueError("Local generation server returned oversized data")
                 data.extend(chunk)
     if binary:
@@ -423,7 +430,12 @@ def generate_mesh(jobs, owner, data, params, config):
         if state["status"] == "failed":
             raise ValueError("Hunyuan generation failed; inspect its worker log")
         if state["status"] == "completed":
-            data = request(jobs.url, "/jobs/" + identity + "/download", binary=True)
+            data = request(
+                jobs.url,
+                "/jobs/" + identity + "/download",
+                binary=True,
+                max_bytes=64 * 1024**2,
+            )
             from openjarvis.workflow.mesh_worker import check_glb
 
             check_glb(data)
@@ -476,3 +488,48 @@ def mesh_operation(filename, data, operation, params):
         if output.exists() and output.stat().st_size > MAX_BYTES:
             raise ValueError("Mesh output exceeds 20 MiB")
         return output.read_bytes() if output.exists() else None, report
+
+
+def remove_background(data, params):
+    """Run segmentation without sharing GPU state or downloading request-time models."""
+    if len(data) > MAX_BYTES:
+        raise ValueError("Image exceeds 20 MiB")
+    with tempfile.TemporaryDirectory(prefix="openjarvis-foreground-") as folder:
+        source, output = Path(folder) / "input", Path(folder) / "foreground.png"
+        source.write_bytes(data)
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("background_worker.py")),
+                str(source),
+                str(output),
+                json.dumps(params),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            start_new_session=True,
+            env=dict(
+                os.environ,
+                OMP_NUM_THREADS="1",
+                OPENBLAS_NUM_THREADS="1",
+                NUMBA_NUM_THREADS="1",
+            ),
+        )
+        try:
+            stdout, _ = process.communicate(timeout=260)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise ValueError("Background removal timed out") from None
+        try:
+            report = json.loads(stdout)
+        except ValueError:
+            raise ValueError(
+                "Background worker failed; check installed dependencies and memory"
+            ) from None
+        if process.returncode or "error" in report:
+            raise ValueError(report.get("error", "Background removal failed"))
+        if not output.is_file() or output.stat().st_size > MAX_BYTES:
+            raise ValueError("Invalid foreground output")
+        return output.read_bytes(), report

@@ -17,7 +17,7 @@ from openjarvis.artifacts.store import _directory
 from openjarvis.server.auth import authenticate_request
 
 MAX_IMAGE_BYTES = 20 * 1024**2
-MAX_GLB_BYTES = 20 * 1024**2
+MAX_GLB_BYTES = 64 * 1024**2
 PUBLIC_FIELDS = (
     "job_id",
     "status",

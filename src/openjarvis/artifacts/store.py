@@ -15,7 +15,12 @@ from pathlib import Path
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_USER_BYTES = 200 * 1024 * 1024
 MAX_USER_FILES = 100
-MAX_REQUEST_BYTES = 28 * 1024 * 1024
+MAX_GLB_BYTES = 64 * 1024 * 1024
+MAX_REQUEST_BYTES = 88 * 1024 * 1024
+
+
+def file_limit(filename):
+    return MAX_GLB_BYTES if filename.lower().endswith(".glb") else MAX_FILE_BYTES
 
 
 class ArtifactError(ValueError):
@@ -142,8 +147,8 @@ class ArtifactStore:
                 raise ArtifactError("Encoding must be utf8 or base64")
         except (ValueError, UnicodeError) as exc:
             raise ArtifactError("Invalid file encoding") from exc
-        if len(data) > MAX_FILE_BYTES:
-            raise ArtifactError("Files are limited to 20 MiB")
+        if len(data) > file_limit(filename):
+            raise ArtifactError("Files are limited to 20 MiB; GLB originals to 64 MiB")
         row = dict(
             id=str(uuid.uuid4()),
             owner_id=owner,
@@ -225,10 +230,10 @@ class ArtifactStore:
                         not stat.S_ISREG(info.st_mode)
                         or info.st_nlink != 1
                         or info.st_size != row["size"]
-                        or info.st_size > MAX_FILE_BYTES
+                        or info.st_size > file_limit(row["filename"])
                     ):
                         raise ArtifactError("Stored file failed integrity validation")
-                    data = source.read(MAX_FILE_BYTES + 1)
+                    data = source.read(file_limit(row["filename"]) + 1)
         except OSError as exc:
             raise ArtifactError("Stored file is unavailable") from exc
         if (
