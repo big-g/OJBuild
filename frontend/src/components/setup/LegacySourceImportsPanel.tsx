@@ -43,17 +43,17 @@ export function LegacySourceImportsPanel({ refresh }: { refresh: () => Promise<v
     catch (err) { setPlan(null); setError(err instanceof Error ? err.message : 'Import failed'); }
     finally { setBusy(false); }
   };
+  const available = imports.filter(item => item.state === 'available');
+  if (!available.length && !selected && !error && !notice) return null;
   return <section aria-label="Import existing connections" className="flex flex-col gap-3">
     <h4>Import existing connections</h4>
     <p>Import an existing server connection as a named source without entering its credentials again.</p>
     {error && <p role="alert">{error}</p>}
     {notice && <p role="status">{notice}</p>}
-    {imports.map((item) => <div key={item.import_id}>
-      <span>{item.display_name} · {item.state}</span>{' '}
-      {item.state === 'available' && <button type="button" disabled={busy} onClick={() => {
+    {available.map((item) => <div key={item.import_id}>
+      <button type="button" disabled={busy} onClick={() => {
         setSelected(item); setName(item.display_name); setPlan(null); setError(''); setNotice('');
-      }}>Import {item.display_name}</button>}
-      {item.state === 'removed' && <span> Previously imported source was removed. Use Add source for a new connection.</span>}
+      }}>Import {item.display_name}</button>
     </div>)}
     {selected && <form onSubmit={(event) => {
       event.preventDefault();
