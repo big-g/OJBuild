@@ -15,6 +15,7 @@ def clients(tmp_path, monkeypatch):
     app = FastAPI()
     app.state.auth_store = AuthStore(tmp_path / "auth.db")
     service = WorkflowJobs(ArtifactStore(tmp_path / "files"))
+    service.image_access_check = app.state.auth_store.image_generation_allowed
     monkeypatch.setattr(service, "start_worker", lambda: None)
     app.include_router(create_workflows_router(service))
     rows = []
@@ -323,3 +324,90 @@ def test_checkpoint_probe_does_not_run_on_event_loop(clients, monkeypatch):
             assert result.status_code == 200, result.text
 
     asyncio.run(verify())
+
+
+def test_direct_image_ownership_permission_and_exact_prompt(clients, monkeypatch):
+    alice, bob, admin, service, app = clients
+    definition = {
+        "version": 1,
+        "name": "Image",
+        "steps": [
+            {
+                "id": "image",
+                "operation": "image_generate_local",
+                "parameters": {"instance_id": "local"},
+            }
+        ],
+    }
+    saved = alice.post("/v1/workflows", json={"definition": definition}).json()
+    prompt = '  An adult woman in an elegant dress — "portrait".\n'
+    payload = {"workflow_id": saved["id"], "revision": 1, "prompt": prompt}
+    endpoint = "/v1/workflows/image-runs"
+    assert bob.post(endpoint, json=payload).status_code == 404
+    assert alice.post(endpoint, json=payload).status_code == 400
+    admin.post(
+        "/v1/workflows/admin/operations/image_generate_local", json={"enabled": True}
+    )
+    assert alice.post(endpoint, json={**payload, "revision": 2}).status_code == 400
+    assert alice.post(endpoint, json={**payload, "prompt": "  "}).status_code == 400
+    response = alice.post(endpoint, json=payload)
+    assert response.status_code == 202, response.text
+    assert response.json()["input"]["prompt"] == prompt
+    assert response.json()["status"] == "queued"
+    from types import SimpleNamespace
+
+    calls = []
+    monkeypatch.setattr(
+        service, "instance", lambda _: SimpleNamespace(checkpoint="sdxl")
+    )
+    monkeypatch.setattr(
+        "openjarvis.workflow.providers.generate_image",
+        lambda instance, text, params: calls.append(text) or b"image",
+    )
+    service.perform(
+        "alice",
+        "image_generate_local",
+        response.json()["input"],
+        {"instance_id": "local"},
+    )
+    assert calls == [prompt]
+    app.state.auth_store.set_image_generation("admin", "alice", False)
+    assert not alice.get("/v1/workflows").json()["image_generation_allowed"]
+    assert alice.post(endpoint, json=payload).status_code == 400
+    assert (
+        alice.post(
+            "/v1/workflows/runs",
+            json={
+                "workflow_id": saved["id"],
+                "revision": 1,
+                "input": {"prompt": prompt},
+            },
+        ).status_code
+        == 400
+    )
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("Revoked permission must stop before contacting the image server")
+
+    monkeypatch.setattr("openjarvis.workflow.providers.generate_image", unexpected)
+    with pytest.raises(ValueError, match="disabled for this account"):
+        service.perform(
+            "alice",
+            "image_generate_local",
+            {"prompt": prompt},
+            {"instance_id": "local"},
+        )
+    service.image_access_check = None
+    with pytest.raises(ValueError, match="disabled for this account"):
+        service.submit("alice", saved["id"], 1, {"prompt": prompt})
+
+
+def test_direct_image_rejects_non_image_workflow(clients):
+    alice, _, _, _, _ = clients
+    saved = alice.post("/v1/workflows", json={"definition": DEFINITION}).json()
+    response = alice.post(
+        "/v1/workflows/image-runs",
+        json={"workflow_id": saved["id"], "revision": 1, "prompt": "a landscape"},
+    )
+    assert response.status_code == 400
+    assert "single-step" in response.text

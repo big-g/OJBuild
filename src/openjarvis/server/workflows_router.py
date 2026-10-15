@@ -25,6 +25,12 @@ class RunRequest(StrictModel):
     input: dict
 
 
+class DirectImageRequest(StrictModel):
+    workflow_id: str = Field(max_length=36)
+    revision: int = Field(ge=1)
+    prompt: str = Field(min_length=1, max_length=4000)
+
+
 class InstanceRequest(StrictModel):
     config: dict
     id: str | None = Field(default=None, max_length=36)
@@ -176,6 +182,9 @@ def create_workflows_router(service):
     @router.get("")
     def list_workflows(owner=Depends(available)):
         return {
+            "image_generation_allowed": bool(
+                service.image_access_check and service.image_access_check(owner)
+            ),
             "workflows": service.store.definitions(owner),
             "operations": service.operations(),
             "templates": templates(),
@@ -220,6 +229,32 @@ def create_workflows_router(service):
                 raise ValueError("Expected workflow_id, revision and input object")
             return service.submit(
                 owner, values["workflow_id"], values["revision"], values["input"]
+            )
+        except (ValueError, KeyError, ArtifactError) as exc:
+            raise failure(exc) from None
+
+    @router.post("/image-runs", status_code=202)
+    async def direct_image(request: Request, owner=Depends(available)):
+        values = await body(request)
+        try:
+            values = DirectImageRequest.model_validate(values)
+            if not values.prompt.strip():
+                raise ValueError("Provide an image prompt")
+            row = service.store.get_definition(owner, values.workflow_id)
+            if not row:
+                raise KeyError("Workflow not found")
+            if row["revision"] != values.revision:
+                raise ValueError("Workflow changed; reload before running")
+            steps = row["definition"]["steps"]
+            if len(steps) != 1 or steps[0]["operation"] != "image_generate_local":
+                raise ValueError("Choose a saved single-step Text to image workflow")
+            # Submit to the existing governed queue; never call or rewrite with an LLM.
+            return await run_in_threadpool(
+                service.submit,
+                owner,
+                values.workflow_id,
+                values.revision,
+                {"prompt": values.prompt},
             )
         except (ValueError, KeyError, ArtifactError) as exc:
             raise failure(exc) from None

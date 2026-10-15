@@ -335,3 +335,25 @@ run off the API event loop. Evidence verification behavior is unchanged;
 `evidence_timings_ms` in result metadata records assessment, conflict, grounding,
 repair and repair-validation stages when those stages execute. These timings
 measure evidence processing, not overall model generation or retrieval latency.
+
+## Generate an image directly from chat
+
+Save a single-step **Text to image** workflow in **Generation & Workflows**,
+using an enabled ComfyUI server and an administrator-approved image operation.
+Type the image description into the chat composer, choose **Generate image**,
+select the saved workflow, then choose **Submit image job**. Progress and output
+files appear in **Generation & Workflows**. An accepted job is queued, not yet
+completed. Check the run history before retrying if the acknowledgement fails.
+
+This explicit action sends the prompt unchanged to the workflow without invoking
+or requiring a chat model. The saved checkpoint, negative prompt, seed and other
+workflow settings still apply. It currently accepts text only; remove attached
+images to use it. Normal chat messages continue to use the selected chat model,
+whose responses and restrictions are not changed by this feature.
+
+Administrators control **Allow image generation** for each account in
+**Settings → Account management**. Existing and new accounts retain access by
+default, subject to the existing workflow approvals and enabled server settings.
+Disabling access blocks direct submissions, image steps in other workflows and
+queued image steps before execution; it does not interrupt an image already
+running. Permission changes are recorded in the account permission audit table.

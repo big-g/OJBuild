@@ -435,6 +435,7 @@ class WorkflowJobs:
         self.lock = threading.Lock()
         self.worker = None
         self.owner_check = None
+        self.image_access_check = None
         self.boundary_guard = boundary_guard
 
     def record(self, operation):
@@ -579,6 +580,8 @@ class WorkflowJobs:
             )
         definition = Definition.model_validate(row["definition"])
         for step in definition.steps:
+            if step.operation == "image_generate_local":
+                self.check_image_access(owner)
             if not self.approved(step.operation):
                 raise ValueError(
                     f"Operation {step.operation} needs administrator approval"
@@ -848,6 +851,7 @@ class WorkflowJobs:
     def perform(self, owner, operation, value, params):
         self.check_owner(owner)
         if operation == "image_generate_local":
+            self.check_image_access(owner)
             from openjarvis.workflow.providers import generate_image
 
             instance = self.instance(params["instance_id"])
@@ -929,6 +933,13 @@ class WorkflowJobs:
         if operation == "mesh_scale":
             result["units"] = "mm"
         return result
+
+    def check_image_access(self, owner):
+        if self.image_access_check is None or not self.image_access_check(owner):
+            raise ValueError(
+                "Image generation is disabled for this account; "
+                "contact an administrator"
+            )
 
     def check_owner(self, owner):
         if self.stopping.is_set():

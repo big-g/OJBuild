@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Send, Square, Paperclip, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { DirectImageAction } from '../DirectImageAction';
 import { useAppStore, generateId } from '../../lib/store';
 import { streamChat, streamResearch } from '../../lib/sse';
 import { ROUTING_TASKS, type RoutingTask } from '../../lib/model-routing-api';
@@ -995,6 +996,7 @@ const sendMessage = useCallback(async (messageText?: string) => {
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}
           disabled={streamState.isStreaming || modelLoading}
         />
+        <DirectImageAction prompt={input} disabled={streamState.isStreaming || imageLoading || images.length > 0} />
         {isCurrentChatStreaming ? (
           <button
             onClick={stopStreaming}

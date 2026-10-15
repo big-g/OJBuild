@@ -53,6 +53,7 @@ def client(setup, uid):
         ),
         ("PUT", "/v1/auth/users/user/role", {"role": "administrator"}),
         ("DELETE", "/v1/auth/users/admin", None),
+        ("PUT", "/v1/auth/users/user/image-generation", {"enabled": False}),
     ],
 )
 def test_regular_missing_and_master_key_cannot_manage_accounts(
@@ -329,3 +330,38 @@ def test_only_one_use_oauth_browser_gets_bypass_admin_header_gate():
     assert requires_admin("/v1/connectors/gdrive/oauth/status", "GET")
     assert requires_admin("/v1/connectors/gdrive/oauth/callback", "POST")
     assert requires_admin("/v1/connectors/gdrive/oauth/callback/extra", "GET")
+
+
+def test_image_permission_is_admin_controlled_persistent_and_audited(setup):
+    _, store, _ = setup
+    admin = client(setup, "admin")
+    path = "/v1/auth/users/user/image-generation"
+    assert store.image_generation_allowed("user")
+    assert not store.image_generation_allowed("missing")
+    assert admin.put(path, json={"enabled": "false"}).status_code == 422
+    assert admin.put(path, json={"enabled": False}).status_code == 200
+    assert not store.image_generation_allowed("user")
+    with store._connect() as db:
+        row = db.execute("SELECT * FROM account_permission_audit").fetchone()
+        assert row["actor"] == "admin" and row["target"] == "user"
+        assert not row["enabled"]
+    listing = admin.get("/v1/auth/users").json()
+    assert "image_generation_enabled" in str(listing)
+    assert admin.put(path, json={"enabled": True}).status_code == 200
+    assert store.image_generation_allowed("user")
+    with pytest.raises(PermissionError):
+        store.set_image_generation("user", "user", False)
+
+
+def test_image_permission_upgrade_and_restart(tmp_path):
+    path = tmp_path / "auth.db"
+    store = AuthStore(path)
+    store.create_user("admin", "admin", "password123", is_admin=True)
+    store.create_user("user", "user", "password123")
+    # Simulate the schema before image access was added.
+    with store._connect() as db:
+        db.execute("ALTER TABLE users DROP COLUMN image_generation_enabled")
+    upgraded = AuthStore(path)
+    assert upgraded.image_generation_allowed("user")
+    upgraded.set_image_generation("admin", "user", False)
+    assert not AuthStore(path).image_generation_allowed("user")

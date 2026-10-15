@@ -108,3 +108,23 @@ def delete_account(
 ):
     operation(lambda: get_auth_store(request).delete_user(user_id, actor_id=actor))
     return {"ok": True}
+
+
+class ImageAccess(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    enabled: bool
+
+
+@router.put("/{user_id}/image-generation")
+def set_image_generation(
+    user_id: str,
+    body: ImageAccess,
+    request: Request,
+    actor: str = Depends(authenticate_admin_request),
+):
+    operation(
+        lambda: get_auth_store(request).set_image_generation(
+            actor, user_id, body.enabled
+        )
+    )
+    return {"ok": True}

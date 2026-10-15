@@ -320,6 +320,9 @@ def create_app(
             return user is not None and not user["disabled"]
 
         workflow_jobs.owner_check = workflow_owner_available
+        workflow_jobs.image_access_check = lambda owner: (
+            app.state.auth_store.image_generation_allowed(owner)
+        )
 
     @app.on_event("startup")
     def _start_workflows():

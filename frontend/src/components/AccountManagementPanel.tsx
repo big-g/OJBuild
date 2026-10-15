@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { getStoredUser } from '../lib/auth';
-import { changeAccountRole, createAccount, listAccounts, removeAccount, type AccountRole, type ManagedAccount } from '../lib/accounts-api';
+import { setImageGenerationAccess, changeAccountRole, createAccount, listAccounts, removeAccount, type AccountRole, type ManagedAccount } from '../lib/accounts-api';
 
 export function AccountManagementPanel() {
   const [accounts, setAccounts] = useState<ManagedAccount[]>([]);
@@ -35,6 +35,7 @@ export function AccountManagementPanel() {
     </form>
     <ul className="space-y-3">{accounts.map(account => <li key={account.user_id} className="rounded border p-3 space-y-2">
       <p>{account.display_name} ({account.username}) — <strong>{account.is_admin ? 'Administrator' : 'User'}</strong>{account.disabled ? ' — disabled' : ''}</p>
+      <label className="flex gap-2 items-center text-sm" title="Allows approved local image workflows, including direct Generate image. Changes apply to new submissions and queued image steps."><input type="checkbox" checked={!!account.image_generation_enabled} disabled={busy || account.disabled} onChange={e => void act(() => setImageGenerationAccess(account.user_id, e.target.checked), 'Image generation access updated.')} />Allow image generation</label>
       {account.user_id === user.user_id ? <p className="text-sm">Your account. Use another administrator to change your role or remove this account.</p> : <>
         <button disabled={busy} type="button" className="rounded border px-3 py-1 mr-2" onClick={() => { if (window.confirm(`Change ${account.username} to ${account.is_admin ? 'User' : 'Administrator'}? This signs them out on every device.`)) void act(() => changeAccountRole(account.user_id, account.is_admin ? 'user' : 'administrator'), 'Role updated.'); }}>{account.is_admin ? 'Make user' : 'Make administrator'}</button>
         <button disabled={busy} type="button" className="rounded border px-3 py-1" onClick={() => { if (window.confirm(`Remove account ${account.username}? Login and recovery credentials will be removed. Historical data remains tied to its original identity.`)) void act(() => removeAccount(account.user_id), 'Account removed.'); }}>Remove account</button>

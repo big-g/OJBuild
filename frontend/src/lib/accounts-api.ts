@@ -1,6 +1,6 @@
 import { apiFetch } from './api';
 export type AccountRole = 'user' | 'administrator';
-export interface ManagedAccount { user_id: string; username: string; display_name: string; is_admin: boolean; disabled: boolean }
+export interface ManagedAccount { user_id: string; username: string; display_name: string; is_admin: boolean; disabled: boolean; image_generation_enabled?: boolean }
 async function request(path = '', init: RequestInit = {}) {
   const response = await apiFetch(`/v1/auth/users${path}`, init);
   const data = await response.json();
@@ -15,3 +15,7 @@ export async function changeAccountRole(userId: string, role: AccountRole): Prom
   await request(`/${encodeURIComponent(userId)}/role`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
 }
 export async function removeAccount(userId: string): Promise<void> { await request(`/${encodeURIComponent(userId)}`, { method: 'DELETE' }); }
+
+export async function setImageGenerationAccess(userId: string, enabled: boolean): Promise<void> {
+  await request(`/${encodeURIComponent(userId)}/image-generation`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
+}

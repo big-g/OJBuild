@@ -84,10 +84,45 @@ class AuthStore:
 
             conn.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            if "image_generation_enabled" not in columns:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN image_generation_enabled "
+                    "INTEGER NOT NULL DEFAULT 1"
+                )
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS account_permission_audit "
+                "(actor TEXT NOT NULL, target TEXT NOT NULL, permission TEXT NOT NULL, "
+                "enabled INTEGER NOT NULL, created REAL NOT NULL)"
+            )
             if "is_admin" not in columns:
                 conn.execute(
                     "ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0"
                 )
+
+    def image_generation_allowed(self, user_id: str) -> bool:
+        user = self.get_user(user_id)
+        return bool(
+            user is not None
+            and not user["disabled"]
+            and user["image_generation_enabled"]
+        )
+
+    def set_image_generation(self, actor_id: str, user_id: str, enabled: bool):
+        if type(enabled) is not bool:
+            raise ValueError("Image generation setting must be a boolean")
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_admin(conn, actor_id)
+            if not conn.execute(
+                "UPDATE users SET image_generation_enabled=?, updated_at=? "
+                "WHERE user_id=?",
+                (enabled, time.time(), user_id),
+            ).rowcount:
+                raise ValueError("Account not found")
+            conn.execute(
+                "INSERT INTO account_permission_audit VALUES (?,?,?,?,?)",
+                (actor_id, user_id, "image_generation", enabled, time.time()),
+            )
 
     def set_admin(self, user_id: str, enabled: bool) -> None:
         """Local administrator operation; never inferred from an API key."""
@@ -274,7 +309,8 @@ class AuthStore:
         """Return local account labels and status, never hashes or session tokens."""
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT user_id, username, display_name, disabled, is_admin "
+                "SELECT user_id, username, display_name, disabled, is_admin, "
+                "image_generation_enabled "
                 "FROM users ORDER BY username"
             ).fetchall()
             return [dict(row) for row in rows]
