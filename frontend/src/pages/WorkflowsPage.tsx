@@ -11,7 +11,7 @@ type Definition = { version: 1; name: string; steps: Step[] };
 type Saved = { id: string; revision: number; definition: Definition };
 type Artifact = { id: string; filename: string; size: number };
 type Value = { artifact_id?: string; artifact?: Artifact; report_artifact?: Artifact; units?: string; report?: { after?: { dimensions?: number[]; watertight?: boolean; components?: number } } };
-type Run = { id: string; status: string; definition: Definition; output?: Value; error?: string; cancel_requested?: boolean; steps: { id: string; operation: string; status: string; error?: string; failure?: { category: string; recovery: string }; output?: Value; elapsed_seconds?: number }[] };
+type Run = { compact?: boolean; id: string; status: string; definition: Definition; output?: Value; error?: string; cancel_requested?: boolean; steps: { id: string; operation: string; status: string; error?: string; failure?: { category: string; recovery: string }; output?: Value; elapsed_seconds?: number }[] };
 type Server = { id: string; revision: number; name: string; enabled: boolean; url?: string; checkpoint?: string };
 type Catalog = { workflows: Saved[]; operations: Operation[]; templates: Definition[]; image_servers: Server[] };
 
@@ -50,6 +50,7 @@ export function WorkflowsPage() {
   const [searchParams] = useSearchParams();
   const [catalog, setCatalog] = useState<Catalog>({ workflows: [], operations: [], templates: [], image_servers: [] });
   const [runs, setRuns] = useState<Run[]>([]);
+  const [runDetails, setRunDetails] = useState<Record<string, Run>>({});
   const [files, setFiles] = useState<Artifact[]>([]);
   const [definition, setDefinition] = useState<Definition>({ version: 1, name: 'My workflow', steps: [] });
   const [saved, setSaved] = useState<Saved | null>(null);
@@ -82,7 +83,7 @@ export function WorkflowsPage() {
         workflowJson<Catalog>('', options).then(next => {
           if (sequence === refreshSequence.current && !controller.signal.aborted) setCatalog(next);
         }),
-        workflowJson<{ runs: Run[] }>('/runs', options).then(history => {
+        workflowJson<{ runs: Run[] }>('/runs?compact=true', options).then(history => {
           if (sequence === refreshSequence.current && !controller.signal.aborted) setRuns(history.runs);
         }),
         apiFetch('/v1/files', options).then(async response => {
@@ -111,7 +112,7 @@ export function WorkflowsPage() {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      await refresh();
+      if (!document.hidden) await refresh();
       if (active) timer = setTimeout(() => { void poll(); }, pollingDelay);
     };
     void poll();
@@ -162,11 +163,9 @@ export function WorkflowsPage() {
   });
   const upload = (file: File) => action(async () => {
     if (file.size > (file.name.toLowerCase().endsWith('.glb') ? 64 : 20) * 1024 * 1024) throw new Error('GLB originals may be up to 64 MiB; other files up to 20 MiB.');
-    const content = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader(); reader.onload = () => resolve(String(reader.result).split(',')[1]);
-      reader.onerror = () => reject(new Error('Could not read the file.')); reader.readAsDataURL(file);
+    const response = await apiFetch(`/v1/files/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
     });
-    const response = await apiFetch('/v1/files', { ...post({ filename: file.name, encoding: 'base64', content }) });
     const result = await response.json() as Artifact & { detail?: string };
     if (!response.ok) throw new Error(result.detail || 'Upload failed.');
     setSource(result.id); setNotice('Original file saved. Workflow operations create separate output files.');
@@ -253,14 +252,18 @@ export function WorkflowsPage() {
     </details>}
     <section className="space-y-3"><h2 className="text-lg font-semibold">Your runs</h2>
       {!runs.length && <p>No runs yet.</p>}
-      {runs.map(run => <article id={`workflow-run-${run.id}`} key={run.id} className={`border rounded p-4 space-y-2 scroll-mt-4 ${run.id === acceptedRunId ? 'ring-2 ring-primary' : ''}`}>
+      {runs.map(summary => { const detail = runDetails[summary.id]; const run = detail && detail.status === summary.status && detail.cancel_requested === summary.cancel_requested && JSON.stringify(detail.steps.map(s => [s.id, s.status, s.elapsed_seconds])) === JSON.stringify(summary.steps.map(s => [s.id, s.status, s.elapsed_seconds])) ? detail : summary; return <article id={`workflow-run-${run.id}`} key={run.id} className={`border rounded p-4 space-y-2 scroll-mt-4 ${run.id === acceptedRunId ? 'ring-2 ring-primary' : ''}`}>
         <h3 className="font-semibold">{run.definition.name} · {run.status}</h3>
         <p className="text-xs text-muted-foreground break-all">Run {run.id}</p>
         {run.error && <p role="alert">{run.error}</p>}
+        {run.compact && <button className="underline" disabled={busy} onClick={() => void action(async () => {
+          const detail = await workflowJson<Run>(`/runs/${run.id}`);
+          setRunDetails(current => ({ ...current, [run.id]: detail }));
+        })}>Load step reports and previews</button>}
         {run.steps.map(step => <details key={step.id} open={step.operation === 'image_remove_background' && step.status === 'completed'} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.failure && <p className="text-sm"><strong>{step.failure.category.replace(/_/g, " ")}: </strong>{step.failure.recovery}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
         {run.output?.artifact && <button disabled={busy} className="border rounded px-3 py-2" onClick={() => void download(run.output!.artifact!)}>Download final output</button>}
         {['queued', 'running'].includes(run.status) ? <button disabled={busy || run.cancel_requested} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}/cancel`, post({})); })}>{run.cancel_requested ? 'Stopping after active step…' : 'Stop after active step'}</button> : <button disabled={busy} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}`, { method: 'DELETE' }); })}>Delete run history</button>}
-      </article>)}
+      </article>; })}
     </section>
   </main>;
 }

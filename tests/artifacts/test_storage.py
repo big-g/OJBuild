@@ -158,3 +158,22 @@ def test_glb_original_has_separate_bounded_budget(tmp_path, monkeypatch):
         store.save("alice", "too-large.glb", "x" * 65)
     with pytest.raises(ArtifactError, match="limited"):
         store.save("alice", "image.png", "x" * 21)
+
+
+def test_stream_commit_rejects_changed_source_and_cleans_up(tmp_path):
+    import io
+
+    class Changing(io.BytesIO):
+        resets = 0
+
+        def seek(self, *args):
+            self.resets += 1
+            if self.resets == 2:
+                self.getbuffer()[:] = b"bad"
+            return super().seek(*args)
+
+    store = ArtifactStore(tmp_path / "files")
+    with pytest.raises(ArtifactError, match="changed"):
+        store.save_stream("alice", "file.txt", Changing(b"yes"))
+    assert store.list("alice") == []
+    assert list(store.root.glob("*/*.blob")) == []

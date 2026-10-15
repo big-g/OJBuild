@@ -175,3 +175,98 @@ def test_unknown_image_worker_state_blocks_hunyuan_submission(
     assert response.status_code == 409
     assert submission.call_count == 0
     assert not list(jobs.inputs.iterdir())
+
+
+@respx.mock
+def test_terminal_history_cached_across_restart_and_paginated(setup, monkeypatch):
+    client, headers, jobs = setup
+    ids = [str(uuid.uuid4()) for _ in range(30)]
+    with jobs.db() as db:
+        db.executemany(
+            "INSERT INTO jobs VALUES (?, ?)", [(identity, "alice") for identity in ids]
+        )
+    routes = [
+        respx.get(jobs.url + "/jobs/" + identity).respond(
+            200, json={"job_id": identity, "status": "completed"}
+        )
+        for identity in ids
+    ]
+    first = client.get(
+        "/v1/3d/jobs?limit=10&offset=0", headers=headers["alice"]
+    ).json()["jobs"]
+    assert len(first) == 10
+    assert sum(route.call_count for route in routes) == 10
+    second = client.get(
+        "/v1/3d/jobs?limit=10&offset=10", headers=headers["alice"]
+    ).json()["jobs"]
+    assert not {r["job_id"] for r in first} & {r["job_id"] for r in second}
+    restored = HunyuanJobs(jobs.catalog, jobs.inputs, jobs.url)
+    assert restored.status("alice", ids[-1])["status"] == "completed"
+    assert sum(route.call_count for route in routes) == 20
+
+    def unexpected(*args):
+        raise AssertionError("Completed history should use the joined local result")
+
+    monkeypatch.setattr(jobs, "status", unexpected)
+    assert (
+        client.get(
+            "/v1/3d/jobs?limit=10&offset=0", headers=headers["alice"]
+        ).status_code
+        == 200
+    )
+    with pytest.raises(Exception) as error:
+        restored.status("bob", ids[-1])
+    assert error.value.status_code == 404
+    assert (
+        client.get("/v1/3d/jobs?limit=101", headers=headers["alice"]).status_code == 422
+    )
+
+
+@respx.mock
+def test_active_results_are_refreshed_and_transport_failures_not_cached(setup):
+    _, _, jobs = setup
+    identity = str(uuid.uuid4())
+    with jobs.db() as db:
+        db.execute("INSERT INTO jobs VALUES (?, ?)", (identity, "alice"))
+    route = respx.get(jobs.url + "/jobs/" + identity)
+    route.respond(200, json={"job_id": identity, "status": "running"})
+    assert jobs.status("alice", identity)["status"] == "running"
+    route.respond(503)
+    with pytest.raises(Exception):
+        jobs.status("alice", identity)
+    route.respond(200, json={"job_id": identity, "status": "completed"})
+    assert jobs.status("alice", identity)["status"] == "completed"
+    assert route.call_count == 3
+
+
+def test_slow_job_does_not_serialize_unrelated_status_requests(setup, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    _, _, jobs = setup
+    slow, fast = str(uuid.uuid4()), str(uuid.uuid4())
+    with jobs.db() as db:
+        db.executemany(
+            "INSERT INTO jobs VALUES (?,?)", [(slow, "alice"), (fast, "alice")]
+        )
+    entered, release = threading.Event(), threading.Event()
+
+    def call(path):
+        identity = path.split("/")[-1]
+        if identity == slow:
+            entered.set()
+            release.wait(3)
+        return {"job_id": identity, "status": "completed"}
+
+    monkeypatch.setattr(jobs, "call", call)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = pool.submit(jobs.status, "alice", slow)
+        try:
+            assert entered.wait(1)
+            assert (
+                pool.submit(jobs.status, "alice", fast).result(timeout=1)["status"]
+                == "completed"
+            )
+        finally:
+            release.set()
+        assert pending.result(timeout=1)["status"] == "completed"

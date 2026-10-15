@@ -189,6 +189,8 @@ class JobsStore:
                     revision INTEGER NOT NULL, snapshot TEXT NOT NULL,
                     input TEXT NOT NULL, state TEXT NOT NULL, result TEXT NOT NULL,
                     created REAL NOT NULL, cancel INTEGER NOT NULL DEFAULT 0);
+                CREATE INDEX IF NOT EXISTS runs_owner_created
+                    ON runs(owner, created DESC);
                 CREATE TABLE IF NOT EXISTS approvals (
                     operation TEXT PRIMARY KEY, fingerprint TEXT NOT NULL,
                     actor TEXT NOT NULL, enabled INTEGER NOT NULL);
@@ -298,6 +300,10 @@ class JobsStore:
             ).fetchone()
         if not row:
             raise KeyError("Run not found")
+        return self.decode_run(row)
+
+    @staticmethod
+    def decode_run(row):
         return {
             "id": row["id"],
             "workflow_id": row["workflow_id"],

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 
 from openjarvis.artifacts.preview import preview
 from openjarvis.artifacts.store import (
@@ -14,6 +16,7 @@ from openjarvis.artifacts.store import (
     ArtifactError,
     ArtifactNotFound,
     ArtifactStore,
+    file_limit,
 )
 from openjarvis.server.auth import authenticate_request
 
@@ -50,7 +53,8 @@ def create_artifacts_router(store: ArtifactStore | None) -> APIRouter:
             if len(body) + len(chunk) > MAX_REQUEST_BYTES:
                 raise HTTPException(413, "File request is too large")
             body.extend(chunk)
-        try:
+
+        def commit():
             values = json.loads(body)
             if not isinstance(values, dict) or set(values) - {
                 "filename",
@@ -58,14 +62,35 @@ def create_artifacts_router(store: ArtifactStore | None) -> APIRouter:
                 "encoding",
             }:
                 raise ArtifactError("Expected filename, content and optional encoding")
-            result = store.save(
+            return store.save(
                 owner,
                 values.get("filename"),
                 values.get("content"),
                 values.get("encoding", "utf8"),
             )
+
+        try:
+            result = await run_in_threadpool(commit)
         except (ArtifactError, json.JSONDecodeError, UnicodeError) as exc:
             raise failure(exc) from exc
+        return JSONResponse(result, status_code=201, headers=HEADERS)
+
+    @router.post("/upload", status_code=201)
+    async def upload(request: Request, filename: str, owner: str = Depends(available)):
+        # TemporaryFile is private and removed even on disconnect or quota failure.
+        with tempfile.TemporaryFile() as staging:
+            size = 0
+            async for chunk in request.stream():
+                size += len(chunk)
+                if size > file_limit(filename):
+                    raise HTTPException(413, "File exceeds upload limit")
+                await run_in_threadpool(staging.write, chunk)
+            try:
+                result = await run_in_threadpool(
+                    store.save_stream, owner, filename, staging
+                )
+            except ArtifactError as exc:
+                raise failure(exc) from exc
         return JSONResponse(result, status_code=201, headers=HEADERS)
 
     @router.get("/{file_id}/preview")

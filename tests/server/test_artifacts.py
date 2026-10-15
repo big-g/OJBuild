@@ -159,3 +159,48 @@ def test_chat_tool_saves_as_authenticated_user_and_restores_binding(tmp_path, st
         ).content
         == b"print(42)"
     )
+
+
+def test_binary_upload_limits_ownership_and_quota(setup, monkeypatch):
+    client, headers, store, _ = setup
+    import openjarvis.artifacts.store as module
+
+    monkeypatch.setattr(module, "MAX_FILE_BYTES", 8)
+    monkeypatch.setattr(module, "MAX_GLB_BYTES", 16)
+    monkeypatch.setattr(module, "MAX_USER_BYTES", 20)
+    assert (
+        client.post("/v1/files/upload?filename=a.glb", content=b"x").status_code == 401
+    )
+    result = client.post(
+        "/v1/files/upload?filename=a.glb", headers=headers["alice"], content=b"x" * 16
+    )
+    assert result.status_code == 201, result.text
+    file_id = result.json()["id"]
+    assert store.read("alice", file_id)[1] == b"x" * 16
+    assert (
+        client.get(f"/v1/files/{file_id}/download", headers=headers["bob"]).status_code
+        == 404
+    )
+    assert (
+        client.post(
+            "/v1/files/upload?filename=b.png",
+            headers=headers["alice"],
+            content=b"x" * 9,
+        ).status_code
+        == 413
+    )
+    assert (
+        client.post(
+            "/v1/files/upload?filename=b.png",
+            headers=headers["alice"],
+            content=b"x" * 8,
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/v1/files/upload?filename=../bad", headers=headers["alice"], content=b"x"
+        ).status_code
+        == 400
+    )
+    assert len(store.list("alice")) == 1

@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
+import threading
 import uuid
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Literal
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 
 from openjarvis.artifacts.store import _directory
@@ -45,6 +48,14 @@ class HunyuanJobs:
                 "CREATE TABLE IF NOT EXISTS jobs "
                 "(id TEXT PRIMARY KEY, owner TEXT NOT NULL)"
             )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS terminal_results "
+                "(id TEXT PRIMARY KEY, result TEXT NOT NULL)"
+            )
+        with self.db() as db:
+            db.execute("CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner)")
+        self._status_lock_guard = threading.Lock()
+        self._status_locks = weakref.WeakValueDictionary()
         os.chmod(catalog, 0o600)
 
     @contextmanager
@@ -97,12 +108,33 @@ class HunyuanJobs:
 
     def status(self, owner, job_id):
         self.own(owner, job_id)
+        with self._status_lock_guard:
+            lock = self._status_locks.get(job_id)
+            if lock is None:
+                lock = threading.Lock()
+                self._status_locks[job_id] = lock
+        with lock:
+            with self.db() as db:
+                cached = db.execute(
+                    "SELECT result FROM terminal_results WHERE id=?", (job_id,)
+                ).fetchone()
+            if cached:
+                return json.loads(cached[0])
+            return self._fetch_status(job_id)
+
+    def _fetch_status(self, job_id):
         result = self.call("/jobs/" + job_id)
         public = {key: result[key] for key in PUBLIC_FIELDS if key in result}
         if result.get("status") == "failed":
             public["error"] = (
                 "Generation failed; administrator can inspect the worker log"
             )
+        if result.get("status") in {"completed", "failed"}:
+            with self.db() as db:
+                db.execute(
+                    "INSERT OR REPLACE INTO terminal_results VALUES (?,?)",
+                    (job_id, json.dumps(public)),
+                )
         return public
 
 
@@ -115,14 +147,22 @@ def create_hunyuan_router(jobs: HunyuanJobs | None, config=None):
         return owner
 
     @router.get("/jobs")
-    def list_jobs(owner: str = Depends(available)):
+    def list_jobs(
+        owner: str = Depends(available),
+        limit: int = Query(25, ge=1, le=100),
+        offset: int = Query(0, ge=0),
+    ):
         with jobs.db() as db:
             ids = db.execute(
-                "SELECT id FROM jobs WHERE owner=? ORDER BY rowid DESC LIMIT 100",
-                (owner,),
+                "SELECT j.id,t.result FROM jobs j LEFT JOIN terminal_results t "
+                "ON j.id=t.id WHERE j.owner=? ORDER BY j.rowid DESC LIMIT ? OFFSET ?",
+                (owner, limit, offset),
             ).fetchall()
         return {
-            "jobs": [jobs.status(owner, row[0]) for row in ids],
+            "jobs": [
+                json.loads(row[1]) if row[1] else jobs.status(owner, row[0])
+                for row in ids
+            ],
             "default_model": config.server.hunyuan_model if config else "turbo",
         }
 

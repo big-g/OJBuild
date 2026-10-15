@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from decimal import (
     ROUND_HALF_EVEN,
@@ -1515,7 +1516,21 @@ def apply_tool_evidence_to_result(
     repair_grounding: bool = False,
 ) -> EvidenceAssessment:
     """Assess tool evidence and apply the final gate to an AgentResult-like object."""
-    assessment = assess_tool_results(
+    timings = {}
+    metadata = getattr(result, "metadata", None)
+    if isinstance(metadata, dict):
+        metadata["evidence_timings_ms"] = timings
+
+    def timed(stage, function, *args, **kwargs):
+        started = time.perf_counter()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            timings[stage] = round((time.perf_counter() - started) * 1000, 3)
+
+    assessment = timed(
+        "assessment",
+        assess_tool_results,
         requirement,
         tools,
         getattr(result, "tool_results", ()) or (),
@@ -1526,7 +1541,9 @@ def apply_tool_evidence_to_result(
         and requirement.required
         and assessment.status == EvidenceStatus.OBTAINED
     ):
-        conflict = validate_evidence_conflicts(
+        conflict = timed(
+            "conflict",
+            validate_evidence_conflicts,
             engine=engine,
             model=model,
             query=query,
@@ -1577,7 +1594,9 @@ def apply_tool_evidence_to_result(
         return assessment
 
     if validate_grounding and requirement.required and hasattr(result, "content"):
-        grounding = validate_response_grounding(
+        grounding = timed(
+            "grounding",
+            validate_response_grounding,
             engine=engine,
             model=model,
             query=query,
@@ -1593,7 +1612,9 @@ def apply_tool_evidence_to_result(
                     "method": grounding.method,
                 }
                 metadata["grounding_repair_attempted"] = True
-            candidate = _repair_grounded_answer(
+            candidate = timed(
+                "repair",
+                _repair_grounded_answer,
                 engine=engine,
                 model=model,
                 query=query,
@@ -1602,7 +1623,9 @@ def apply_tool_evidence_to_result(
                 metadata=metadata,
             )
             if candidate:
-                grounding = validate_response_grounding(
+                grounding = timed(
+                    "repair_validation",
+                    validate_response_grounding,
                     engine=engine,
                     model=model,
                     query=query,
@@ -1619,7 +1642,6 @@ def apply_tool_evidence_to_result(
             result.content = grounding_blocked_response(grounding)
 
     return assessment
-
 
 def finalize_agent_result_with_evidence(
     agent: Any,

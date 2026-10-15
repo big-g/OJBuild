@@ -321,3 +321,26 @@ class TestMethodologyFilter:
         # row contributes to total_tokens.
         assert sum(m.completion_tokens for m in summary.per_model) == 7
         agg.close()
+
+
+def test_dashboard_totals_match_full_summary_without_engine_query(
+    tmp_path, monkeypatch
+):
+    from dataclasses import asdict
+
+    agg = _setup(tmp_path, [_make_record(), _make_record(model_id="other", latency=3)])
+    try:
+        full = asdict(agg.summary())
+
+        def unexpected(**kwargs):
+            raise AssertionError("Unneeded engine breakdown queried")
+
+        monkeypatch.setattr(agg, "per_engine_stats", unexpected)
+        lean = asdict(agg.summary(include_breakdowns=False))
+        assert lean.pop("per_model") == []
+        assert lean.pop("per_engine") == []
+        full.pop("per_model")
+        full.pop("per_engine")
+        assert lean == full
+    finally:
+        agg.close()

@@ -236,3 +236,90 @@ def test_attachment_cancellation_and_cleanup_are_owner_scoped(clients):
         db.execute("UPDATE triggers SET state='waiting'")
     assert alice.delete("/v1/workflows/after-3d/trigger").status_code == 200
     assert service.triggers("alice") == []
+
+
+def test_history_one_connection_and_compact_detail_handoff(clients, monkeypatch):
+    from contextlib import contextmanager
+
+    alice, bob, admin, service, _ = clients
+    service.approve("admin", "artifact_copy", True)
+    item = service.artifacts.save("alice", "input.txt", "test")
+    saved = service.store.save("alice", DEFINITION)
+    run = service.submit("alice", saved["id"], 1, {"artifact_id": item["id"]})
+    service.store.update(
+        run["id"],
+        "completed",
+        {
+            "steps": [
+                {
+                    "id": "copy",
+                    "status": "completed",
+                    "output": {"report": {"large": "report"}},
+                }
+            ],
+            "output": {"report": {"large": "report"}},
+        },
+    )
+    original = service.store.db
+    calls = []
+
+    @contextmanager
+    def counted():
+        calls.append(1)
+        with original() as db:
+            yield db
+
+    monkeypatch.setattr(service.store, "db", counted)
+    result = alice.get("/v1/workflows/runs?compact=true").json()["runs"][0]
+    assert len(calls) == 1
+    assert result["compact"] is True
+    assert "output" not in result["steps"][0]
+    assert "report" not in result["output"]
+    detail = alice.get("/v1/workflows/runs/" + run["id"]).json()
+    assert detail["steps"][0]["output"]["report"] == {"large": "report"}
+    assert bob.get("/v1/workflows/runs/" + run["id"]).status_code == 404
+
+
+def test_checkpoint_probe_does_not_run_on_event_loop(clients, monkeypatch):
+    import asyncio
+    import threading
+    import time
+
+    import httpx
+
+    _, _, admin, _, app = clients
+    saved = admin.post(
+        "/v1/workflows/admin/image-servers",
+        json={
+            "config": {
+                "name": "local",
+                "url": "http://127.0.0.1:8188",
+                "checkpoint": "test.safetensors",
+            }
+        },
+    ).json()
+    loop_thread = threading.get_ident()
+
+    def probe(*args, **kwargs):
+        assert threading.get_ident() != loop_thread
+        time.sleep(0.02)
+        return {
+            "CheckpointLoaderSimple": {
+                "input": {"required": {"ckpt_name": [["test.safetensors"]]}}
+            }
+        }
+
+    monkeypatch.setattr("openjarvis.workflow.providers.request", probe)
+
+    async def verify():
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            result = await client.post(
+                f"/v1/workflows/admin/image-servers/{saved['id']}/enable",
+                headers=dict(admin.headers),
+                json={"revision": 1, "enabled": True},
+            )
+            assert result.status_code == 200, result.text
+
+    asyncio.run(verify())

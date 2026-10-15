@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   Zap,
   Activity,
@@ -43,9 +43,11 @@ export function SystemPanel() {
   const [energy, setEnergy] = useState<EnergyData | null>(null);
   const [telemetry, setTelemetry] = useState<TelemetryStats | null>(null);
 
+  const fetching = useRef(false);
   const fetchData = useCallback(async () => {
+    if (document.hidden || fetching.current) return;
+    fetching.current = true;
     try {
-      //const base = getBase();
       const [energyRes, telRes] = await Promise.allSettled([
         apiFetch(`/v1/telemetry/energy`).then((r) => (r.ok ? r.json() : null)),
         apiFetch(`/v1/telemetry/stats`).then((r) => (r.ok ? r.json() : null)),
@@ -58,7 +60,7 @@ export function SystemPanel() {
       }
     } catch {
       // best-effort
-    }
+    } finally { fetching.current = false; }
   }, []);
 
   useEffect(() => {

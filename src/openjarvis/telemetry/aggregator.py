@@ -363,12 +363,19 @@ class TelemetryAggregator:
         since: Optional[float] = None,
         until: Optional[float] = None,
         current_methodology_only: bool = False,
+        include_breakdowns: bool = True,
     ) -> AggregatedStats:
         model_stats = self.per_model_stats(
             since=since, until=until, current_methodology_only=current_methodology_only
         )
-        engine_stats = self.per_engine_stats(
-            since=since, until=until, current_methodology_only=current_methodology_only
+        engine_stats = (
+            self.per_engine_stats(
+                since=since,
+                until=until,
+                current_methodology_only=current_methodology_only,
+            )
+            if include_breakdowns
+            else []
         )
         total_calls = sum(m.call_count for m in model_stats)
 
@@ -402,7 +409,7 @@ class TelemetryAggregator:
             avg_mean_itl_ms=_weighted_avg("avg_mean_itl_ms"),
             avg_median_itl_ms=_weighted_avg("avg_median_itl_ms"),
             avg_p95_itl_ms=_weighted_avg("avg_p95_itl_ms"),
-            per_model=model_stats,
+            per_model=model_stats if include_breakdowns else [],
             per_engine=engine_stats,
         )
 

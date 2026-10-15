@@ -407,3 +407,20 @@ def test_foreground_workflow_handoff_preserves_original(service):
     assert run["output"]["artifact_id"] != original["id"]
     assert run["output"]["report"]["preserved_alpha"]
     assert service.artifacts.read("alice", original["id"])[1] == data
+
+
+def test_inspection_reports_unchanged_geometry_once(tmp_path, monkeypatch):
+    import openjarvis.workflow.mesh_worker as worker
+
+    source = tmp_path / "box.glb"
+    source.write_bytes(trimesh.creation.box().export(file_type="glb"))
+    original, calls = worker.report, []
+
+    def counted(mesh):
+        calls.append(1)
+        return original(mesh)
+
+    monkeypatch.setattr(worker, "report", counted)
+    report = worker.process(source, tmp_path / "unused", "mesh_inspect", {})
+    assert len(calls) == 1
+    assert report["before"] == report["after"]

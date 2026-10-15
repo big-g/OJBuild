@@ -6,6 +6,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import Field, ValidationError
+from starlette.concurrency import run_in_threadpool
 
 from openjarvis.artifacts.store import ArtifactError, ArtifactNotFound
 from openjarvis.server.auth import authenticate_admin_request, authenticate_request
@@ -224,16 +225,26 @@ def create_workflows_router(service):
             raise failure(exc) from None
 
     @router.get("/runs")
-    def list_runs(owner=Depends(available)):
+    def list_runs(compact: bool = False, owner=Depends(available)):
         with service.store.db() as db:
             identities = [
-                r[0]
+                dict(r)
                 for r in db.execute(
-                    "SELECT id FROM runs WHERE owner=? ORDER BY created DESC LIMIT 100",
+                    "SELECT * FROM runs WHERE owner=? ORDER BY created DESC LIMIT 100",
                     (owner,),
                 )
             ]
-        return {"runs": [service.store.run(owner, identity) for identity in identities]}
+        runs = [service.store.decode_run(row) for row in identities]
+        if compact:
+            for run in runs:
+                run["definition"] = {"name": run["definition"]["name"]}
+                run.pop("input", None)
+                for step in run.get("steps", []):
+                    step.pop("output", None)
+                run["compact"] = True
+                if isinstance(run.get("output"), dict):
+                    run["output"].pop("report", None)
+        return {"runs": runs}
 
     @router.get("/runs/{run_id}")
     def get_run(run_id: str, owner=Depends(available)):
@@ -398,8 +409,8 @@ def create_workflows_router(service):
 
             config = json.loads(row["config"])
             try:
-                manifest = local_request(
-                    config["url"], "/object_info/CheckpointLoaderSimple"
+                manifest = await run_in_threadpool(
+                    local_request, config["url"], "/object_info/CheckpointLoaderSimple"
                 )
                 checkpoints = manifest["CheckpointLoaderSimple"]["input"]["required"][
                     "ckpt_name"

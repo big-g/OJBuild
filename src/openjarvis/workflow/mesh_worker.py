@@ -203,7 +203,7 @@ def process(input_path, output_path, operation, params):
         or not np.isfinite(mesh.vertices).all()
     ):
         raise ValueError("Processed mesh is empty or exceeds limits")
-    after = report(mesh)
+    after = before if operation == "mesh_inspect" else report(mesh)
     if operation == "mesh_export_stl":
         if params.get("require_watertight", True) and not mesh.is_watertight:
             raise ValueError(

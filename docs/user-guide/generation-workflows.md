@@ -77,7 +77,7 @@ seconds. Preserve the ComfyUI `--disable-async-offload` service override on AMD.
 
 1. Upload an image in **Generation & Workflows** and choose **Prepare foreground
    preview**. Approve `image_remove_background` in administrator controls, save,
-   and run. The completed step opens its checkerboard preview automatically.
+   and run. Choose **Load step reports and previews** on the run to view its checkerboard preview.
 2. Inspect handles, holes, edges and all intended components. If the mask is bad,
    use a clearer reference or an externally prepared transparent PNG. No automatic
    segmentation method guarantees the desired object.
@@ -308,3 +308,30 @@ select evidence uses where appropriate, save the classification, and explicitly
 approve the catalog. Readiness separates approval, automatic chat calls and
 evidence classification. Catalog discovery is not a continuous health check;
 each invocation still validates the remote service and reviewed catalog.
+
+## Performance and history
+
+3D history shows 25 jobs per page. Completed/failed worker results are retained
+locally, so opening history does not repeatedly contact the GPU worker for old
+jobs. Transport errors are not cached as terminal results. The API supports
+`GET /v1/3d/jobs?limit=25&offset=0` (maximum limit 100). An uncached historical
+job still requires one successful worker status retrieval.
+
+Workflow polling requests compact summaries. Use **Load step reports and
+previews** for full details; advancing steps invalidate stale detail snapshots.
+`GET /v1/workflows/runs` retains the full response for existing clients;
+`?compact=true` omits input payloads and step outputs. Individual run endpoints
+continue to enforce the same owner checks. 3D/workflow/dashboard polling pauses
+in hidden tabs, and slow 3D/dashboard refreshes do not overlap.
+
+Browser file uploads use `POST /v1/files/upload?filename=example.glb` with the
+raw file as the body. Uploads are staged privately and copied in bounded chunks;
+normal file size limits, account quotas and integrity checks still apply. The
+JSON/base64 save endpoint remains available for existing tools and clients.
+
+Dashboard statistics and energy share a three-second server snapshot. Totals may
+lag new events by up to three seconds. Aggregation and image checkpoint probing
+run off the API event loop. Evidence verification behavior is unchanged;
+`evidence_timings_ms` in result metadata records assessment, conflict, grounding,
+repair and repair-validation stages when those stages execute. These timings
+measure evidence processing, not overall model generation or retrieval latency.

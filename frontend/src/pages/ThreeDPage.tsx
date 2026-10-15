@@ -15,6 +15,8 @@ export function ThreeDPage() {
   const [automatic, setAutomatic] = useState('');
   const [triggers, setTriggers] = useState<Array<{ id: string; job_id: string; state: string; error?: string; run_id?: string }>>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
   const [model, setModel] = useState('turbo');
@@ -31,21 +33,26 @@ export function ThreeDPage() {
   }, [file]);
   useEffect(() => {
     let cancelled = false;
+    let pending = false;
+    const controller = new AbortController();
     const refresh = async () => {
+      if (pending || document.hidden) return;
+      pending = true;
       try {
-        const body = await read3DJson<{ jobs: Job[]; default_model?: string }>(await apiFetch('/v1/3d/jobs'));
+        const body = await read3DJson<{ jobs: Job[]; default_model?: string }>(await apiFetch(`/v1/3d/jobs?limit=25&offset=${page * 25}`, { signal: controller.signal }));
         if (!Array.isArray(body.jobs)) throw new Error('3D API returned an invalid job list.');
-        if (!cancelled) { setJobs(body.jobs); if (!modelChosen.current && body.default_model) { setModel(body.default_model); modelChosen.current = true; } }
+        if (!cancelled) { setJobs(body.jobs); setHasMore(body.jobs.length === 25); if (!modelChosen.current && body.default_model) { setModel(body.default_model); modelChosen.current = true; } }
         try {
-          const result = await workflowJson<{ triggers: typeof triggers }>('/after-3d');
+          const result = await workflowJson<{ triggers: typeof triggers }>('/after-3d', { signal: controller.signal });
           if (!cancelled) setTriggers(result.triggers);
         } catch { /* Existing generation remains available if workflows are unavailable. */ }
       } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : 'Could not load jobs'); }
+      finally { pending = false; }
     };
     void refresh();
     const timer = setInterval(() => { void refresh(); }, 5000);
-    return () => { cancelled = true; clearInterval(timer); };
-  }, []);
+    return () => { cancelled = true; controller.abort(); clearInterval(timer); };
+  }, [page]);
   const submit = async () => {
     if (!file) return;
     if (file.size > 20 * 1024 * 1024) { setError('Choose an image below 20 MiB.'); return; }
@@ -54,6 +61,7 @@ export function ThreeDPage() {
       const job = await read3DJson<Job>(await apiFetch(`/v1/3d/jobs?model=${model}`, {
         method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file,
       }));
+      setPage(0);
       setJobs(rows => [job, ...rows.filter(row => row.job_id !== job.job_id)]);
       const selected = workflows.find(workflow => workflow.id === automatic);
       if (selected) {
@@ -113,6 +121,7 @@ export function ThreeDPage() {
     </div>
     <h2 className="text-lg font-semibold">Your jobs</h2>
     {!jobs.length && <p>No jobs yet.</p>}
+    <div className="flex gap-3"><button disabled={page === 0} onClick={() => setPage(p => p - 1)}>Newer jobs</button><span>Page {page + 1}</span><button disabled={!hasMore} onClick={() => setPage(p => p + 1)}>Older jobs</button></div>
     {jobs.map(job => <article key={job.job_id} className="rounded-lg border p-4 space-y-2">
       <p className="font-medium">{job.model === 'turbo' ? 'Turbo' : 'Standard'} · {job.status}</p>
       <p className="text-xs text-muted-foreground break-all">{job.job_id}</p>

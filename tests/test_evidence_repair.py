@@ -86,6 +86,11 @@ def test_repair_preserves_actual_source_location_and_revalidates():
     assert result.metadata["grounding_status"] == "supported"
     assert result.metadata["grounding_initial"]["status"] == "unsupported"
     assert result.metadata["grounding_repair_succeeded"] is True
+    timings = result.metadata["evidence_timings_ms"]
+    assert {"assessment", "grounding", "repair", "repair_validation"} <= timings.keys()
+    assert all(
+        isinstance(value, (int, float)) and value >= 0 for value in timings.values()
+    )
     audit = grounding_audit_from_result_metadata(result.metadata)
     assert audit["repair_succeeded"] is True
     assert audit["initial"]["status"] == "unsupported"

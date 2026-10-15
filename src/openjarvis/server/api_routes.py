@@ -472,37 +472,34 @@ def _telemetry_db_path(request: Request) -> Path:
 
 
 @telemetry_router.get("/stats")
-async def telemetry_stats(request: Request):
+def telemetry_stats(request: Request):
     """Get aggregated telemetry statistics."""
     try:
         from dataclasses import asdict
 
-        from openjarvis.telemetry.aggregator import TelemetryAggregator
+        from openjarvis.server.telemetry_snapshot import summary
 
         db_path = _telemetry_db_path(request)
         if not db_path.exists():
             return {"total_requests": 0, "total_tokens": 0}
 
         session_start = getattr(request.app.state, "session_start", None)
-        agg = TelemetryAggregator(db_path)
-        try:
-            stats = agg.summary(since=session_start)
+        stats = summary(request, db_path, session_start)
+        if stats is not None:
             d = asdict(stats)
             d.pop("per_model", None)
             d.pop("per_engine", None)
             d["total_requests"] = d.pop("total_calls", 0)
             return d
-        finally:
-            agg.close()
     except Exception as exc:
         return {"error": str(exc)}
 
 
 @telemetry_router.get("/energy")
-async def telemetry_energy(request: Request):
+def telemetry_energy(request: Request):
     """Get energy monitoring data."""
     try:
-        from openjarvis.telemetry.aggregator import TelemetryAggregator
+        from openjarvis.server.telemetry_snapshot import summary
 
         db_path = _telemetry_db_path(request)
         if not db_path.exists():
@@ -515,9 +512,8 @@ async def telemetry_energy(request: Request):
             }
 
         session_start = getattr(request.app.state, "session_start", None)
-        agg = TelemetryAggregator(db_path)
-        try:
-            stats = agg.summary(since=session_start)
+        stats = summary(request, db_path, session_start)
+        if stats is not None:
             total_energy = stats.total_energy_joules
             total_tokens = stats.total_tokens
             total_latency = stats.total_latency
@@ -532,8 +528,6 @@ async def telemetry_energy(request: Request):
                 "cpu_temp_c": None,
                 "gpu_temp_c": None,
             }
-        finally:
-            agg.close()
     except Exception as exc:
         return {"error": str(exc)}
 

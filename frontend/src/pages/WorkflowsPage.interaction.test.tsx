@@ -72,3 +72,37 @@ it('does not overlap slow polling and aborts requests on unmount', async () => {
   await act(async () => root.unmount());
   expect(signals.every(signal => signal.aborted)).toBe(true);
 });
+
+it('loads reports on demand and invalidates detail when steps advance', async () => {
+  let state = 'running';
+  const compact = () => ({ id: 'detail-run', compact: true, status: 'running', definition: saved.definition, steps: [{ id: 'inspect', status: state }] });
+  api.fetch.mockImplementation(async (path: string) => {
+    if (path === '/v1/workflows') return response(catalog);
+    if (path === '/v1/files') return response({ files: [] });
+    if (path === '/v1/workflows/runs/detail-run') return response({ ...compact(), compact: false, steps: [{ id: 'inspect', status: state, output: { report: { note: 'loaded report' } } }] });
+    return response({ runs: [compact()] });
+  });
+  await mount();
+  expect(document.body.textContent).not.toContain('loaded report');
+  await act(async () => button('Load step reports and previews').click());
+  expect(document.body.textContent).toContain('loaded report');
+  state = 'completed';
+  await act(async () => vi.advanceTimersByTimeAsync(5000));
+  expect(document.body.textContent).not.toContain('loaded report');
+  expect(button('Load step reports and previews')).toBeTruthy();
+});
+
+it('uploads the original file as binary instead of base64 JSON', async () => {
+  await mount();
+  const file = new File(['mesh'], 'original.glb', { type: 'model/gltf-binary' });
+  api.fetch.mockImplementation(async (path: string, options?: RequestInit) => {
+    if (options?.method === 'POST') return response({ id: 'artifact', filename: file.name, size: file.size });
+    return response(path === '/v1/workflows' ? catalog : path === '/v1/files' ? { files: [] } : { runs: [] });
+  });
+  const input = document.querySelector('input[type=file]')!;
+  Object.defineProperty(input, 'files', { value: [file] });
+  await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+  const upload = api.fetch.mock.calls.find(([, options]) => options?.method === 'POST')!;
+  expect(upload[0]).toBe('/v1/files/upload?filename=original.glb');
+  expect(upload[1].body).toBe(file);
+});

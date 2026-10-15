@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import os
 import sqlite3
 import stat
@@ -120,6 +121,21 @@ class ArtifactStore:
     def save(
         self, owner: str, filename: str, content: str, encoding: str = "utf8"
     ) -> dict:
+        if not isinstance(content, str) or len(content) > MAX_REQUEST_BYTES:
+            raise ArtifactError("Invalid or oversized content")
+        try:
+            if encoding == "utf8":
+                data = content.encode("utf-8")
+            elif encoding == "base64":
+                data = base64.b64decode(content, validate=True)
+            else:
+                raise ArtifactError("Encoding must be utf8 or base64")
+        except (ValueError, UnicodeError) as exc:
+            raise ArtifactError("Invalid file encoding") from exc
+        return self.save_stream(owner, filename, io.BytesIO(data))
+
+    def save_stream(self, owner, filename, source):
+        """Commit a private seekable upload with bounded copying and atomic quotas."""
         owner_dir = self._owner(owner)
         if (
             not isinstance(filename, str)
@@ -136,25 +152,23 @@ class ArtifactStore:
             filename.encode("utf-8")
         except UnicodeError as exc:
             raise ArtifactError("Invalid filename encoding") from exc
-        if not isinstance(content, str) or len(content) > MAX_REQUEST_BYTES:
-            raise ArtifactError("Invalid or oversized content")
-        try:
-            if encoding == "utf8":
-                data = content.encode("utf-8")
-            elif encoding == "base64":
-                data = base64.b64decode(content, validate=True)
-            else:
-                raise ArtifactError("Encoding must be utf8 or base64")
-        except (ValueError, UnicodeError) as exc:
-            raise ArtifactError("Invalid file encoding") from exc
-        if len(data) > file_limit(filename):
-            raise ArtifactError("Files are limited to 20 MiB; GLB originals to 64 MiB")
+        source.seek(0)
+        length = 0
+        digest = hashlib.sha256()
+        while chunk := source.read(1024**2):
+            length += len(chunk)
+            if length > file_limit(filename):
+                raise ArtifactError(
+                    "Files are limited to 20 MiB; GLB originals to 64 MiB"
+                )
+            digest.update(chunk)
+        source.seek(0)
         row = dict(
             id=str(uuid.uuid4()),
             owner_id=owner,
             filename=filename,
-            size=len(data),
-            sha256=hashlib.sha256(data).hexdigest(),
+            size=length,
+            sha256=digest.hexdigest(),
             created_at=datetime.now(timezone.utc).isoformat(),
         )
         with self._db() as db, _directory(self.root / owner_dir) as fd:
@@ -165,7 +179,7 @@ class ArtifactStore:
                 "WHERE owner_id=?",
                 (owner,),
             ).fetchone()
-            if count >= MAX_USER_FILES or size + len(data) > MAX_USER_BYTES:
+            if count >= MAX_USER_FILES or size + length > MAX_USER_BYTES:
                 raise ArtifactError("User storage quota exceeded (100 files / 200 MiB)")
             blob = row["id"] + ".blob"
             created = False
@@ -178,7 +192,16 @@ class ArtifactStore:
                 )
                 created = True
                 with os.fdopen(handle, "wb") as out:
-                    out.write(data)
+                    copied = 0
+                    written_digest = hashlib.sha256()
+                    while chunk := source.read(1024**2):
+                        copied += len(chunk)
+                        if copied > length:
+                            raise ArtifactError("Upload changed during commit")
+                        written_digest.update(chunk)
+                        out.write(chunk)
+                    if copied != length or written_digest.hexdigest() != row["sha256"]:
+                        raise ArtifactError("Upload changed during commit")
                     out.flush()
                     os.fsync(out.fileno())
                 db.execute(
