@@ -21,7 +21,7 @@ export function DirectImageAction({ prompt, disabled = false }: { prompt: string
     setRun(''); setError(''); setChoices([]); setSelected('');
     try {
       const catalog = await workflowJson<Catalog>('');
-      if (!catalog.image_generation_allowed) throw new Error('Image generation is disabled for your account. Ask an administrator to enable it in Settings → Account management.');
+      if (!catalog.image_generation_allowed) throw new Error('Direct image submission is disabled for your account. Use Jarvis chat to request an image. Ask an administrator to enable it in Settings → Account management.');
       if (!catalog.operations.some(op => op.id === 'image_generate_local' && op.enabled)) throw new Error('The image generation operation needs administrator approval in Generation & Workflows.');
       const enabled = new Set(catalog.image_servers.filter(s => s.enabled).map(s => s.id));
       const images = catalog.workflows.filter(w => w.definition.steps.length === 1 && w.definition.steps[0].operation === 'image_generate_local' && enabled.has(w.definition.steps[0].parameters?.instance_id || ''));

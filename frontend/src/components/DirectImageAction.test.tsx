@@ -39,7 +39,7 @@ it('submits the exact prompt once to a saved workflow without a chat request', a
 it('explains denied account permission and prevents submission', async () => {
   api.mockResolvedValue({ ...catalog, image_generation_allowed: false });
   await act(async () => button('Generate image').click());
-  expect(document.querySelector('[role="alert"]')?.textContent).toContain('disabled for your account');
+  expect(document.querySelector('[role="alert"]')?.textContent).toContain('Direct image submission is disabled for your account');
   expect(button('Submit image job').disabled).toBe(true);
   expect(api).toHaveBeenCalledTimes(1);
 });

@@ -351,9 +351,20 @@ workflow settings still apply. It currently accepts text only; remove attached
 images to use it. Normal chat messages continue to use the selected chat model,
 whose responses and restrictions are not changed by this feature.
 
-Administrators control **Allow image generation** for each account in
-**Settings → Account management**. Existing and new accounts retain access by
-default, subject to the existing workflow approvals and enabled server settings.
-Disabling access blocks direct submissions, image steps in other workflows and
-queued image steps before execution; it does not interrupt an image already
-running. Permission changes are recorded in the account permission audit table.
+Administrators control **Allow direct image submission** for each account in
+**Settings → Account management**. When enabled, users can submit images from
+the chat composer's Generate image action and run image workflows directly from
+the workflow screen. When disabled, both direct HTTP submission endpoints reject
+image workflows, while Jarvis's authenticated workflow tools remain available.
+This includes image steps nested within a saved multi-step workflow. Existing
+operation approvals, capabilities, ownership and enabled-server checks still apply.
+Non-image workflows are unaffected. Changes affect new submissions; jobs already
+accepted continue to run. Permission changes are audited. The existing API and
+stored field names are retained for compatibility, but now control direct access
+only. Existing setting values are preserved.
+
+This permission does not establish an age or adult-content policy. A chat model
+can refuse some prompts, but its refusals alone cannot reliably enforce
+age-appropriate output. Do not treat disabling direct submission as child
+protection; that requires a separately enforced content policy covering prompts,
+images and all generation entry points.

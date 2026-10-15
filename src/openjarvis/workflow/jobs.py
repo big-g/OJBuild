@@ -556,7 +556,7 @@ class WorkflowJobs:
             self.store.log(db, actor, "save_image_server", identity)
         return {"id": identity, "revision": revision, **values, "enabled": False}
 
-    def submit(self, owner, workflow_id, revision, inputs):
+    def submit(self, owner, workflow_id, revision, inputs, *, direct=False):
         self.check_owner(owner)
         if self.stopping.is_set():
             raise ValueError("Workflow service is stopping")
@@ -580,7 +580,7 @@ class WorkflowJobs:
             )
         definition = Definition.model_validate(row["definition"])
         for step in definition.steps:
-            if step.operation == "image_generate_local":
+            if direct and step.operation == "image_generate_local":
                 self.check_image_access(owner)
             if not self.approved(step.operation):
                 raise ValueError(
@@ -851,7 +851,6 @@ class WorkflowJobs:
     def perform(self, owner, operation, value, params):
         self.check_owner(owner)
         if operation == "image_generate_local":
-            self.check_image_access(owner)
             from openjarvis.workflow.providers import generate_image
 
             instance = self.instance(params["instance_id"])
@@ -937,7 +936,7 @@ class WorkflowJobs:
     def check_image_access(self, owner):
         if self.image_access_check is None or not self.image_access_check(owner):
             raise ValueError(
-                "Image generation is disabled for this account; "
+                "Direct image submission is disabled for this account; "
                 "contact an administrator"
             )
 

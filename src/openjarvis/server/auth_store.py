@@ -100,6 +100,7 @@ class AuthStore:
                 )
 
     def image_generation_allowed(self, user_id: str) -> bool:
+        """Legacy field name: permission for direct image submissions only."""
         user = self.get_user(user_id)
         return bool(
             user is not None

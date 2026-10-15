@@ -228,7 +228,11 @@ def create_workflows_router(service):
             ):
                 raise ValueError("Expected workflow_id, revision and input object")
             return service.submit(
-                owner, values["workflow_id"], values["revision"], values["input"]
+                owner,
+                values["workflow_id"],
+                values["revision"],
+                values["input"],
+                direct=True,
             )
         except (ValueError, KeyError, ArtifactError) as exc:
             raise failure(exc) from None
@@ -255,6 +259,7 @@ def create_workflows_router(service):
                 values.workflow_id,
                 values.revision,
                 {"prompt": values.prompt},
+                direct=True,
             )
         except (ValueError, KeyError, ArtifactError) as exc:
             raise failure(exc) from None

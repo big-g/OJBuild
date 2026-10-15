@@ -386,20 +386,26 @@ def test_direct_image_ownership_permission_and_exact_prompt(clients, monkeypatch
         == 400
     )
 
-    def unexpected(*args, **kwargs):
-        pytest.fail("Revoked permission must stop before contacting the image server")
+    # Tool-mediated generation remains available when direct access is disabled.
+    from openjarvis.core.correlation import ExecutionIdentity, execution_scope
+    from openjarvis.tools.workflow import WorkflowChatTool
 
-    monkeypatch.setattr("openjarvis.workflow.providers.generate_image", unexpected)
-    with pytest.raises(ValueError, match="disabled for this account"):
-        service.perform(
-            "alice",
-            "image_generate_local",
-            {"prompt": prompt},
-            {"instance_id": "local"},
+    with execution_scope(ExecutionIdentity(user_id="alice")):
+        result = WorkflowChatTool(service, "workflow_submit").execute(
+            workflow_id=saved["id"], revision=1, prompt=prompt
         )
+    assert result.success
+    service.perform(
+        "alice", "image_generate_local", {"prompt": prompt}, {"instance_id": "local"}
+    )
+    assert calls == [prompt, prompt]
     service.image_access_check = None
-    with pytest.raises(ValueError, match="disabled for this account"):
-        service.submit("alice", saved["id"], 1, {"prompt": prompt})
+    with pytest.raises(ValueError, match="Direct image submission is disabled"):
+        service.submit("alice", saved["id"], 1, {"prompt": prompt}, direct=True)
+    assert (
+        service.submit("alice", saved["id"], 1, {"prompt": prompt})["status"]
+        == "queued"
+    )
 
 
 def test_direct_image_rejects_non_image_workflow(clients):
@@ -411,3 +417,57 @@ def test_direct_image_rejects_non_image_workflow(clients):
     )
     assert response.status_code == 400
     assert "single-step" in response.text
+
+
+def test_disabled_direct_access_checks_all_image_steps_but_allows_other_runs(clients):
+    alice, _, admin, service, app = clients
+    app.state.auth_store.set_image_generation("admin", "alice", False)
+    admin.post("/v1/workflows/admin/operations/artifact_copy", json={"enabled": True})
+    admin.post(
+        "/v1/workflows/admin/operations/image_generate_local", json={"enabled": True}
+    )
+    copy = alice.post("/v1/workflows", json={"definition": DEFINITION}).json()
+    artifact = service.save_bytes("alice", "input.txt", b"hello")
+    response = alice.post(
+        "/v1/workflows/runs",
+        json={
+            "workflow_id": copy["id"],
+            "revision": 1,
+            "input": {"artifact_id": artifact["id"]},
+        },
+    )
+    assert response.status_code == 202
+    mixed = {
+        "version": 1,
+        "name": "Image and copy",
+        "steps": [
+            {
+                "id": "image",
+                "operation": "image_generate_local",
+                "parameters": {"instance_id": "local"},
+            },
+            {"id": "copy", "operation": "artifact_copy", "input": "image"},
+        ],
+    }
+    saved = alice.post("/v1/workflows", json={"definition": mixed}).json()
+    response = alice.post(
+        "/v1/workflows/runs",
+        json={
+            "workflow_id": saved["id"],
+            "revision": 1,
+            "input": {"prompt": "landscape"},
+        },
+    )
+    assert response.status_code == 400
+    assert "Direct image submission is disabled" in response.text
+    # Caller-supplied flags cannot turn a direct HTTP request into a tool call.
+    response = alice.post(
+        "/v1/workflows/runs",
+        json={
+            "workflow_id": saved["id"],
+            "revision": 1,
+            "input": {"prompt": "landscape"},
+            "direct": False,
+        },
+    )
+    assert response.status_code == 400

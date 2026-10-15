@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import { ConfigurationHelp } from './ConfigurationHelp';
 import { getStoredUser } from '../lib/auth';
 import { setImageGenerationAccess, changeAccountRole, createAccount, listAccounts, removeAccount, type AccountRole, type ManagedAccount } from '../lib/accounts-api';
 
@@ -35,7 +36,8 @@ export function AccountManagementPanel() {
     </form>
     <ul className="space-y-3">{accounts.map(account => <li key={account.user_id} className="rounded border p-3 space-y-2">
       <p>{account.display_name} ({account.username}) — <strong>{account.is_admin ? 'Administrator' : 'User'}</strong>{account.disabled ? ' — disabled' : ''}</p>
-      <label className="flex gap-2 items-center text-sm" title="Allows approved local image workflows, including direct Generate image. Changes apply to new submissions and queued image steps."><input type="checkbox" checked={!!account.image_generation_enabled} disabled={busy || account.disabled} onChange={e => void act(() => setImageGenerationAccess(account.user_id, e.target.checked), 'Image generation access updated.')} />Allow image generation</label>
+      <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={!!account.image_generation_enabled} disabled={busy || account.disabled} onChange={e => void act(() => setImageGenerationAccess(account.user_id, e.target.checked), 'Direct image submission access updated.')} />Allow direct image submission</label>
+      <ConfigurationHelp title="Direct image submission" summary="Allows images without chat model review. Jarvis tools remain available when disabled."><p>When enabled, this account can submit image prompts directly from Generate image or run image workflows from the workflow screen. When disabled, image generation is available through Jarvis chat tools only. Existing operation approvals still apply. Changes affect new submissions; accepted jobs continue.</p><p>This is an access control, not an age or adult-content filter. Chat model refusals alone cannot guarantee age-appropriate output. Do not rely on this switch as child protection.</p></ConfigurationHelp>
       {account.user_id === user.user_id ? <p className="text-sm">Your account. Use another administrator to change your role or remove this account.</p> : <>
         <button disabled={busy} type="button" className="rounded border px-3 py-1 mr-2" onClick={() => { if (window.confirm(`Change ${account.username} to ${account.is_admin ? 'User' : 'Administrator'}? This signs them out on every device.`)) void act(() => changeAccountRole(account.user_id, account.is_admin ? 'user' : 'administrator'), 'Role updated.'); }}>{account.is_admin ? 'Make user' : 'Make administrator'}</button>
         <button disabled={busy} type="button" className="rounded border px-3 py-1" onClick={() => { if (window.confirm(`Remove account ${account.username}? Login and recovery credentials will be removed. Historical data remains tied to its original identity.`)) void act(() => removeAccount(account.user_id), 'Account removed.'); }}>Remove account</button>
