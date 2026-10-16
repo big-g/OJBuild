@@ -1,6 +1,6 @@
 import { apiFetch } from './api';
 export type AccountRole = 'user' | 'administrator';
-export interface ManagedAccount { user_id: string; username: string; display_name: string; is_admin: boolean; disabled: boolean; image_generation_enabled?: boolean }
+export interface ManagedAccount { user_id: string; username: string; display_name: string; is_admin: boolean; disabled: boolean; image_generation_enabled?: boolean; age?: number | null; birthdate?: string | null; birthdate_timezone?: string }
 async function request(path = '', init: RequestInit = {}) {
   const response = await apiFetch(`/v1/auth/users${path}`, init);
   const data = await response.json();
@@ -8,8 +8,8 @@ async function request(path = '', init: RequestInit = {}) {
   return data;
 }
 export async function listAccounts(): Promise<ManagedAccount[]> { return (await request()).users; }
-export async function createAccount(username: string, display_name: string, password: string, role: AccountRole): Promise<ManagedAccount> {
-  return request('', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, display_name, password, role }) });
+export async function createAccount(username: string, display_name: string, password: string, role: AccountRole, birthdate: string | null = null, birthdate_timezone: string = 'UTC'): Promise<ManagedAccount> {
+  return request('', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, display_name, password, role, birthdate, birthdate_timezone }) });
 }
 export async function changeAccountRole(userId: string, role: AccountRole): Promise<void> {
   await request(`/${encodeURIComponent(userId)}/role`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role }) });
@@ -18,4 +18,8 @@ export async function removeAccount(userId: string): Promise<void> { await reque
 
 export async function setImageGenerationAccess(userId: string, enabled: boolean): Promise<void> {
   await request(`/${encodeURIComponent(userId)}/image-generation`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) });
+}
+
+export async function setAccountBirthdate(userId: string, birthdate: string | null, birthdate_timezone: string): Promise<void> {
+  await request(`/${encodeURIComponent(userId)}/birthdate`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ birthdate, birthdate_timezone }) });
 }

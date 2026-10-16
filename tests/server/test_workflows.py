@@ -16,11 +16,21 @@ def clients(tmp_path, monkeypatch):
     app.state.auth_store = AuthStore(tmp_path / "auth.db")
     service = WorkflowJobs(ArtifactStore(tmp_path / "files"))
     service.image_access_check = app.state.auth_store.image_generation_allowed
+    from openjarvis.server.content_protection import ContentProtection
+
+    service.content_protection = ContentProtection(app.state.auth_store)
     monkeypatch.setattr(service, "start_worker", lambda: None)
     app.include_router(create_workflows_router(service))
+    app.state.auth_store.create_user(
+        "fixture_admin", "fixture_admin", "password", is_admin=True
+    )
     rows = []
     for name, admin in (("alice", False), ("bob", False), ("admin", True)):
         app.state.auth_store.create_user(name, name, "password", is_admin=admin)
+        # Existing routing tests exercise adult access; minors have separate tests.
+        app.state.auth_store.set_birthdate(
+            name if admin else "fixture_admin", name, "1980-01-01"
+        )
         token = app.state.auth_store.create_session(name)
         rows.append(TestClient(app, headers={"X-OpenJarvis-Session": token}))
     yield (*rows, service, app)
@@ -358,7 +368,11 @@ def test_direct_image_ownership_permission_and_exact_prompt(clients, monkeypatch
 
     calls = []
     monkeypatch.setattr(
-        service, "instance", lambda _: SimpleNamespace(checkpoint="sdxl")
+        service,
+        "instance",
+        lambda _: SimpleNamespace(
+            checkpoint="sdxl", model_dump=lambda: {"checkpoint": "sdxl"}
+        ),
     )
     monkeypatch.setattr(
         "openjarvis.workflow.providers.generate_image",

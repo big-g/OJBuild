@@ -299,13 +299,20 @@ def create_workflows_router(service):
             run = service.store.run(owner, run_id)
         except KeyError as exc:
             raise failure(exc) from None
-        if run["status"] not in {"queued", "running"}:
+        if run["status"] not in {"queued", "running", "awaiting_review"}:
             raise HTTPException(409, "Run is already finished")
         with service.store.db() as db:
             db.execute(
-                "UPDATE runs SET cancel=1 WHERE id=? AND owner=?", (run_id, owner)
+                "UPDATE runs SET cancel=1, state=CASE WHEN state='awaiting_review' "
+                "THEN 'cancelled' ELSE state END WHERE id=? AND owner=?",
+                (run_id, owner),
             )
             service.store.log(db, owner, "cancel_run", run_id)
+        if (
+            run["status"] == "awaiting_review"
+            and service.content_protection is not None
+        ):
+            service.content_protection.finish(owner, run_id)
         return {"cancel_requested": True}
 
     @router.delete("/runs/{run_id}")

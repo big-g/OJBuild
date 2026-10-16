@@ -8,8 +8,10 @@ import os
 import secrets
 import sqlite3
 import time
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openjarvis.core.paths import get_config_dir
 
@@ -36,6 +38,8 @@ class AuthStore:
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
 
         self._initialize()
+        if os.name == "posix":
+            os.chmod(self._db_path, 0o600)
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(
@@ -84,6 +88,18 @@ class AuthStore:
 
             conn.execute("BEGIN IMMEDIATE")
             columns = {row[1] for row in conn.execute("PRAGMA table_info(users)")}
+            if "birthdate" not in columns:
+                conn.execute("ALTER TABLE users ADD COLUMN birthdate TEXT")
+            if "birthdate_timezone" not in columns:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN birthdate_timezone TEXT "
+                    "NOT NULL DEFAULT 'UTC'"
+                )
+            if "content_revision" not in columns:
+                conn.execute(
+                    "ALTER TABLE users ADD COLUMN content_revision INTEGER "
+                    "NOT NULL DEFAULT 0"
+                )
             if "image_generation_enabled" not in columns:
                 conn.execute(
                     "ALTER TABLE users ADD COLUMN image_generation_enabled "
@@ -123,6 +139,68 @@ class AuthStore:
             conn.execute(
                 "INSERT INTO account_permission_audit VALUES (?,?,?,?,?)",
                 (actor_id, user_id, "image_generation", enabled, time.time()),
+            )
+
+    @staticmethod
+    def user_age(user, now=None):
+        if not user["birthdate"]:
+            return None
+        born = date.fromisoformat(user["birthdate"])
+        today = (
+            (now or datetime.now(timezone.utc))
+            .astimezone(ZoneInfo(user["birthdate_timezone"]))
+            .date()
+        )
+        # February 29 birthdays reach their new age on March 1 in non-leap years.
+        return (
+            today.year - born.year - ((today.month, today.day) < (born.month, born.day))
+        )
+
+    @staticmethod
+    def validate_birthdate(birthdate, birthdate_timezone="UTC"):
+        try:
+            zone = ZoneInfo(birthdate_timezone)
+            born = None if birthdate is None else date.fromisoformat(birthdate)
+            if born is not None and (
+                born.isoformat() != birthdate
+                or born > datetime.now(zone).date()
+                or born.year < 1900
+            ):
+                raise ValueError()
+        except (TypeError, ValueError, ZoneInfoNotFoundError):
+            raise ValueError(
+                "Use a valid birthdate from 1900 through today and an IANA time zone"
+            ) from None
+
+    def set_birthdate(self, actor_id, user_id, birthdate, birthdate_timezone="UTC"):
+        self.validate_birthdate(birthdate, birthdate_timezone)
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_admin(conn, actor_id)
+            if not conn.execute(
+                "UPDATE users SET "
+                "birthdate=?,birthdate_timezone=?,"
+                "content_revision=content_revision+1,updated_at=? WHERE user_id=?",
+                (birthdate, birthdate_timezone, time.time(), user_id),
+            ).rowcount:
+                raise ValueError("Account not found")
+            if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='content_reviews'"
+            ).fetchone():
+                conn.execute(
+                    "UPDATE content_reviews SET state='expired',image=NULL "
+                    "WHERE owner=?",
+                    (user_id,),
+                )
+            conn.execute(
+                "INSERT INTO account_permission_audit VALUES (?,?,?,?,?)",
+                (
+                    actor_id,
+                    user_id,
+                    "birthdate_changed",
+                    int(birthdate is not None),
+                    time.time(),
+                ),
             )
 
     def set_admin(self, user_id: str, enabled: bool) -> None:
@@ -311,10 +389,10 @@ class AuthStore:
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT user_id, username, display_name, disabled, is_admin, "
-                "image_generation_enabled "
+                "image_generation_enabled, birthdate, birthdate_timezone "
                 "FROM users ORDER BY username"
             ).fetchall()
-            return [dict(row) for row in rows]
+            return [{**dict(row), "age": self.user_age(row)} for row in rows]
 
     def get_user_by_username(
         self,

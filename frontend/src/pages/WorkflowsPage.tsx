@@ -107,7 +107,7 @@ export function WorkflowsPage() {
   useEffect(() => {
     if (acceptedRunId) document.getElementById(`workflow-run-${acceptedRunId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [acceptedRunId]);
-  const pollingDelay = runs.some(run => ['queued', 'running'].includes(run.status)) ? 5000 : 15000;
+  const pollingDelay = runs.some(run => ['queued', 'running', 'awaiting_review'].includes(run.status)) ? 5000 : 15000;
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
@@ -262,7 +262,7 @@ export function WorkflowsPage() {
         })}>Load step reports and previews</button>}
         {run.steps.map(step => <details key={step.id} open={step.operation === 'image_remove_background' && step.status === 'completed'} className="border rounded p-2"><summary>{step.id} · {step.status}{step.elapsed_seconds !== undefined ? ` · ${step.elapsed_seconds}s` : ''}</summary>{step.error && <p role="alert">{step.error}</p>}{step.failure && <p className="text-sm"><strong>{step.failure.category.replace(/_/g, " ")}: </strong>{step.failure.recovery}</p>}{step.output?.report && <pre className="text-xs overflow-auto">{JSON.stringify(step.output.report, null, 2)}</pre>}{step.output?.report_artifact && <button className="underline" onClick={() => void download(step.output!.report_artifact!)}>Download inspection report</button>}{step.output?.artifact && <button className="underline ml-3" onClick={() => void download(step.output!.artifact!)}>Download {step.output.artifact.filename}</button>}{step.output?.artifact?.filename.endsWith('.png') && <ReferenceImage artifact={step.output.artifact} />}</details>)}
         {run.output?.artifact && <button disabled={busy} className="border rounded px-3 py-2" onClick={() => void download(run.output!.artifact!)}>Download final output</button>}
-        {['queued', 'running'].includes(run.status) ? <button disabled={busy || run.cancel_requested} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}/cancel`, post({})); })}>{run.cancel_requested ? 'Stopping after active step…' : 'Stop after active step'}</button> : <button disabled={busy} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}`, { method: 'DELETE' }); })}>Delete run history</button>}
+        {['queued', 'running', 'awaiting_review'].includes(run.status) ? <button disabled={busy || run.cancel_requested} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}/cancel`, post({})); })}>{run.cancel_requested ? 'Stopping after active step…' : run.status === 'awaiting_review' ? 'Cancel review request' : 'Stop after active step'}</button> : <button disabled={busy} className="underline ml-3" onClick={() => void action(async () => { await workflowJson(`/runs/${run.id}`, { method: 'DELETE' }); })}>Delete run history</button>}
       </article>; })}
     </section>
   </main>;

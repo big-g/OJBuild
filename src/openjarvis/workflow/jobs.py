@@ -381,6 +381,15 @@ class OperationTool(BaseTool):
                 metadata={"workflow_output": value},
             )
         except Exception as exc:
+            from openjarvis.server.content_protection import ContentReviewRequired
+
+            if isinstance(exc, ContentReviewRequired):
+                return ToolResult(
+                    tool_name=self.tool_id,
+                    success=False,
+                    content=str(exc),
+                    metadata={"content_review": exc.review_id},
+                )
             from openjarvis.core.correlation import current_identity
             from openjarvis.workflow.errors import GenerationError
 
@@ -436,6 +445,7 @@ class WorkflowJobs:
         self.worker = None
         self.owner_check = None
         self.image_access_check = None
+        self.content_protection = None
         self.boundary_guard = boundary_guard
 
     def record(self, operation):
@@ -673,6 +683,9 @@ class WorkflowJobs:
             ]
 
     def import_hunyuan(self, owner, job_id):
+        if self.content_protection is None:
+            raise ValueError("Age-based content protection is unavailable")
+        self.content_protection.check_3d(owner)
         if self.hunyuan is None:
             raise ValueError("Hunyuan is not configured")
         if self.hunyuan.status(owner, job_id).get("status") != "completed":
@@ -690,6 +703,21 @@ class WorkflowJobs:
         return self.save_bytes(owner, job_id + ".glb", data)
 
     def poll_triggers(self):
+        # Re-evaluate birthdays without a restart or a new user request.
+        if self.content_protection is not None:
+            with self.store.db() as db:
+                waiting = db.execute(
+                    "SELECT id,owner,result FROM runs WHERE state='awaiting_review' "
+                    "AND cancel=0 LIMIT 200"
+                ).fetchall()
+            for waiting_run in waiting:
+                try:
+                    adult = not self.content_protection.policy(waiting_run["owner"])[0]
+                except ValueError:
+                    adult = False
+                review_id = json.loads(waiting_run["result"]).get("review_id")
+                if adult or (review_id and self.content_protection.ready(review_id)):
+                    self.resume_review(waiting_run["owner"], waiting_run["id"])
         with self.store.db() as db:
             rows = [
                 dict(r)
@@ -754,6 +782,16 @@ class WorkflowJobs:
                 continue
             self._execute(dict(row))
 
+    def resume_review(self, owner, run_id):
+        with self.store.db() as db:
+            db.execute(
+                "UPDATE runs SET state='queued' WHERE id=? AND owner=? "
+                "AND state='awaiting_review' AND cancel=0",
+                (run_id, owner),
+            )
+        self.start_worker()
+        self.wake.set()
+
     def _execute(self, row):
         steps = []
         values = {"input": json.loads(row["input"])}
@@ -763,6 +801,20 @@ class WorkflowJobs:
                 for step in Definition.model_validate(
                     json.loads(row["snapshot"])
                 ).steps:
+                    previous = json.loads(row["result"]).get("steps", [])
+                    completed = next(
+                        (
+                            entry
+                            for entry in previous
+                            if entry["id"] == step.id and entry["status"] == "completed"
+                        ),
+                        None,
+                    )
+                    if completed:
+                        steps.append(completed)
+                        values[step.id] = completed["output"]
+                        value = completed["output"]
+                        continue
                     if self.cancelled(row["owner"], row["id"]):
                         self.store.update(row["id"], "cancelled", {"steps": steps})
                         return
@@ -800,6 +852,18 @@ class WorkflowJobs:
                         elapsed_seconds=round(time.monotonic() - started, 3),
                     )
                     if not result.success:
+                        review_id = result.metadata.get("content_review")
+                        if review_id:
+                            item["status"] = "awaiting_review"
+                            item["error"] = result.content
+                            self.store.update(
+                                row["id"],
+                                "awaiting_review",
+                                {"steps": steps, "review_id": review_id},
+                            )
+                            if self.content_protection.ready(review_id):
+                                self.resume_review(row["owner"], row["id"])
+                            return
                         item["error"] = result.content[:500]
                         if result.metadata.get("failure"):
                             item["failure"] = result.metadata["failure"]
@@ -829,6 +893,11 @@ class WorkflowJobs:
                     "error": "Workflow failed; administrator can inspect server logs",
                 },
             )
+        finally:
+            if self.content_protection is not None:
+                current = self.store.run(row["owner"], row["id"])
+                if current["status"] in {"completed", "failed", "cancelled"}:
+                    self.content_protection.finish(row["owner"], row["id"])
 
     def cancelled(self, owner, identity):
         return (
@@ -844,6 +913,10 @@ class WorkflowJobs:
 
     def save_bytes(self, owner, filename, data):
         self.check_owner(owner)
+        if self.content_protection is not None:
+            self.content_protection.check_download(owner, data)
+            if filename.lower().endswith((".glb", ".gltf", ".stl", ".ply")):
+                self.content_protection.check_3d(owner)
         return self.artifacts.save(
             owner, filename, base64.b64encode(data).decode(), "base64"
         )
@@ -854,7 +927,17 @@ class WorkflowJobs:
             from openjarvis.workflow.providers import generate_image
 
             instance = self.instance(params["instance_id"])
-            data = generate_image(instance, value.get("prompt", ""), params)
+            if self.content_protection is None:
+                raise ValueError("Age-based content protection is unavailable")
+            data = self.content_protection.image(
+                owner,
+                {
+                    "prompt": value.get("prompt", ""),
+                    "parameters": params,
+                    "server": instance.model_dump(),
+                },
+                lambda: generate_image(instance, value.get("prompt", ""), params),
+            )
             artifact = self.save_bytes(owner, "reference.png", data)
             return {
                 "artifact_id": artifact["id"],
@@ -876,6 +959,9 @@ class WorkflowJobs:
                 "report": report,
             }
         if operation == "hunyuan_generate":
+            if self.content_protection is None:
+                raise ValueError("Age-based content protection is unavailable")
+            self.content_protection.check_3d(owner)
             from openjarvis.workflow.providers import generate_mesh
 
             _, data = self.artifacts.read(owner, value.get("artifact_id"))

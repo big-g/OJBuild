@@ -313,12 +313,20 @@ def create_app(
     from openjarvis.server.auth_store import AuthStore
 
     app.state.auth_store = AuthStore()
+    from openjarvis.server.content_protection import ContentProtection
+    from openjarvis.server.content_review_router import router as content_review_router
+
+    app.state.content_protection = ContentProtection(app.state.auth_store)
+    if artifact_store is not None:
+        artifact_store.read_guard = app.state.content_protection.check_artifact
+    app.include_router(content_review_router)
     if workflow_jobs is not None:
 
         def workflow_owner_available(owner):
             user = app.state.auth_store.get_user(owner)
             return user is not None and not user["disabled"]
 
+        workflow_jobs.content_protection = app.state.content_protection
         workflow_jobs.owner_check = workflow_owner_available
         workflow_jobs.image_access_check = lambda owner: (
             app.state.auth_store.image_generation_allowed(owner)

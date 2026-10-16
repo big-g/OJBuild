@@ -141,7 +141,13 @@ class HunyuanJobs:
 def create_hunyuan_router(jobs: HunyuanJobs | None, config=None):
     router = APIRouter(prefix="/v1/3d", tags=["3d"])
 
-    def available(owner: str = Depends(authenticate_request)):
+    def available(request: Request, owner: str = Depends(authenticate_request)):
+        protection = getattr(request.app.state, "content_protection", None)
+        if protection is not None:
+            try:
+                protection.check_3d(owner)
+            except ValueError as exc:
+                raise HTTPException(403, str(exc)) from None
         if jobs is None:
             raise HTTPException(503, "Local 3D generation has not been configured")
         return owner

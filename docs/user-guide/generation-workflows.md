@@ -363,8 +363,52 @@ accepted continue to run. Permission changes are audited. The existing API and
 stored field names are retained for compatibility, but now control direct access
 only. Existing setting values are preserved.
 
-This permission does not establish an age or adult-content policy. A chat model
-can refuse some prompts, but its refusals alone cannot reliably enforce
-age-appropriate output. Do not treat disabling direct submission as child
-protection; that requires a separately enforced content policy covering prompts,
-images and all generation entry points.
+## Birthdate-based content protection
+
+In **Settings → Account management**, administrators can enter a birthdate and
+birthday time zone when creating an account or edit them later with **Save
+birthdate**. The page shows the calculated age. Only administrators can change
+these fields; ordinary registration does not establish adulthood.
+
+Age is recalculated by the server on access. Accounts under 18 and accounts with
+no birthdate use the protected policy. At midnight on the 18th birthday in the
+account's IANA time zone (for example `America/New_York`), protection lifts
+automatically. February 29 birthdays advance on March 1 in non-leap years.
+Existing accounts have no birthdate after upgrade and therefore start protected.
+Record the reviewing administrator's birthdate as well. Direct submission and
+operation permissions remain independent; a birthday does not grant them.
+
+Protected image generation requires two administrator decisions:
+
+1. The workflow waits for **request review** before contacting ComfyUI. An adult
+   administrator reviews the exact prompt, negative prompt and generation settings
+   under **Image content reviews** on the account management page.
+2. After request approval, the workflow generates the image and holds it in
+   private review storage. An adult administrator loads the preview and approves
+   or rejects delivery. Only an approved image enters the user's file store and
+   becomes downloadable. The approved image is reused, not regenerated.
+
+The same checks cover direct image submissions, Jarvis workflow tools, and image
+steps in longer workflows. Reviews are tied to the user, run, exact request and
+birthdate revision. Changing birthdate or time zone invalidates earlier decisions.
+The server also checks stored image access, including artifact reads by tools, so
+changing an adult account to a protected account blocks unreviewed older images.
+Uploaded images without review are likewise unavailable to protected accounts.
+
+Use **Refresh reviews** to see new requests/results. Workflow status shows
+`awaiting_review`; users can cancel while waiting. Approved/rejected decisions
+resume the run automatically. Waiting jobs for newly adult users resume on the
+worker's next idle check, without restarting the server. A workflow interrupted
+while actually generating still follows normal worker recovery rules.
+
+Reviews expire after seven days. Pending review storage is bounded to 32 requests
+and 20 MiB per image. Completed, rejected and cancelled runs discard private review
+bytes; review decisions and birthdate changes are audited. Birthdates are exposed
+only in administrator account management, and are not copied into the audit log.
+
+This is human-reviewed protection for local image generation, not an automated
+content classifier or a filter for general chat, external tools or websites.
+Administrators must assess suitability for the displayed age. Local 3D generation
+and mesh downloads are blocked for protected accounts because 3D content review
+is not yet supported. Keep generation workers private to the server; their raw
+output directories are outside OpenJarvis's user-facing access controls.

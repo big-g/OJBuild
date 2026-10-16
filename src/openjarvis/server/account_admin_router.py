@@ -20,6 +20,8 @@ class Role(BaseModel):
 
 class CreateAccount(Role):
     role: Literal["user", "administrator"] = "user"
+    birthdate: str | None = Field(default=None, max_length=10, strict=True)
+    birthdate_timezone: str = Field(default="UTC", max_length=64, strict=True)
     username: str = Field(min_length=1, max_length=128)
     display_name: str = Field(min_length=1, max_length=128)
     password: SecretStr = Field(min_length=8, max_length=1024)
@@ -67,6 +69,7 @@ def create_account(
             400, "Username and display name must contain printable text"
         )
     store = get_auth_store(request)
+    operation(lambda: store.validate_birthdate(body.birthdate, body.birthdate_timezone))
     uid = "user_" + uuid.uuid4().hex
     operation(
         lambda: store.create_user(
@@ -78,7 +81,12 @@ def create_account(
             actor_id=actor,
         )
     )
+    operation(
+        lambda: store.set_birthdate(actor, uid, body.birthdate, body.birthdate_timezone)
+    )
     return {
+        "birthdate": body.birthdate,
+        "birthdate_timezone": body.birthdate_timezone,
         "user_id": uid,
         "username": username,
         "display_name": display_name,
@@ -125,6 +133,27 @@ def set_image_generation(
     operation(
         lambda: get_auth_store(request).set_image_generation(
             actor, user_id, body.enabled
+        )
+    )
+    return {"ok": True}
+
+
+class AccountBirthdate(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    birthdate: str | None = Field(max_length=10)
+    birthdate_timezone: str = Field(default="UTC", max_length=64)
+
+
+@router.put("/{user_id}/birthdate")
+def set_birthdate(
+    user_id: str,
+    body: AccountBirthdate,
+    request: Request,
+    actor: str = Depends(authenticate_admin_request),
+):
+    operation(
+        lambda: get_auth_store(request).set_birthdate(
+            actor, user_id, body.birthdate, body.birthdate_timezone
         )
     )
     return {"ok": True}

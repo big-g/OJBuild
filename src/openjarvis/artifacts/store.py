@@ -28,6 +28,10 @@ class ArtifactError(ValueError):
     """Invalid input, quota or corrupt backing file."""
 
 
+class ArtifactAccessDenied(ArtifactError):
+    """Account content policy prevents reading this file."""
+
+
 class ArtifactNotFound(ArtifactError):
     """Absent file or different owner; deliberately indistinguishable."""
 
@@ -61,6 +65,7 @@ class ArtifactStore:
             raise NotImplementedError(
                 "Private file storage requires a POSIX server filesystem"
             )
+        self.read_guard = None
         self.root = Path(root).expanduser().absolute()
         with _directory(self.root) as fd:
             os.fchmod(fd, 0o700)
@@ -264,7 +269,13 @@ class ArtifactStore:
             or hashlib.sha256(data).hexdigest() != row["sha256"]
         ):
             raise ArtifactError("Stored file failed integrity validation")
-        return self._public(row), data
+        metadata = self._public(row)
+        if self.read_guard is not None:
+            try:
+                self.read_guard(owner, metadata, data)
+            except ValueError as exc:
+                raise ArtifactAccessDenied(str(exc)) from None
+        return metadata, data
 
     def delete(self, owner: str, file_id: str) -> None:
         file_id = self._id(file_id)

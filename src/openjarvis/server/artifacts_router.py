@@ -13,6 +13,7 @@ from starlette.concurrency import run_in_threadpool
 from openjarvis.artifacts.preview import preview
 from openjarvis.artifacts.store import (
     MAX_REQUEST_BYTES,
+    ArtifactAccessDenied,
     ArtifactError,
     ArtifactNotFound,
     ArtifactStore,
@@ -39,7 +40,12 @@ def create_artifacts_router(store: ArtifactStore | None) -> APIRouter:
 
     def failure(exc):
         return HTTPException(
-            404 if isinstance(exc, ArtifactNotFound) else 400, str(exc)
+            404
+            if isinstance(exc, ArtifactNotFound)
+            else 403
+            if isinstance(exc, ArtifactAccessDenied)
+            else 400,
+            str(exc),
         )
 
     @router.get("")
