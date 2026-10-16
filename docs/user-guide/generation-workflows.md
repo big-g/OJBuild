@@ -230,7 +230,34 @@ first use; the separate allocator check includes cached model allocations.
 ComfyUI's empty HTTP 200 response to `/free`
 acknowledges the request; Jarvis polls to confirm unloading finishes. If the API
 crashes, communication fails or cancellation cannot be confirmed, it remains. Further
-local image, Hunyuan submission and Ollama requests fail visibly. Stop the image
+local image, Hunyuan submission and Ollama requests fail visibly while recovery
+runs. The backend `gpu-recovery` maintenance agent checks every 15 seconds. It
+acquires the exclusive shared GPU lock, unloads idle Ollama models, checks the
+ComfyUI queue and memory, and retries `/free`. Two healthy samples are required
+before clearing the reservation. It never interrupts a nonempty healthy queue.
+
+After three failed idle-memory/worker-health checks it restarts only the dedicated
+`openjarvis-image.service` user service. The reservation stays in place until
+post-restart checks pass. Restarts have a two-minute cooldown and a persistent
+three-attempt budget per incident. No automatic reboot, driver reset, broad
+process killing, or generated shell commands are used. Failed jobs are not
+resubmitted: retry after recovery to avoid duplicate generation or approvals.
+
+The API must run as the same Linux user as the ComfyUI user service (normally
+`big-g`), with that user's systemd manager available. The monitor supplies the
+usual `/run/user/<uid>` bus environment if absent. Set
+`OPENJARVIS_GPU_AUTO_RESTART=0` on the API service to keep diagnostics and idle
+cleanup but disable service restarts. Remote/nonstandard worker URLs and old
+unstructured markers require manual recovery; automatic service management is
+restricted to `http://127.0.0.1:8188`. Exhausted restart budgets and unavailable
+user services also require administrator intervention.
+
+API logs include queue counts, pre-job free-memory baseline, current free VRAM,
+PyTorch reserved memory, Ollama model count, and recovery/restart outcomes. These
+help distinguish delayed unloading from allocator retention or a sick worker.
+The agent is stopped with the API and cannot release an actively held GPU lease.
+
+For a legacy marker or unsuccessful automatic recovery, stop the image
 worker, verify no image process remains, then remove the marker and restart:
 
 ```bash

@@ -332,13 +332,20 @@ def create_app(
             app.state.auth_store.image_generation_allowed(owner)
         )
 
+    from openjarvis.workflow.gpu_recovery import GPURecovery
+
+    gpu_recovery = GPURecovery()
+    app.state.gpu_recovery = gpu_recovery
+
     @app.on_event("startup")
     def _start_workflows():
+        gpu_recovery.start()
         if workflow_jobs is not None:
             workflow_jobs.start_worker()
 
     @app.on_event("shutdown")
     async def _shutdown_managed_runtime() -> None:
+        gpu_recovery.close()
         if workflow_jobs is not None:
             workflow_jobs.close()
         # Quiesce every producer before touching the shared MCP pool. Route

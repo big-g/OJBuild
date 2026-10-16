@@ -36,7 +36,7 @@ def gpu_reservation(host=None):
         return
     if os.path.exists(path + ".blocked"):
         raise EngineConnectionError(
-            "Local GPU needs administrator recovery after an image job failure."
+            "Local GPU recovery is pending after an image job failure; retry shortly."
         )
     import fcntl
 
@@ -52,7 +52,7 @@ def gpu_reservation(host=None):
         ) from exc
     try:
         if os.path.exists(path + ".blocked"):
-            raise EngineConnectionError("Local GPU needs administrator recovery.")
+            raise EngineConnectionError("Local GPU recovery is pending; retry shortly.")
         try:
             metadata_fd = os.open(path + ".json", os.O_RDONLY | os.O_NOFOLLOW)
         except FileNotFoundError:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import io
 import json
+import logging
 import os
 import signal
 import subprocess
@@ -19,6 +20,8 @@ import httpx
 
 from openjarvis.artifacts.store import _directory
 from openjarvis.workflow.errors import GenerationError
+
+logger = logging.getLogger(__name__)
 
 MAX_BYTES = 20 * 1024**2
 
@@ -69,10 +72,11 @@ def image_gpu():
         )
     if Path(path + ".blocked").exists():
         raise GenerationError(
-            "Local GPU requires administrator recovery after an image job failure",
+            "Local GPU recovery is in progress after an image job failure; "
+            "retry shortly",
             "gpu_recovery_required",
-            "Administrator: stop the image worker, verify it stopped, clear the "
-            "blocked marker using the generation guide, then restart the worker.",
+            "The backend recovery monitor will check the worker. If recovery "
+            "does not complete, inspect the GPU recovery entries in API logs.",
         )
     fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
     try:
@@ -95,7 +99,15 @@ def image_gpu():
                     "stream": False,
                 },
             )
-        if request(ollama, "/api/ps").get("models"):
+        for attempt in range(15):
+            models = request(ollama, "/api/ps").get("models")
+            if not isinstance(models, list):
+                raise ValueError("Invalid Ollama model statistics during GPU handoff")
+            logger.info("GPU handoff: Ollama loaded model count=%s", len(models))
+            if not models:
+                break
+            time.sleep(1)
+        else:
             raise ValueError("Ollama did not unload; retry image generation later")
         yield
     finally:
@@ -166,13 +178,25 @@ def normalize_image(data):
         return output.getvalue()
 
 
-def block_gpu():
+def block_gpu(url=None, baseline=None):
     path = os.environ.get("OPENJARVIS_GPU_LOCK_PATH")
     if path:
-        fd = os.open(path + ".blocked", os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        fd = os.open(
+            path + ".blocked",
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            0o600,
+        )
         with os.fdopen(fd, "w") as output:
             output.write(
-                "Image job active or interrupted; stop ComfyUI before recovery.\n"
+                json.dumps(
+                    {
+                        "owner": "openjarvis-image-v1",
+                        "url": url,
+                        "baseline": baseline,
+                        "created": time.time(),
+                        "restarts": 0,
+                    }
+                )
             )
             output.flush()
             os.fsync(output.fileno())
@@ -229,28 +253,50 @@ def gpu_memory(url):
     return result
 
 
+def cleanup_snapshot(url, baseline):
+    """Validate worker telemetry and report every release criterion."""
+    queue = request(url, "/queue")
+    if any(
+        not isinstance(queue.get(key), list)
+        for key in ("queue_running", "queue_pending")
+    ):
+        raise ValueError("Image server returned invalid queue statistics")
+    current = gpu_memory(url)
+    snapshot = {
+        "running": len(queue["queue_running"]),
+        "pending": len(queue["queue_pending"]),
+        "baseline": baseline,
+        "memory": current,
+    }
+    ready = (
+        not snapshot["running"]
+        and not snapshot["pending"]
+        and all(
+            index in current
+            and current[index][0] >= free - 1024**3
+            and current[index][1] <= 256 * 1024**2
+            for index, (free, _) in baseline.items()
+        )
+    )
+    return ready, snapshot
+
+
 def wait_for_gpu_release(url, baseline):
-    # /free acknowledges flags immediately; unloading occurs in the worker loop.
-    # ROCm may retain driver/kernel workspaces after first use, outside PyTorch's
-    # allocator. Allow up to 1 GiB of that overhead, but independently require
-    # PyTorch's entire reserved pool (including cached allocations) <= 256 MiB.
-    # Acknowledgement alone is not proof that model weights have been unloaded.
-    for _ in range(30):
-        queue = request(url, "/queue")
-        current = gpu_memory(url)
-        if (
-            not queue.get("queue_running")
-            and not queue.get("queue_pending")
-            and all(
-                index in current
-                and current[index][0] >= free - 1024**3
-                and current[index][1] <= 256 * 1024**2
-                for index, (free, _) in baseline.items()
-            )
-        ):
+    # Acknowledgement of /free is not completion. Keep the exclusive GPU lease
+    # until the worker queue and allocator independently confirm release.
+    snapshot = None
+    for attempt in range(30):
+        ready, snapshot = cleanup_snapshot(url, baseline)
+        if ready:
+            logger.info("GPU cleanup complete: %s", snapshot)
             return
+        if attempt in (0, 10, 20):
+            logger.info("GPU cleanup pending: %s", snapshot)
         time.sleep(1)
-    raise ValueError("Image server did not release GPU memory; recover the worker")
+    logger.error("GPU cleanup timed out: %s", snapshot)
+    raise ValueError(
+        "Image server did not release GPU memory; recovery monitor will retry"
+    )
 
 
 def generate_image(instance, prompt, params):
@@ -264,7 +310,7 @@ def generate_image(instance, prompt, params):
         # Persist the reservation before submission, so an API crash/restart
         # cannot release the GPU to chat while ComfyUI continues externally.
         graph = image_graph(instance.checkpoint, prompt, params)
-        block_gpu()
+        block_gpu(instance.url, baseline)
         safe_to_release = False
         try:
             response = request(
@@ -302,7 +348,7 @@ def generate_image(instance, prompt, params):
             ) from exc
         except Exception:
             # Submission may have succeeded even if its acknowledgement was lost.
-            block_gpu()
+            # Keep the original recovery metadata after an uncertain submission.
             raise ValueError(
                 "Image submission state is unknown; recover the worker"
             ) from None
@@ -349,6 +395,7 @@ def generate_image(instance, prompt, params):
                 "Image generation timed out; inspect the provider before retrying"
             )
         except Exception:
+            logger.exception("Image execution failed before GPU cleanup")
             try:
                 stopped = stop_image_job(instance.url, prompt_id)
             except Exception:
@@ -373,10 +420,9 @@ def generate_image(instance, prompt, params):
                     (str(exc) + ". " if isinstance(exc, ValueError) else "")
                     + "Image worker cleanup failed; GPU remains reserved.",
                     "gpu_recovery_required",
-                    "Administrator: stop the image worker, verify it stopped, "
-                    "clear the blocked marker using the generation guide, then "
-                    "restart the worker. Check the run ID in API logs for the "
-                    "original failure.",
+                    "The backend recovery monitor will retry cleanup and verify "
+                    "worker health. Check GPU recovery diagnostics in API logs "
+                    "if the reservation remains blocked.",
                 ) from exc
             finally:
                 path = os.environ.get("OPENJARVIS_GPU_LOCK_PATH")
