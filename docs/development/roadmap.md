@@ -109,6 +109,20 @@ real GPU generation, Blender and slicer acceptance remain to be verified on Ubun
 Secure WAN access follows Phase 3 acceptance; it is not part of this implementation.
 Home Assistant, Echo 4.1 and Nextcloud/email phase ordering remains unchanged.
 
+## Phase 3 GPU recovery acceptance (2026-10-17)
+
+Gary tested GPU recovery on darkflashsvr after the cleanup diagnostics and backend
+recovery monitor update (`533b7a7`) and accepted the test as passed. Recovery is
+working in his testing; he noted that robustness still falls short of his ideal
+but accepted the result given the server's limited resources. Resource limits
+are context for acceptance, not a confirmed diagnosis of remaining weaknesses.
+Further recovery hardening remains eligible for follow-up as defects appear.
+
+This closes the GPU recovery acceptance item only. Remaining Phase 3 acceptance
+covers repeated image/3D jobs, saved workflows through the UI and governed chat
+tools, GLB inspection/repair/reinspection/scaling/STL export with slicer review,
+and birthdate-based protection and administrator review using test accounts.
+
 ## Retrieval reasoning follow-up (2026-10-13)
 
 Server evidence showed valid decimal rounding rejected by the numeric anchor gate
