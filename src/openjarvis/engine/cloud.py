@@ -327,7 +327,7 @@ class CloudEngine(InferenceEngine):
     engine_id = "cloud"
     is_cloud = True
 
-    def __init__(self) -> None:
+    def __init__(self, *, keys=None) -> None:
         self._openai_client: Any = None
         self._anthropic_client: Any = None
         self._google_client: Any = None
@@ -337,26 +337,32 @@ class CloudEngine(InferenceEngine):
         self._codex_client: Any = None
         # Gemini thought_signatures: tool_call_id -> signature bytes
         self._thought_sigs: Dict[str, bytes] = {}
+        if keys is None:
+            from openjarvis.core.cloud_providers import resolve_keys
+
+            keys = resolve_keys()
+        self._keys = keys
         self._init_clients()
 
     def _init_clients(self) -> None:
-        if os.environ.get("OPENAI_API_KEY"):
+        keys = self._keys if self._keys is not None else os.environ
+        if keys.get("OPENAI_API_KEY"):
             try:
                 import openai
 
-                self._openai_client = openai.OpenAI()
+                self._openai_client = openai.OpenAI(api_key=keys["OPENAI_API_KEY"])
             except ImportError:
                 pass
-        if os.environ.get("ANTHROPIC_API_KEY"):
+        if keys.get("ANTHROPIC_API_KEY"):
             try:
                 import anthropic
 
-                self._anthropic_client = anthropic.Anthropic()
+                self._anthropic_client = anthropic.Anthropic(
+                    api_key=keys["ANTHROPIC_API_KEY"]
+                )
             except ImportError:
                 pass
-        gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get(
-            "GOOGLE_API_KEY"
-        )
+        gemini_key = keys.get("GEMINI_API_KEY") or keys.get("GOOGLE_API_KEY")
         if gemini_key:
             try:
                 from google import genai
@@ -364,7 +370,7 @@ class CloudEngine(InferenceEngine):
                 self._google_client = genai.Client(api_key=gemini_key)
             except ImportError:
                 pass
-        openrouter_key = os.environ.get("OPENROUTER_API_KEY")
+        openrouter_key = keys.get("OPENROUTER_API_KEY")
         if openrouter_key:
             try:
                 import openai
@@ -375,7 +381,7 @@ class CloudEngine(InferenceEngine):
                 )
             except ImportError:
                 pass
-        minimax_key = os.environ.get("MINIMAX_API_KEY")
+        minimax_key = keys.get("MINIMAX_API_KEY")
         if minimax_key:
             try:
                 import openai
@@ -386,7 +392,7 @@ class CloudEngine(InferenceEngine):
                 )
             except ImportError:
                 pass
-        deepseek_key = os.environ.get("DEEPSEEK_API_KEY")
+        deepseek_key = keys.get("DEEPSEEK_API_KEY")
         if deepseek_key:
             try:
                 import openai
@@ -400,7 +406,7 @@ class CloudEngine(InferenceEngine):
         # Codex — uses the OpenAI Responses API.
         # Supports both standard API keys (api.openai.com) and ChatGPT
         # OAuth tokens (chatgpt.com) via OPENAI_CODEX_BASE_URL override.
-        codex_token = os.environ.get("OPENAI_CODEX_API_KEY")
+        codex_token = keys.get("OPENAI_CODEX_API_KEY")
         if codex_token:
             codex_url = os.environ.get(
                 "OPENAI_CODEX_BASE_URL",
@@ -1852,6 +1858,8 @@ class CloudEngine(InferenceEngine):
                 self._anthropic_client.close()
             self._anthropic_client = None
         if self._google_client is not None:
+            if hasattr(self._google_client, "close"):
+                self._google_client.close()
             self._google_client = None
         if self._openrouter_client is not None:
             if hasattr(self._openrouter_client, "close"):
@@ -1861,6 +1869,10 @@ class CloudEngine(InferenceEngine):
             if hasattr(self._minimax_client, "close"):
                 self._minimax_client.close()
             self._minimax_client = None
+        if self._deepseek_client is not None:
+            if hasattr(self._deepseek_client, "close"):
+                self._deepseek_client.close()
+            self._deepseek_client = None
         if self._codex_client is not None:
             self._codex_client = None
 

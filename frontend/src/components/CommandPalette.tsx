@@ -1,14 +1,12 @@
+import { getCloudAvailability } from '../lib/cloud-providers-api';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Search, Cpu, X, Download, Loader2, Trash2, Check, Cloud, Key, Eye, EyeOff } from 'lucide-react';
+import { Search, Cpu, X, Download, Loader2, Trash2, Check, Cloud } from 'lucide-react';
 import { useAppStore } from '../lib/store';
 import {
   pullModel,
   deleteModel,
   fetchModels,
   preloadModel,
-  isTauri,
-  getCloudKeyStatus,
-  saveCloudKey,
 } from '../lib/api';
 
 /** Popular models that users can download from the catalogue. */
@@ -71,6 +69,13 @@ const CLOUD_PROVIDERS: CloudProvider[] = [
       { id: 'openrouter/deepseek/deepseek-r1', desc: 'DeepSeek R1 via OpenRouter' },
     ],
   },
+  { name: 'MiniMax', envKey: 'MINIMAX_API_KEY', models: [
+    { id: 'MiniMax-M2.5', desc: 'MiniMax model; availability depends on your provider account' },
+  ] },
+  { name: 'DeepSeek', envKey: 'DEEPSEEK_API_KEY', models: [
+    { id: 'deepseek-chat', desc: 'DeepSeek chat' },
+    { id: 'deepseek-reasoner', desc: 'DeepSeek reasoning' },
+  ] },
 ];
 
 type Tab = 'installed' | 'catalogue' | 'cloud';
@@ -84,11 +89,8 @@ export function CommandPalette() {
   const [pullSuccess, setPullSuccess] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [customModel, setCustomModel] = useState('');
-  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [cloudKeyStatus, setCloudKeyStatus] = useState<Record<string, boolean>>({});
   const [cloudKeyError, setCloudKeyError] = useState<string | null>(null);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const models = useAppStore((s) => s.models);
@@ -98,20 +100,15 @@ export function CommandPalette() {
   const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
 
   const installedIds = new Set(models.map((m) => m.id));
-  const desktopKeyStorage = isTauri();
 
   const refreshCloudKeyStatus = useCallback(async () => {
-    if (!desktopKeyStorage) {
-      setCloudKeyStatus({});
-      return;
-    }
     try {
-      setCloudKeyStatus(await getCloudKeyStatus());
+      setCloudKeyStatus(await getCloudAvailability());
       setCloudKeyError(null);
     } catch (e: any) {
       setCloudKeyError(e?.message || 'Failed to read cloud key status');
     }
-  }, [desktopKeyStorage]);
+  }, []);
 
   const filtered = tab === 'installed'
     ? (query
@@ -218,31 +215,7 @@ export function CommandPalette() {
     setCustomModel('');
   };
 
-  const handleSaveKey = async (provider: CloudProvider, value: string) => {
-    const keyValue = value.trim();
-    setSavingKey(provider.envKey);
-    setCloudKeyError(null);
 
-    try {
-      await saveCloudKey(provider.envKey, keyValue);
-      setApiKeys((prev) => ({ ...prev, [provider.envKey]: '' }));
-      await refreshCloudKeyStatus();
-      useAppStore.getState().addLogEntry({
-        timestamp: Date.now(), level: 'info', category: 'model',
-        message: `${provider.name} API key ${keyValue ? 'saved' : 'removed'}. Refreshing model list...`,
-      });
-      await refreshModels();
-    } catch (e: any) {
-      setCloudKeyError(e?.message || `Failed to save ${provider.name} API key`);
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
-  const handleKeyBlur = (provider: CloudProvider) => {
-    const draft = apiKeys[provider.envKey] || '';
-    if (draft.trim()) void handleSaveKey(provider, draft);
-  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Escape') {
@@ -457,17 +430,12 @@ export function CommandPalette() {
             /* ── Cloud Models tab ── */
             <div className="px-4 py-2">
               <div className="text-[11px] mb-3" style={{ color: 'var(--color-text-tertiary)' }}>
-                {desktopKeyStorage
-                  ? 'Add your API keys to use cloud models. Keys are stored in secure desktop storage.'
-                  : 'Configure cloud provider keys in the server environment to use cloud models.'}
+                An administrator can manage shared server keys in Settings → Cloud provider API keys.
               </div>
 
               {CLOUD_PROVIDERS.map((provider) => {
-                const key = apiKeys[provider.envKey] || '';
                 const hasSavedKey = !!cloudKeyStatus[provider.envKey];
-                const hasKey = hasSavedKey || !!key.trim();
-                const isVisible = showKeys[provider.envKey];
-                const isSaving = savingKey === provider.envKey;
+                const hasKey = hasSavedKey;
 
                 return (
                   <div key={provider.name} className="mb-4">
@@ -476,41 +444,8 @@ export function CommandPalette() {
                       <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>{provider.name}</span>
                       {hasKey && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: 'color-mix(in srgb, var(--color-success) 10%, transparent)', color: 'var(--color-success)' }}>
-                          Connected
+                          Key configured
                         </span>
-                      )}
-                    </div>
-
-                    {/* API key input */}
-                    <div className="flex gap-1.5 mb-2">
-                      <div className="flex-1 flex items-center rounded-lg" style={{ background: 'var(--color-bg-secondary)', border: '1px solid var(--color-border)' }}>
-                        <Key size={12} className="ml-2.5 shrink-0" style={{ color: 'var(--color-text-tertiary)' }} />
-                        <input
-                          type={isVisible ? 'text' : 'password'}
-                          value={key}
-                          onChange={(e) => setApiKeys((prev) => ({ ...prev, [provider.envKey]: e.target.value }))}
-                          onBlur={() => handleKeyBlur(provider)}
-                          placeholder={hasSavedKey ? 'Saved in secure storage' : provider.envKey}
-                          disabled={!desktopKeyStorage || isSaving}
-                          className="flex-1 text-xs px-2 py-1.5 bg-transparent outline-none font-mono"
-                          style={{ color: 'var(--color-text)' }}
-                        />
-                        <button
-                          onClick={() => setShowKeys((prev) => ({ ...prev, [provider.envKey]: !prev[provider.envKey] }))}
-                          className="px-2 cursor-pointer" style={{ color: 'var(--color-text-tertiary)' }}
-                        >
-                          {isVisible ? <EyeOff size={12} /> : <Eye size={12} />}
-                        </button>
-                      </div>
-                      {hasSavedKey && (
-                        <button
-                          onClick={() => handleSaveKey(provider, '')}
-                          disabled={isSaving}
-                          className="px-2 py-1 rounded-lg text-[10px] cursor-pointer"
-                          style={{ color: 'var(--color-error)', border: '1px solid var(--color-error)', opacity: isSaving ? 0.5 : 1 }}
-                        >
-                          {isSaving ? 'Saving' : 'Remove'}
-                        </button>
                       )}
                     </div>
 

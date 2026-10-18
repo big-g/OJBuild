@@ -47,6 +47,16 @@ Live acceptance on darkflashsvr, vision model/tool interoperability, and generat
 object quality remain separate verification steps. These changes do not mark
 Phase 3 acceptance complete.
 
+## Cloud provider credential administration (2026-10-18 UTC)
+
+Administrator web settings now support encrypted server-side API key save,
+rotation and removal for supported cloud inference providers, with revision checks,
+secret-free audit/status responses and live credential snapshots for new requests.
+The cloud picker reads server availability across consoles. Managed removal also
+suppresses old environment/file keys after restart. Provider validity, billing and
+model access require live acceptance; saving never sends a paid test request.
+See [Cloud provider API keys](../user-guide/cloud-provider-keys.md).
+
 ## Project phases
 
 | Phase | Status | Scope |

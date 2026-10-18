@@ -159,7 +159,7 @@ class TokenVault:
             self._marker()
             return result
 
-    def save(self, tokens):
+    def save(self, tokens, *, expected_revision=None):
         with self.store._lock(self.identity, exclusive=True, blocking=True):
             previous = self._read()
             referenced = previous is not None and self._reference(previous)
@@ -167,6 +167,10 @@ class TokenVault:
                 row = self._row(conn)
                 if referenced and row is None:
                     raise ValueError("Connector credential reference does not exist")
+                if expected_revision is not None and (
+                    (row["revision"] if row else 0) != expected_revision
+                ):
+                    raise SourceConflict("Credentials changed; reload before saving")
                 cipher = self.store._cipher()
                 # Never overwrite inaccessible ciphertext with a new login.
                 if row is not None:

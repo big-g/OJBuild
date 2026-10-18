@@ -14,7 +14,6 @@ from typing import Any, Sequence
 
 import httpx
 
-from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message
 from openjarvis.engine.gpu_gate import background_options, gpu_stream_guard
 
@@ -22,12 +21,11 @@ from openjarvis.engine.gpu_gate import background_options, gpu_stream_guard
 # Key / provider detection
 # ---------------------------------------------------------------------------
 
-_CLOUD_ENV_FILE = get_config_dir() / "cloud-keys.env"
-
 _OPENAI_PREFIXES = ("gpt-", "o1-", "o3-", "o4-", "chatgpt-")
 _ANTHROPIC_PREFIXES = ("claude-",)
 _GOOGLE_PREFIXES = ("gemini-",)
 _MINIMAX_PREFIXES = ("MiniMax-",)
+_DEEPSEEK_PREFIXES = ("deepseek-",)
 
 # HuggingFace orgs that host local-only quantised models — never route to cloud.
 _LOCAL_HF_ORGS = (
@@ -39,28 +37,9 @@ _LOCAL_HF_ORGS = (
 
 
 def _load_keys() -> dict[str, str]:
-    """Read available cloud keys every call so live updates are picked up."""
-    keys: dict[str, str] = {}
-    # File first, then fall back to process environment
-    if _CLOUD_ENV_FILE.exists():
-        for raw in _CLOUD_ENV_FILE.read_text().splitlines():
-            line = raw.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, v = line.split("=", 1)
-                keys[k.strip()] = v.strip()
-    # Process env can override (e.g. during testing)
-    for name in (
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GEMINI_API_KEY",
-        "GOOGLE_API_KEY",
-        "OPENROUTER_API_KEY",
-        "MINIMAX_API_KEY",
-    ):
-        val = os.environ.get(name)
-        if val:
-            keys[name] = val
-    return keys
+    from openjarvis.core.cloud_providers import resolve_keys
+
+    return resolve_keys()
 
 
 def get_provider(model: str) -> str | None:
@@ -73,6 +52,8 @@ def get_provider(model: str) -> str | None:
         return "google"
     if any(model.startswith(p) for p in _MINIMAX_PREFIXES):
         return "minimax"
+    if model.startswith(_DEEPSEEK_PREFIXES):
+        return "deepseek"
     if any(model.startswith(org) for org in _LOCAL_HF_ORGS):
         return None  # local model, never route to cloud
     if "/" in model:  # openrouter format: "meta-llama/llama-3-8b"
@@ -439,5 +420,16 @@ async def stream_cloud(
         ):
             yield token
 
+    elif provider == "deepseek":
+        async for token in _stream_openai(
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            base_url="https://api.deepseek.com/v1",
+            api_key_name="DEEPSEEK_API_KEY",
+            outcome=outcome,
+        ):
+            yield token
     else:
         raise ValueError(f"Unknown cloud provider for model: {model!r}")

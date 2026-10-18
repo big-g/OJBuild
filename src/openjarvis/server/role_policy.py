@@ -43,6 +43,7 @@ _PRIVATE_SYSTEM_PREFIXES = (
     "/v1/runtime-mcp",
     "/v1/auth/users",
     "/v1/security",
+    "/v1/cloud/providers",
 )
 
 

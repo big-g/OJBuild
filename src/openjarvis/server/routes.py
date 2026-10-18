@@ -20,7 +20,6 @@ from openjarvis.core.evidence import (
     detect_evidence_requirement,
     evidence_audit_metadata,
 )
-from openjarvis.core.paths import get_config_dir
 from openjarvis.core.types import Message, Role, ToolCall
 from openjarvis.server.auth import get_authenticated_user_id
 from openjarvis.server.model_capabilities import is_embed_only_model
@@ -1921,73 +1920,38 @@ async def reload_cloud_engine(request: Request):
     Called by the desktop app immediately after the user saves a cloud API
     key so that cloud models become available without a full app restart.
     """
-    import os
+    from openjarvis.core.cloud_providers import (
+        PROVIDERS,
+        change_key,
+        public_settings,
+        resolve_keys,
+    )
 
-    submitted_keys: dict[str, str] | None = None
     try:
         body = await request.json()
-        raw_keys = body.get("keys") if isinstance(body, dict) else None
-        if isinstance(raw_keys, dict):
-            submitted_keys = {
-                str(k): str(v)
-                for k, v in raw_keys.items()
-                if str(k).endswith("_API_KEY")
-            }
     except Exception:
-        submitted_keys = None
+        body = {}
+    if isinstance(body, dict) and "keys" in body:
+        keys = body["keys"]
+        allowed = {key: identity for identity, _, key in PROVIDERS}
+        if not isinstance(keys, dict) or set(keys) - set(allowed):
+            raise HTTPException(400, "Unsupported cloud credential fields")
+        if any(not isinstance(value, str) for value in keys.values()):
+            raise HTTPException(400, "Invalid cloud credential values")
+        from openjarvis.server.auth import authenticate_admin_request
 
-    if submitted_keys is not None:
-        for key, value in submitted_keys.items():
-            if value:
-                os.environ[key] = value
-            else:
-                os.environ.pop(key, None)
-    else:
-        # Compatibility fallback for non-desktop/manual configurations.
-        keys_path = get_config_dir() / "cloud-keys.env"
-        if keys_path.exists():
-            for raw_line in keys_path.read_text().splitlines():
-                line = raw_line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ[k.strip()] = v.strip()
-
-    # Try to build a fresh CloudEngine.
-    try:
-        from openjarvis.engine.cloud import CloudEngine
-        from openjarvis.engine.multi import MultiEngine
-
-        cloud = CloudEngine()
-        if not cloud.health():
-            return {
-                "status": "no_cloud",
-                "message": "No cloud models available (check API keys)",
-            }
-    except Exception as exc:
-        return {"status": "error", "message": str(exc)}
-
-    # Locate the innermost engine, working through InstrumentedEngine layers.
-    outer = request.app.state.engine
-    inner = getattr(outer, "_inner", outer)
-
-    if isinstance(inner, MultiEngine):
-        # Replace or insert the cloud entry in the existing MultiEngine.
-        new_engines = [(k, e) for k, e in inner._engines if k != "cloud"]
-        new_engines.append(("cloud", cloud))
-        inner._engines = new_engines
-        inner._refresh_map()
-    else:
-        # Wrap the existing engine (which may be security-wrapped) with a new
-        # MultiEngine that includes the cloud engine.
-        engine_name = getattr(request.app.state, "engine_name", "local")
-        new_multi = MultiEngine([(engine_name, inner), ("cloud", cloud)])
-        if hasattr(outer, "_inner"):
-            outer._inner = new_multi
-        else:
-            request.app.state.engine = new_multi
-        request.app.state.engine_name = "multi"
-
-    return {"status": "ok", "message": "Cloud engine reloaded"}
+        actor = authenticate_admin_request(request)
+        try:
+            for name, value in keys.items():
+                change_key(allowed[name], value or None,
+                           public_settings()["revision"], actor)
+        except ValueError:
+            raise HTTPException(400, "Cannot save cloud provider credentials") from None
+    # The server's live adapter reads a new key snapshot for every request.
+    # Never replace telemetry/security wrappers or a running agent's engine.
+    configured = any(resolve_keys().values())
+    return {"status": "ok" if configured else "no_cloud",
+            "message": "Cloud keys apply to new requests"}
 
 
 @router.get("/v1/savings")

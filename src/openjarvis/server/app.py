@@ -286,6 +286,14 @@ def create_app(
     runtime_tools.workflow_jobs = workflow_jobs
     app.state.workflow_jobs = workflow_jobs
     app.include_router(create_workflows_router(workflow_jobs))
+    from openjarvis.server.cloud_providers_router import (
+        router as cloud_providers_router,
+    )
+
+    app.include_router(cloud_providers_router)
+    from openjarvis.server.cloud_providers_router import availability_router
+
+    app.include_router(availability_router)
     app.state.runtime_tool_manager = runtime_tools
     if agent is not None:
         agent._runtime_tool_manager = runtime_tools

@@ -199,33 +199,11 @@ def serve(
     sec = setup_security(config, engine, bus)
     engine = sec.engine
 
-    # If cloud API keys are set, prepare a cloud engine. We build the
-    # MultiEngine after local discovery so healthy local fallbacks such as
-    # Ollama stay visible even when the configured preferred engine is MLX.
-    import os
+    # Keep a live cloud adapter even before any key is configured so additions
+    # from the admin web interface reach governed agents without a restart.
+    from openjarvis.engine.live_cloud import LiveCloudEngine
 
-    cloud_engine = None
-    _has_cloud = (
-        os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-        or os.environ.get("GOOGLE_API_KEY")
-        or os.environ.get("OPENROUTER_API_KEY")
-    )
-    if _has_cloud and engine_name != "cloud":
-        try:
-            from openjarvis.engine.cloud import CloudEngine
-
-            cloud_engine = CloudEngine()
-            if cloud_engine.health():
-                console.print("  Cloud:  [cyan]enabled[/cyan] (API keys detected)")
-            else:
-                console.print(
-                    "  Cloud:  [yellow]keys set but packages missing[/yellow] "
-                    "(run: uv sync --extra inference-cloud --extra inference-google)"
-                )
-        except Exception as exc:
-            logger.debug("Cloud engine init failed: %s", exc)
+    cloud_engine = LiveCloudEngine()
 
     # Wrap engine with InstrumentedEngine for telemetry recording
     try:

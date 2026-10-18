@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from openjarvis.core.registry import ToolRegistry
@@ -98,7 +97,9 @@ class ImageGenerateTool(BaseTool):
                 success=False,
             )
 
-        api_key = os.environ.get("OPENAI_API_KEY")
+        from openjarvis.core.cloud_providers import resolve_keys
+
+        api_key = resolve_keys().get("OPENAI_API_KEY")
         if not api_key:
             return ToolResult(
                 tool_name="image_generate",

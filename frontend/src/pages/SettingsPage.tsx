@@ -1,3 +1,4 @@
+import { CloudProvidersPanel } from '../components/CloudProvidersPanel';
 import { AccountManagementPanel } from '../components/AccountManagementPanel';
 import { ModelConnectionsPanel } from '../components/ModelConnectionsPanel';
 import { ModelRoutingPanel } from '../components/ModelRoutingPanel';
@@ -171,39 +172,6 @@ function ApiKeyInput({
   );
 }
 
-function CloudProviderStatus({ label, keyName }: { label: string; keyName: string }) {
-  const [hasKey, setHasKey] = useState(false);
-  const desktopKeyStorage = isTauri();
-
-  const refresh = useCallback(async () => {
-    if (!desktopKeyStorage) {
-      setHasKey(false);
-      return;
-    }
-    try {
-      const status = await getCloudKeyStatus();
-      setHasKey(!!status[keyName]);
-    } catch {
-      setHasKey(false);
-    }
-  }, [desktopKeyStorage, keyName]);
-
-  useEffect(() => {
-    void refresh();
-    window.addEventListener(CLOUD_KEY_STATUS_CHANGED, refresh);
-    return () => window.removeEventListener(CLOUD_KEY_STATUS_CHANGED, refresh);
-  }, [refresh]);
-
-  return (
-    <span className="flex items-center gap-1 text-xs" style={{ color: 'var(--color-text-secondary)' }}>
-      <span style={{
-        width: 6, height: 6, borderRadius: '50%', display: 'inline-block',
-        background: hasKey ? 'var(--color-success)' : 'var(--color-text-tertiary)',
-      }} />
-      {label}
-    </span>
-  );
-}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -555,30 +523,10 @@ export function SettingsPage() {
             <div className="text-xs mt-2 px-1" style={{ color: 'var(--color-text-tertiary)' }}>
               Run <code className="px-1 py-0.5 rounded text-[11px]" style={{ background: 'var(--color-bg-tertiary)' }}>ollama pull &lt;model-name&gt;</code> in your terminal to add more models
             </div>
-            <SettingRow label="Cloud providers" description="Green dot means API key is configured">
-              <div className="flex flex-wrap gap-3">
-                <CloudProviderStatus label="OpenAI" keyName="OPENAI_API_KEY" />
-                <CloudProviderStatus label="Anthropic" keyName="ANTHROPIC_API_KEY" />
-                <CloudProviderStatus label="Google" keyName="GEMINI_API_KEY" />
-                <CloudProviderStatus label="OpenRouter" keyName="OPENROUTER_API_KEY" />
-              </div>
-            </SettingRow>
           </Section>
 
-          {/* API Keys */}
-          <Section title="API Keys">
-            <SettingRow label="OpenAI" description="GPT-4, GPT-3.5, etc.">
-              <ApiKeyInput keyName="OPENAI_API_KEY" placeholder="sk-..." />
-            </SettingRow>
-            <SettingRow label="Anthropic" description="Claude models">
-              <ApiKeyInput keyName="ANTHROPIC_API_KEY" placeholder="sk-ant-..." />
-            </SettingRow>
-            <SettingRow label="Google" description="Gemini models">
-              <ApiKeyInput keyName="GEMINI_API_KEY" placeholder="AI..." />
-            </SettingRow>
-            <SettingRow label="OpenRouter" description="Multi-provider routing">
-              <ApiKeyInput keyName="OPENROUTER_API_KEY" placeholder="sk-or-..." />
-            </SettingRow>
+          <Section title="Cloud provider API keys">
+            <CloudProvidersPanel />
           </Section>
 
           {/* Tools */}
